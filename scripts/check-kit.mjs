@@ -1,0 +1,13 @@
+import { readFile, readdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { defineApp } from '../packages/core/src/validation.ts';
+const root=fileURLToPath(new URL('../',import.meta.url));
+const pkg=JSON.parse(await readFile(join(root,'package.json'),'utf8'));
+const hosting=JSON.parse(await readFile(join(root,'template/.openai/hosting.json'),'utf8'));
+if(hosting.project_id||hosting.d1!=='DB'||hosting.r2!=='BUCKET')throw new Error('Template non réutilisable : identité ou bindings invalides.');
+for(const f of ['README.md','AGENTS.md','START-HERE.md','docs/API.md','docs/COMPATIBILITY.md','docs/VALIDATION.md','template/AGENTS.md','template/README.md'])if(!(await readFile(join(root,f),'utf8')).trim())throw new Error(`Document vide : ${f}`);
+for(const f of await readdir(join(root,'examples')))if(f.endsWith('.json'))defineApp(JSON.parse(await readFile(join(root,'examples',f),'utf8')));
+const provenance=JSON.parse(await readFile(join(root,'UPSTREAM.json'),'utf8'));if(!/^[a-f0-9]{40}$/.test(provenance.commit)||!provenance.files.length)throw new Error('Provenance manquante.');
+const entry=await readFile(join(root,'START-HERE.md'),'utf8');if(!entry.includes('project_id')||!entry.includes('indépendante'))throw new Error('Instructions de séparation des apps manquantes.');
+console.log(JSON.stringify({ok:true,version:pkg.version,upstream:provenance.commit,examples:2,templateHasSiteIdentity:false},null,2));

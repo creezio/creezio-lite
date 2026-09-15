@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { registerLiteTools } from '../template/creezio/ui/webmcp.ts';
+import { alice,app,client,localDb,boot,clientData } from './helpers.mjs';
+test('WebMCP adapter registers, writes via the same backend, validates failures and aborts',async()=>{const db=await localDb();try{const call=client(db,alice);await boot(call);const tools=new Map(),signals=[];let mutations=0;
+  const api=async(path,init={})=>{const r=await call(path,{method:init.method??'GET',...(init.body?{body:JSON.parse(init.body)}:{})});if(r.status>=400)throw new Error(r.body.error.message);return r.body;};
+  const cleanup=registerLiteTools({registerTool(tool,{signal}){tools.set(tool.name,tool);signals.push(signal);}},api,app.modules,()=>mutations++);
+  assert.equal(tools.size,4);assert.equal(tools.get('creezio_list_records').annotations.readOnlyHint,true);assert.equal(tools.get('creezio_create_record').annotations.readOnlyHint,false);
+  const created=await tools.get('creezio_create_record').execute({moduleId:'clients',data:clientData});assert.equal(mutations,1);const listed=await tools.get('creezio_list_records').execute({moduleId:'clients'});assert.equal(listed.items[0].id,created.record.id);
+  await assert.rejects(async()=>tools.get('creezio_create_record').execute({moduleId:'clients',data:{name:''}}));assert.equal((await api('modules/clients/records')).total,1);
+  await tools.get('creezio_update_record').execute({moduleId:'clients',recordId:created.record.id,version:1,data:{...clientData,name:'MCP actualisé'}});assert.equal((await api('modules/clients/records')).items[0].data.name,'MCP actualisé');assert.equal(mutations,2);
+  await assert.rejects(async()=>tools.get('creezio_update_record').execute({moduleId:'clients',recordId:created.record.id,version:1,data:clientData}));assert.equal(mutations,2);
+  cleanup();assert.ok(signals.every(s=>s.aborted));
+}finally{db.close();}});

@@ -1,0 +1,76 @@
+{
+  "id": "reserve",
+  "name": "Réserve",
+  "description": "Le référentiel des produits et des fournisseurs.",
+  "modules": [
+    {
+      "id": "produits",
+      "name": "Produits",
+      "singular": "Produit",
+      "description": "Références et caractéristiques du catalogue.",
+      "icon": "box",
+      "titleField": "name",
+      "fields": [
+        {
+          "key": "name",
+          "label": "Désignation",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "sku",
+          "label": "Référence",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "price",
+          "label": "Prix unitaire (€)",
+          "type": "number",
+          "min": 0
+        },
+        {
+          "key": "category",
+          "label": "Catégorie",
+          "type": "select",
+          "options": [
+            "Matériel",
+            "Consommable",
+            "Service"
+          ]
+        },
+        {
+          "key": "active",
+          "label": "Actif",
+          "type": "boolean"
+        }
+      ]
+    },
+    {
+      "id": "fournisseurs",
+      "name": "Fournisseurs",
+      "singular": "Fournisseur",
+      "description": "Partenaires et coordonnées.",
+      "icon": "briefcase",
+      "titleField": "name",
+      "fields": [
+        {
+          "key": "name",
+          "label": "Nom",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "email",
+          "label": "E-mail",
+          "type": "email"
+        },
+        {
+          "key": "notes",
+          "label": "Notes",
+          "type": "textarea"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.next/
+.wrangler/
+.sites-runtime/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+.DS_Store
+coverage/
+template/creezio/
+generated/
+*.tgz
+*.tar.gz
+*.db
+*.sqlite*

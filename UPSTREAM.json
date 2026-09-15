@@ -1,0 +1,32 @@
+{
+  "repository": "https://github.com/creezio/creezio",
+  "commit": "6bd6507633b4c17bfc31206d82d1caa9a8af19af",
+  "version": "0.26.0",
+  "kind": "focused derivative; not a complete runtime port",
+  "files": [
+    {
+      "source": "packages/shell-ui/ui/theme/theme.css",
+      "target": "packages/ui/src/theme.css",
+      "sourceSha256": "139080c06236e9aae849202f2f9aed77318f4fc9f357d4267d68e1bd0908e8d2",
+      "changes": "Unmodified."
+    },
+    {
+      "source": "packages/shell-ui/ui/layout/entity-header.tsx",
+      "target": "packages/ui/src/entity-header.tsx",
+      "sourceSha256": "160245729d02230613f0c0247a8576d2d005621cccdafbbd5e29170666694489",
+      "changes": "Import paths adapted for the standalone web target."
+    },
+    {
+      "source": "packages/shell-ui/src/types.ts",
+      "target": "packages/ui/src/upstream/types.ts",
+      "sourceSha256": "6068f5c535004265aa449cab7210cde191447f8c84edf77fdaff6f8f27fd6ec4",
+      "changes": "Unmodified."
+    },
+    {
+      "source": "packages/shell-ui/src/registry.ts",
+      "target": "packages/ui/src/upstream/registry.ts",
+      "sourceSha256": "31803791bdfb6f36994db643b1d3de8e5f2037e082b7891207e8b58e484c5da9",
+      "changes": "Import paths adapted for the standalone web target."
+    }
+  ]
+}

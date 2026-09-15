@@ -1,0 +1,8 @@
+# Creezio Lite
+
+Repository: https://github.com/creezio/creezio-lite
+Entry point: START-HERE.md
+Agent instructions: AGENTS.md
+Create an independent business application for ChatGPT Sites from this repository.
+Use the generator; preserve D1/R2, server-side authorization and each application's separate Site identity.
+Read docs/COMPATIBILITY.md for the exact implemented scope.

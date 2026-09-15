@@ -1,0 +1,20 @@
+{
+  "id": "creezio-lite", "name": "Creezio Lite", "description": "Votre espace de travail pour les clients et les dossiers.",
+  "modules": [
+    {"id":"clients","name":"Clients","singular":"Client","description":"Contacts et entreprises de votre espace.","icon":"users","titleField":"name","fields":[
+      {"key":"name","label":"Nom du client","type":"text","required":true},
+      {"key":"email","label":"E-mail","type":"email"},
+      {"key":"company","label":"Entreprise","type":"text"},
+      {"key":"status","label":"Statut","type":"select","required":true,"options":["Prospect","Actif","En pause"]},
+      {"key":"notes","label":"Notes","type":"textarea"}
+    ]},
+    {"id":"dossiers","name":"Dossiers","singular":"Dossier","description":"Travaux en cours, échéances et suivi.","icon":"folder","titleField":"title","fields":[
+      {"key":"title","label":"Titre","type":"text","required":true},
+      {"key":"client","label":"Client","type":"text"},
+      {"key":"status","label":"Statut","type":"select","required":true,"options":["À préparer","En cours","À valider","Terminé"]},
+      {"key":"due_date","label":"Échéance","type":"date"},
+      {"key":"budget","label":"Budget (€)","type":"number","min":0},
+      {"key":"notes","label":"Notes","type":"textarea"}
+    ]}
+  ]
+}

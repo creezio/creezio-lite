@@ -1,0 +1,28 @@
+name: Creezio Lite
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+          run_install: false
+      - name: Install locked template dependencies
+        run: pnpm --dir template install --frozen-lockfile
+      - run: npm test
+      - run: npm run check
+      - run: pnpm --dir template run typecheck
+      - run: pnpm --dir template run build
+      - name: Generate two independent applications
+        run: node scripts/validate-examples.mjs
