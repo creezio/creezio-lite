@@ -1,0 +1,126 @@
+/**
+ * Moteur onboarding — styles `.onb-*` (extrait marques ×3).
+ * Importer une fois : `import "@creezio/onboarding/ui/onboarding/onboarding.css"`
+ */
+
+.onb-stage {
+  --onb-cream: var(--onb-cream-bg, #faf7f1);
+  --onb-ink: var(--onb-ink-color, #14182f);
+  --onb-teal: var(--onb-teal-color, #0e7b7b);
+  --onb-accent: var(--onb-accent-color, #f0701d);
+  background-color: var(--onb-cream);
+  background-image:
+    radial-gradient(
+      110% 75% at 50% -5%,
+      #ffffff 0%,
+      rgba(255, 255, 255, 0.72) 28%,
+      rgba(253, 250, 246, 0.35) 52%,
+      rgba(250, 247, 241, 0) 72%
+    ),
+    linear-gradient(
+      180deg,
+      #fdfbf8 0%,
+      #faf7f1 42%,
+      #faf7f1 100%
+    );
+}
+
+.onb-stepper-fade {
+  border-bottom: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.onb-scroll {
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.onb-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+@keyframes onb-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes onb-in-down {
+  from {
+    opacity: 0;
+    transform: translateY(-28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.onb-anim-fwd {
+  animation: onb-in-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.onb-anim-back {
+  animation: onb-in-down 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes onb-interstitial {
+  0% {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  14% {
+    opacity: 1;
+    transform: none;
+  }
+  82% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-18px);
+  }
+}
+
+.onb-interstitial {
+  animation: onb-interstitial 2.1s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes onb-line-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.onb-interstitial-line {
+  transform-origin: left center;
+  animation: onb-line-grow 1.7s cubic-bezier(0.22, 1, 0.36, 1) 0.2s both;
+}
+
+.onb-stagger > * {
+  opacity: 0;
+  animation: onb-in-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.onb-stagger > *:nth-child(1) { animation-delay: 0.04s; }
+.onb-stagger > *:nth-child(2) { animation-delay: 0.09s; }
+.onb-stagger > *:nth-child(3) { animation-delay: 0.14s; }
+.onb-stagger > *:nth-child(4) { animation-delay: 0.19s; }
+.onb-stagger > *:nth-child(5) { animation-delay: 0.24s; }
+.onb-stagger > *:nth-child(6) { animation-delay: 0.29s; }
+.onb-stagger > *:nth-child(7) { animation-delay: 0.34s; }
+.onb-stagger > *:nth-child(8) { animation-delay: 0.39s; }
+.onb-stagger > *:nth-child(9) { animation-delay: 0.44s; }
+.onb-stagger > *:nth-child(10) { animation-delay: 0.49s; }

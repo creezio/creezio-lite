@@ -1,0 +1,423 @@
+/* @creezio/interactive-demo — styles du lecteur de démo (spotlight, cartes,
+   curseur, contrôles). Accent surchargable par marque :
+   `:root { --creezio-demo-accent: #0284c7; }` */
+
+:root {
+  --creezio-demo-accent: #7c3aed;
+  --creezio-demo-accent-soft: rgba(124, 58, 237, 0.16);
+  --creezio-demo-overlay: rgba(9, 9, 20, 0.55);
+  --creezio-demo-card-bg: rgba(255, 255, 255, 0.92);
+  --creezio-demo-card-fg: #111122;
+  --creezio-demo-card-muted: #5b5b70;
+  --creezio-demo-z: 2147482000;
+}
+
+/* ── Faux curseur ── */
+
+.creezio-demo-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: calc(var(--creezio-demo-z) + 40);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 220ms ease;
+  will-change: transform;
+  filter: drop-shadow(0 2px 6px var(--creezio-demo-accent-soft))
+    drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+}
+
+.creezio-demo-cursor-badge {
+  position: absolute;
+  left: 18px;
+  top: 20px;
+  background: var(--creezio-demo-accent);
+  color: white;
+  font: 600 9px/1 system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  padding: 3px 7px;
+  border-radius: 9999px;
+  border: 1.5px solid white;
+  white-space: nowrap;
+}
+
+.creezio-demo-click-ripple {
+  position: fixed;
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  border: 2.5px solid var(--creezio-demo-accent);
+  background: var(--creezio-demo-accent-soft);
+  z-index: calc(var(--creezio-demo-z) + 39);
+  pointer-events: none;
+}
+
+/* ── Spotlight ── */
+
+.creezio-demo-spotlight {
+  position: fixed;
+  z-index: var(--creezio-demo-z);
+  pointer-events: none;
+  border-radius: 12px;
+  box-shadow:
+    0 0 0 4px var(--creezio-demo-accent-soft),
+    0 0 0 200vmax var(--creezio-demo-overlay);
+  transition:
+    left 320ms cubic-bezier(0.3, 0.9, 0.35, 1),
+    top 320ms cubic-bezier(0.3, 0.9, 0.35, 1),
+    width 320ms cubic-bezier(0.3, 0.9, 0.35, 1),
+    height 320ms cubic-bezier(0.3, 0.9, 0.35, 1);
+}
+
+.creezio-demo-spotlight::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 16px;
+  border: 2px solid var(--creezio-demo-accent);
+  opacity: 0.9;
+  animation: creezio-demo-pulse 1.8s ease-out infinite;
+}
+
+@keyframes creezio-demo-pulse {
+  0% {
+    transform: scale(0.99);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(1.03);
+    opacity: 0.25;
+  }
+  100% {
+    transform: scale(0.99);
+    opacity: 0.9;
+  }
+}
+
+/* Voile plein écran (étapes « say » sans cible). */
+.creezio-demo-veil {
+  position: fixed;
+  inset: 0;
+  z-index: var(--creezio-demo-z);
+  background: var(--creezio-demo-overlay);
+  backdrop-filter: blur(2px);
+  animation: creezio-demo-fade-in 260ms ease;
+}
+
+/* ── Cartes de narration ── */
+
+.creezio-demo-card {
+  position: fixed;
+  z-index: calc(var(--creezio-demo-z) + 20);
+  width: min(380px, calc(100vw - 32px));
+  background: var(--creezio-demo-card-bg);
+  color: var(--creezio-demo-card-fg);
+  border-radius: 16px;
+  padding: 18px 20px 16px;
+  box-shadow:
+    0 24px 60px -12px rgba(10, 10, 30, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.5) inset;
+  backdrop-filter: blur(14px);
+  border-top: 3px solid var(--creezio-demo-accent);
+  animation: creezio-demo-in-up 320ms cubic-bezier(0.3, 0.9, 0.35, 1);
+}
+
+.creezio-demo-card--centered {
+  left: 50%;
+  top: 22vh;
+  transform: translateX(-50%);
+  width: min(460px, calc(100vw - 32px));
+  text-align: center;
+  padding: 28px 28px 22px;
+}
+
+/*
+ * Garde-fou contre la règle globale « modales bornées au viewport »
+ * des apps (ex. `[role="dialog"]:not(.inset-y-0) { width: calc(100vw - 2rem);
+ * max-height: calc(100vh - 2rem) }`) : la carte démo porte role="dialog"
+ * mais ne doit JAMAIS être étirée au viewport — elle garde ses
+ * dimensions compactes (spécificité volontairement supérieure :
+ * élément + classe + attribut).
+ */
+div.creezio-demo-card[role="dialog"] {
+  width: min(380px, calc(100vw - 32px));
+  max-height: min(72vh, 560px);
+  max-height: min(72dvh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+div.creezio-demo-card--centered[role="dialog"] {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.creezio-demo-card-kicker {
+  font: 700 10px/1 system-ui, sans-serif;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--creezio-demo-accent);
+  margin: 0 0 8px;
+}
+
+.creezio-demo-card-title {
+  font: 700 17px/1.3 system-ui, sans-serif;
+  margin: 0 0 6px;
+}
+
+.creezio-demo-card-body {
+  font: 400 13.5px/1.55 system-ui, sans-serif;
+  color: var(--creezio-demo-card-muted);
+  margin: 0;
+  white-space: pre-line;
+}
+
+.creezio-demo-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.creezio-demo-card--centered .creezio-demo-card-actions {
+  justify-content: center;
+}
+
+.creezio-demo-note {
+  position: fixed;
+  left: 50%;
+  bottom: 92px;
+  transform: translateX(-50%);
+  z-index: calc(var(--creezio-demo-z) + 30);
+  background: rgba(17, 17, 34, 0.92);
+  color: #e8e8f2;
+  font: 500 12.5px/1.4 system-ui, sans-serif;
+  padding: 8px 14px;
+  border-radius: 9999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  animation: creezio-demo-in-up 240ms ease;
+}
+
+/* ── Boutons ── */
+
+.creezio-demo-btn {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  font: 600 13px/1 system-ui, sans-serif;
+  border-radius: 10px;
+  padding: 9px 16px;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    background 120ms ease;
+}
+
+.creezio-demo-btn:active {
+  transform: scale(0.97);
+}
+
+.creezio-demo-btn--primary {
+  background: linear-gradient(
+    135deg,
+    var(--creezio-demo-accent),
+    color-mix(in srgb, var(--creezio-demo-accent) 70%, #2563eb)
+  );
+  color: white;
+  box-shadow: 0 6px 18px -4px var(--creezio-demo-accent-soft);
+}
+
+.creezio-demo-btn--primary:hover {
+  filter: brightness(1.08);
+}
+
+.creezio-demo-btn--ghost {
+  background: transparent;
+  color: var(--creezio-demo-card-muted);
+}
+
+.creezio-demo-btn--ghost:hover {
+  color: var(--creezio-demo-card-fg);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* ── Barre de contrôle ── */
+
+.creezio-demo-controls {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: calc(var(--creezio-demo-z) + 30);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(17, 17, 34, 0.92);
+  color: #e8e8f2;
+  border-radius: 9999px;
+  padding: 10px 14px 10px 20px;
+  box-shadow:
+    0 16px 44px -8px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+  backdrop-filter: blur(12px);
+  animation: creezio-demo-in-up 320ms cubic-bezier(0.3, 0.9, 0.35, 1);
+}
+
+.creezio-demo-controls-label {
+  font: 600 12.5px/1 system-ui, sans-serif;
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.creezio-demo-progress {
+  position: relative;
+  width: 110px;
+  height: 4px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+
+.creezio-demo-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, var(--creezio-demo-accent), #38bdf8);
+  transition: width 320ms ease;
+}
+
+.creezio-demo-controls-count {
+  font: 600 11.5px/1 system-ui, sans-serif;
+  color: rgba(232, 232, 242, 0.7);
+  white-space: nowrap;
+}
+
+.creezio-demo-controls .creezio-demo-btn--ghost {
+  color: rgba(232, 232, 242, 0.75);
+}
+
+.creezio-demo-controls .creezio-demo-btn--ghost:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ── Lanceur flottant ── */
+
+.creezio-demo-launcher {
+  position: fixed;
+  /* Haut-droite : extr?mit? libre de la barre d'onglets du workspace ?
+   * en bas-gauche le lanceur recouvrait la sidebar (retour viewport étroit). */
+  right: 18px;
+  top: 10px;
+  z-index: calc(var(--creezio-demo-z) - 10);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  cursor: pointer;
+  background: linear-gradient(
+    135deg,
+    var(--creezio-demo-accent),
+    color-mix(in srgb, var(--creezio-demo-accent) 70%, #2563eb)
+  );
+  color: white;
+  font: 600 13px/1 system-ui, sans-serif;
+  border-radius: 9999px;
+  padding: 11px 18px;
+  box-shadow: 0 10px 26px -6px var(--creezio-demo-accent-soft);
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    filter 140ms ease;
+}
+
+.creezio-demo-launcher:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.07);
+}
+
+.creezio-demo-launcher-menu {
+  position: fixed;
+  right: 18px;
+  top: 52px;
+  z-index: calc(var(--creezio-demo-z) - 9);
+  background: var(--creezio-demo-card-bg);
+  border-radius: 14px;
+  box-shadow: 0 20px 50px -10px rgba(10, 10, 30, 0.4);
+  padding: 6px;
+  min-width: 240px;
+  backdrop-filter: blur(14px);
+  animation: creezio-demo-in-up 200ms ease;
+}
+
+.creezio-demo-launcher-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--creezio-demo-card-fg);
+}
+
+.creezio-demo-launcher-item:hover {
+  background: var(--creezio-demo-accent-soft);
+}
+
+.creezio-demo-launcher-item-title {
+  font: 600 13px/1.3 system-ui, sans-serif;
+  margin: 0;
+}
+
+.creezio-demo-launcher-item-desc {
+  font: 400 11.5px/1.4 system-ui, sans-serif;
+  color: var(--creezio-demo-card-muted);
+  margin: 2px 0 0;
+}
+
+/* ── Animations ── */
+
+@keyframes creezio-demo-in-up {
+  from {
+    opacity: 0;
+    transform: translate(var(--creezio-demo-in-x, 0), 10px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(var(--creezio-demo-in-x, 0), 0);
+  }
+}
+
+.creezio-demo-card--centered {
+  --creezio-demo-in-x: -50%;
+}
+
+.creezio-demo-controls,
+.creezio-demo-note {
+  --creezio-demo-in-x: -50%;
+}
+
+@keyframes creezio-demo-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .creezio-demo-spotlight,
+  .creezio-demo-spotlight::after,
+  .creezio-demo-card,
+  .creezio-demo-controls,
+  .creezio-demo-note,
+  .creezio-demo-progress-fill {
+    transition: none;
+    animation: none;
+  }
+}

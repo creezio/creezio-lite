@@ -1,0 +1,54 @@
+import './register-native-loader.mjs';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
+import { root,app,alice,bob,eve,migrationSql,client,boot } from './helpers.mjs';
+// Dynamic import runs after the test-only source resolver is registered.
+const {handleNativeApi}=await import('../packages/sites-adapter/src/index.ts');
+function native(db,user,cookie=''){return async(path,method='GET',body,headers={})=>{const response=await handleNativeApi(new Request(`https://test.example/api/v1/${path}`,{method,headers:{origin:'https://test.example',cookie,...(body?{'content-type':'application/json'}:{}),...headers},...(body?{body:JSON.stringify(body)}:{})}),{identity:user,env:{DB:db},app});assert.ok(response,'native endpoint must be dispatched');return {status:response.status,body:await response.json(),headers:response.headers};};}
+test('Native Creezio modules on real D1: session, permissions, kanban, support and preferences',async()=>{
+  const deps=createRequire(join(root,'template/package.json')),wrangler=createRequire(deps.resolve('wrangler/package.json'));
+  const {Miniflare}=await import(pathToFileURL(wrangler.resolve('miniflare')).href);
+  const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response("ok")}}',compatibilityDate:'2026-05-15',d1Databases:['DB'],cf:false});
+  try {const db=await mf.getD1Database('DB');for(const sql of (await migrationSql()).split('--> statement-breakpoint').map(x=>x.trim()).filter(Boolean))await db.prepare(sql).run();
+    const a=native(db,alice),b=native(db,bob),e=native(db,eve);
+    assert.equal((await native(db,null)('auth/me')).status,401);
+    const session=await a('auth/me');assert.equal(session.status,200,JSON.stringify(session.body));const org=session.body.workspace.id;
+    assert.equal(session.body.role,'owner');assert.equal(session.body.user_id,alice.userId);
+    await b('auth/me');await e('auth/me');
+    const cat=await a('modules/nav');assert.equal(cat.status,200,JSON.stringify(cat.body));assert.ok(cat.body.items.find(x=>x.href==='/taches'));assert.ok(!cat.body.items.some(x=>/hermes|n8n/.test(x.href)));
+    assert.equal((await a('modules/nav/overrides','PUT',{entryId:'os.taches',label:'Mes tâches'})).status,200);
+    assert.equal((await a('modules/nav/overrides','PUT',{entryId:'os.taches',hidden:true})).status,200);
+    const adminCatalog=(await a('modules/nav/catalog')).body;const edited=adminCatalog.overrides.find(x=>x.entryId==='os.taches');assert.equal(edited.label,'Mes tâches');assert.equal(edited.hidden,true);
+    assert.ok(!(await a('modules/nav')).body.items.some(x=>x.id==='os.taches'));
+    assert.ok((await b('modules/nav')).body.items.some(x=>x.id==='os.taches'));
+    await a('modules/nav/overrides/os.taches','DELETE');
+    const task=await a('tasks','POST',{title:'Tâche persistante',body:'Brief',executor_kind:'human',assignee_user_id:alice.userId});assert.equal(task.status,201,JSON.stringify(task.body));const id=task.body.task.id;
+    assert.equal((await a(`tasks/${id}`,'PATCH',{status:'in_progress'})).status,200);
+    assert.equal((await native(db,alice)(`tasks/${id}`)).body.task.status,'in_progress');
+    assert.equal((await b(`tasks/${id}`)).status,404);
+    assert.equal((await a('tasks','POST',{title:'Interdit',executor_kind:'hermes'})).status,422);
+    assert.equal((await a('tasks','POST',{title:'Mauvais assigné',assignee_user_id:bob.userId})).status,400);
+    assert.equal((await a('tasks','POST',{title:'CSRF'}, {origin:'https://evil.example'})).status,403);
+    const support=await a('platform/platform-support','POST',{sujet:'Question',corps:'Premier message',auteur:'Usurpation'});assert.equal(support.status,201,JSON.stringify(support.body));const ticket=support.body.item.id;assert.equal(support.body.item.auteur,'Alice');
+    assert.equal((await a(`platform/platform-support/${ticket}/reply`,'POST',{corps:'Réponse'})).status,200);
+    const detail=await a(`platform/platform-support/${ticket}`);assert.equal(detail.body.messages.length,2);assert.equal(detail.body.item.statut,'repondu');assert.equal((await b(`platform/platform-support/${ticket}`)).status,404);
+    const scenarios=await a('modules/interactive-demo/scenarios');assert.equal(scenarios.status,200);assert.ok(scenarios.body.scenarios.length>0);
+    const scenario=scenarios.body.scenarios[0];assert.equal((await a(`modules/interactive-demo/scenarios/${scenario.id}`,'PUT',{title:'Notre visite'})).status,200);
+    assert.equal((await a('modules/interactive-demo/preferences','PUT',{user:'Alice',answers:{seen:true}})).status,200);
+    assert.equal((await a('modules/interactive-demo/preferences?user=Alice')).body.answers.seen,true);
+    assert.equal((await a('modules/interactive-demo/preferences?user=Bob')).status,403);
+    const ac=client(db,alice),bc=client(db,bob);const invitation=await ac('invites',{method:'POST',body:{email:bob.email,role:'viewer'}});assert.equal((await bc('invites/accept',{method:'POST',body:{token:invitation.body.token}})).status,200);
+    const select=await b('workspaces/select','POST',{workspaceId:org});assert.equal(select.status,200);const cookie=select.headers.get('set-cookie').split(';')[0],viewer=native(db,bob,cookie);
+    assert.equal((await viewer('auth/me')).body.brand_role,'viewer');assert.equal((await viewer(`tasks/${id}`)).status,200);
+    assert.equal((await viewer(`tasks/${id}`,'PATCH',{status:'done'})).status,403);
+    assert.equal((await viewer('modules/nav/catalog')).status,403);
+    assert.equal((await viewer('platform/platform-support','POST',{sujet:'Écriture'})).status,403);
+    assert.equal((await viewer(`modules/interactive-demo/scenarios/${scenario.id}`,'DELETE')).status,403);
+    assert.equal((await e('workspaces/select','POST',{workspaceId:org})).status,404);
+    const architecture=await a('core/architecture');assert.deepEqual(architecture.body.spaces,['core','platform','modules','plugins']);assert.equal(architecture.body.isolation.scopedDb,false);
+    assert.equal((await a('core/sqlite/status')).status,503); // No false synchronous SQLite compatibility.
+  } finally {await mf.dispose();}
+});

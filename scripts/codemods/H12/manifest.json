@@ -1,0 +1,4 @@
+{
+  "scripts": ["h12-electron-shell-imports.mjs", "h12-workspace-debrand.mjs"],
+  "since": "0.24.0"
+}

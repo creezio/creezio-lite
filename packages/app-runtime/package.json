@@ -1,0 +1,73 @@
+{
+  "name": "@creezio/app-runtime",
+  "version": "0.26.0",
+  "description": "Façade runtime marque — startBrandDesktop / startBrandKernelHarness (orchestration OS)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "scripts"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@creezio/access-control": "^0.26.0",
+    "@creezio/api-kernel": "^0.26.0",
+    "@creezio/assistant": "^0.26.0",
+    "@creezio/auth": "^0.26.0",
+    "@creezio/brand-config": "^0.26.0",
+    "@creezio/browser-host": "^0.26.0",
+    "@creezio/database": "^0.26.0",
+    "@creezio/electron-shell": "^0.26.0",
+    "@creezio/host-runtime": "^0.26.0",
+    "@creezio/integrations": "^0.26.0",
+    "@creezio/interactive-demo": "^0.26.0",
+    "@creezio/mails": "^0.26.0",
+    "@creezio/mcp-facade": "^0.26.0",
+    "@creezio/nav": "^0.26.0",
+    "@creezio/onboarding": "^0.26.0",
+    "@creezio/observability": "^0.26.0",
+    "@creezio/platform-core": "^0.26.0",
+    "@creezio/product-hub": "^0.26.0",
+    "@creezio/search": "^0.26.0",
+    "@creezio/shell-ui": "^0.26.0",
+    "@creezio/support": "^0.26.0",
+    "@creezio/tasks": "^0.26.0",
+    "hono": "^4.12.33"
+  },
+  "peerDependencies": {
+    "electron": ">=28"
+  },
+  "peerDependenciesMeta": {
+    "electron": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  },
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/creezio/creezio.git",
+    "directory": "packages/app-runtime"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

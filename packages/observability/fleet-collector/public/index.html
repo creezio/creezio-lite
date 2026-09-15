@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>__FLEET_UI_TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --bg: #faf7f1;
+  --fg: #14182f;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --card: #ffffff;
+  --sidebar: #0f172a;
+  --sidebar-hover: rgba(30,41,59,.7);
+  --sidebar-active: #1e293b;
+  --sky: #0ea5e9;
+  --sky-dark: #0284c7;
+  --ok: #059669;
+  --warn: #d97706;
+  --bad: #dc2626;
+  --radius: 10px;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  display: flex;
+  min-height: 100%;
+}
+button { font: inherit; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+
+.shell { display: flex; width: 100%; min-height: 100%; }
+
+/* Sidebar */
+.sidebar {
+  width: 260px; flex-shrink: 0;
+  background: var(--sidebar); color: #e2e8f0;
+  display: flex; flex-direction: column;
+  border-right: 1px solid #1e293b;
+}
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 14px; border-bottom: 1px solid #1e293b;
+}
+.brand-mark {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: linear-gradient(135deg, #38bdf8, #0284c7);
+  color: #fff; font-size: 11px; font-weight: 700;
+  display: grid; place-items: center;
+  box-shadow: 0 1px 2px rgba(0,0,0,.25);
+}
+.brand h1 { margin: 0; font-size: 14px; font-weight: 650; color: #fff; }
+.brand p { margin: 2px 0 0; font-size: 11px; color: #94a3b8; }
+
+.side-section { padding: 14px 12px 6px; font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #64748b; }
+.side-nav { padding: 0 8px 12px; overflow-y: auto; flex: 1; }
+.side-item {
+  width: 100%; text-align: left;
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; margin-bottom: 2px;
+  border: 0; border-radius: 8px;
+  background: transparent; color: #cbd5e1;
+}
+.side-item:hover { background: var(--sidebar-hover); color: #fff; }
+.side-item.active { background: var(--sidebar-active); color: #fff; }
+.side-item .dot {
+  width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0;
+  background: #475569;
+}
+.side-item .dot.online { background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,.15); }
+.side-item .dot.idle { background: #fbbf24; }
+.side-item .dot.offline { background: #64748b; }
+.side-item .meta { margin-left: auto; font-size: 11px; color: #64748b; }
+.side-item small { display: block; font-size: 11px; color: #64748b; margin-top: 1px; }
+.side-back {
+  margin: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid #334155;
+  background: transparent; color: #94a3b8; font-size: 12px; text-align: left;
+}
+.side-back:hover { background: var(--sidebar-hover); color: #fff; }
+
+/* Main */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar {
+  background: rgba(255,255,255,.82);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+  padding: 14px 24px 0;
+  position: sticky; top: 0; z-index: 5;
+}
+.crumb { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.crumb button { border: 0; background: none; color: var(--sky-dark); padding: 0; }
+.topbar h2 { margin: 0 0 2px; font-size: 20px; font-weight: 650; letter-spacing: -.02em; }
+.topbar .sub { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+.tabs { display: flex; gap: 4px; overflow-x: auto; }
+.tab {
+  border: 0; background: transparent;
+  padding: 10px 14px; border-bottom: 2px solid transparent;
+  color: var(--muted); font-size: 13px; font-weight: 500; white-space: nowrap;
+}
+.tab:hover { color: var(--fg); }
+.tab.active { color: var(--fg); border-bottom-color: var(--sky); }
+
+.content { padding: 20px 24px 40px; overflow: auto; flex: 1; }
+.grid { display: grid; gap: 14px; }
+.grid.stats { grid-template-columns: repeat(4, minmax(0,1fr)); }
+.grid.two { grid-template-columns: 1.2fr .8fr; }
+@media (max-width: 1100px) {
+  .grid.stats, .grid.two { grid-template-columns: 1fr 1fr; }
+  .sidebar { width: 220px; }
+}
+@media (max-width: 720px) {
+  .sidebar { display: none; }
+  .grid.stats, .grid.two { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.card h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.card .big { font-size: 28px; font-weight: 700; letter-spacing: -.03em; }
+.card .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  background: #f1f5f9; color: #334155;
+}
+.pill.ok { background: #ecfdf5; color: var(--ok); }
+.pill.warn { background: #fffbeb; color: var(--warn); }
+.pill.bad { background: #fef2f2; color: var(--bad); }
+.pill.sky { background: #e0f2fe; color: var(--sky-dark); }
+
+.list { display: flex; flex-direction: column; gap: 8px; }
+.row {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px 14px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: #fff;
+  text-align: left; width: 100%;
+}
+.row:hover { border-color: #cbd5e1; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
+.row .avatar {
+  width: 36px; height: 36px; border-radius: 999px; flex-shrink: 0;
+  background: #e0f2fe; color: var(--sky-dark);
+  display: grid; place-items: center; font-size: 12px; font-weight: 700;
+}
+.row .body { flex: 1; min-width: 0; }
+.row .title { font-size: 14px; font-weight: 600; }
+.row .desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.row .time { font-size: 11px; color: #94a3b8; white-space: nowrap; }
+
+.timeline .row { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none; }
+.timeline .row:hover { background: #fdfcfa; }
+
+.chat {
+  display: flex; flex-direction: column; gap: 10px;
+  max-height: 520px; overflow: auto;
+  padding: 12px; background: #f8fafc; border-radius: var(--radius);
+  border: 1px solid var(--line);
+}
+.bubble {
+  max-width: 85%; padding: 10px 12px; border-radius: 12px;
+  font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+}
+.bubble.user { align-self: flex-end; background: #e0f2fe; color: #0c4a6e; }
+.bubble.assistant { align-self: flex-start; background: #fff; border: 1px solid var(--line); }
+.bubble .who { font-size: 10px; font-weight: 600; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; }
+
+.health-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; }
+.health-item {
+  padding: 12px; border-radius: 8px; background: #f8fafc; border: 1px solid var(--line);
+  text-align: center;
+}
+.health-item strong { display: block; font-size: 12px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+
+.btn {
+  border: 0; border-radius: 8px; padding: 8px 12px;
+  background: var(--sky); color: #fff; font-weight: 600; font-size: 13px;
+}
+.btn:hover { background: var(--sky-dark); }
+.btn.ghost { background: #fff; color: var(--fg); border: 1px solid var(--line); }
+.btn.ghost:hover { background: #f8fafc; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+.empty {
+  padding: 40px 20px; text-align: center; color: var(--muted); font-size: 14px;
+  border: 1px dashed var(--line); border-radius: var(--radius); background: #fff;
+}
+.hidden { display: none !important; }
+select {
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  background: #fff; font: inherit;
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark" id="brandMark">__FLEET_UI_MARK__</div>
+      <div>
+        <h1 id="brandTitle">__FLEET_UI_TITLE__</h1>
+        <p id="sideStats">Support clients</p>
+      </div>
+    </div>
+    <button class="side-back hidden" id="btnBack" type="button">← Tous les serveurs</button>
+    <div class="side-section" id="sideLabel">Serveurs</div>
+    <nav class="side-nav" id="sideNav"></nav>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumb" id="crumb"></div>
+      <h2 id="pageTitle">Flotte</h2>
+      <div class="sub" id="pageSub">Choisissez un serveur pour voir l’activité</div>
+      <div class="tabs" id="tabs"></div>
+    </header>
+    <main class="content" id="content"></main>
+  </div>
+</div>
+
+<script>
+const state = {
+  fleet: null,
+  server: null,
+  user: null,
+  route: { slug: null, userId: null, tab: "overview" },
+};
+
+const $ = (id) => document.getElementById(id);
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { credentials: "same-origin", ...opts, headers: {
+    ...(opts.body ? { "Content-Type": "application/json" } : {}),
+    ...(opts.headers || {}),
+  }});
+  if (r.status === 401) {
+    location.reload();
+    throw new Error("auth");
+  }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+function ago(iso) {
+  if (!iso) return "—";
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 90) return "à l’instant";
+  if (s < 3600) return Math.floor(s / 60) + " min";
+  if (s < 86400) return Math.floor(s / 3600) + " h";
+  return Math.floor(s / 86400) + " j";
+}
+
+function pillOnline(v) {
+  const cls = v === "online" ? "ok" : v === "idle" ? "warn" : "bad";
+  const label = v === "online" ? "En ligne" : v === "idle" ? "Inactif" : "Hors ligne";
+  return `<span class="pill ${cls}">${label}</span>`;
+}
+
+function initials(name) {
+  return String(name || "?")
+    .split(/[\s.@_-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((x) => x[0]?.toUpperCase() || "")
+    .join("") || "?";
+}
+
+function parseHash() {
+  const h = (location.hash || "#/").replace(/^#/, "");
+  const parts = h.split("/").filter(Boolean);
+  // /s/:slug[/u/:userId][/t/:tab]
+  let slug = null, userId = null, tab = "overview";
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] === "s" && parts[i + 1]) { slug = decodeURIComponent(parts[++i]); continue; }
+    if (parts[i] === "u" && parts[i + 1]) { userId = decodeURIComponent(parts[++i]); continue; }
+    if (parts[i] === "t" && parts[i + 1]) { tab = decodeURIComponent(parts[++i]); continue; }
+  }
+  state.route = { slug, userId, tab };
+}
+
+function go(slug, userId, tab) {
+  let hash = "#/";
+  if (slug) {
+    hash = `#/s/${encodeURIComponent(slug)}`;
+    if (userId) hash += `/u/${encodeURIComponent(userId)}`;
+    if (tab && tab !== "overview") hash += `/t/${encodeURIComponent(tab)}`;
+    else if (tab === "overview" && !userId) { /* keep */ }
+    else if (userId && tab) hash = `#/s/${encodeURIComponent(slug)}/u/${encodeURIComponent(userId)}/t/${encodeURIComponent(tab)}`;
+  }
+  if (location.hash !== hash) location.hash = hash;
+  else void render();
+}
+
+function setTabs(items, active) {
+  $("tabs").innerHTML = items.map((t) =>
+    `<button type="button" class="tab ${t.id === active ? "active" : ""}" data-tab="${t.id}">${t.label}</button>`
+  ).join("");
+  $("tabs").querySelectorAll(".tab").forEach((btn) => {
+    btn.onclick = () => go(state.route.slug, state.route.userId, btn.dataset.tab);
+  });
+}
+
+function renderSidebar() {
+  const { slug, userId } = state.route;
+  const nav = $("sideNav");
+  const back = $("btnBack");
+  if (!slug) {
+    back.classList.add("hidden");
+    $("sideLabel").textContent = "Serveurs";
+    const servers = state.fleet?.servers || [];
+    nav.innerHTML = servers.map((s) => `
+      <button type="button" class="side-item" data-slug="${s.slug}">
+        <span class="dot ${s.online}"></span>
+        <span>
+          <strong>${s.slug}</strong>
+          <small>${s.appVersion} · ${s.userCount} util.</small>
+        </span>
+        <span class="meta">${ago(s.lastSeen)}</span>
+      </button>
+    `).join("") || `<div style="padding:12px;color:#64748b;font-size:12px">Aucun serveur</div>`;
+    nav.querySelectorAll("[data-slug]").forEach((btn) => {
+      btn.onclick = () => go(btn.dataset.slug, null, "overview");
+    });
+    return;
+  }
+  back.classList.remove("hidden");
+  back.onclick = () => go(null, null, "overview");
+  $("sideLabel").textContent = "Utilisateurs · " + slug;
+  const users = state.server?.users || [];
+  nav.innerHTML = users.map((u) => `
+    <button type="button" class="side-item ${userId === u.id ? "active" : ""}" data-uid="${u.id}">
+      <span class="dot ${u.online}"></span>
+      <span>
+        <strong>${u.username}</strong>
+        <small>${u.role}${u.kind === "ai" ? " · IA" : ""}</small>
+      </span>
+    </button>
+  `).join("") || `<div style="padding:12px;color:#64748b;font-size:12px">Aucun utilisateur</div>`;
+  nav.querySelectorAll("[data-uid]").forEach((btn) => {
+    btn.onclick = () => go(slug, btn.dataset.uid, "activity");
+  });
+}
+
+function healthLabel(v) {
+  const s = String(v || "—");
+  if (s === "running") return pillOnline("online").replace("En ligne", "OK");
+  if (!v) return `<span class="pill">—</span>`;
+  return `<span class="pill warn">${s}</span>`;
+}
+
+function brand() {
+  return window.__FLEET_BRAND__ || {
+    title: "Fleet",
+    mark: "FL",
+    homeTitle: "Flotte",
+    extrasTitle: "Dossiers",
+    etatLabels: {},
+  };
+}
+
+function etatPills(parEtat) {
+  const labels = brand().etatLabels || {};
+  const entries = Object.entries(parEtat || {}).filter(([, n]) => n > 0);
+  if (!entries.length) return "";
+  const cls = { VALIDE: "ok", EN_COURS: "sky", CONTROLES_OK: "warn" };
+  return entries
+    .map(([e, n]) => `<span class="pill ${cls[e] || ""}">${esc(labels[e] || e)} ${n}</span>`)
+    .join(" ");
+}
+
+function dossiersDesc(d) {
+  if (!d || typeof d !== "object") return "";
+  const total = Number(d.total) || 0;
+  const pieces = d.pieces && d.pieces.total
+    ? ` · pièces ${d.pieces.faites}/${d.pieces.total}`
+    : "";
+  return ` · ${total} dossier(s)${pieces}`;
+}
+
+async function renderHome() {
+  const f = state.fleet;
+  const b = brand();
+  $("pageTitle").textContent = b.homeTitle || "Flotte";
+  $("pageSub").textContent = "Sélectionnez un serveur (slug) dans la barre latérale";
+  $("crumb").textContent = "Support";
+  setTabs([], "overview");
+  const servers = f?.servers || [];
+  const dossiers = f?.stats?.dossiers || { total: 0, parEtat: {}, actifs7j: 0 };
+  const versions = Object.entries(f?.stats?.versions || {}).sort((a, b) => b[1] - a[1]);
+  const hasExtras = dossiers.total > 0 || Object.keys(dossiers.parEtat || {}).length > 0;
+  let crashes = [];
+  try {
+    crashes = (await api("/ops/api/crashes")).crashes || [];
+  } catch { /* section optionnelle */ }
+  $("content").innerHTML = `
+    <div class="grid stats">
+      <div class="card"><h3>Serveurs</h3><div class="big">${f?.stats?.servers ?? 0}</div><div class="hint">${f?.stats?.online ?? 0} en ligne</div></div>
+      ${hasExtras
+        ? `<div class="card"><h3>${esc(b.extrasTitle || "Dossiers")}</h3><div class="big">${dossiers.total}</div><div class="hint">${dossiers.actifs7j} actif(s) sur 7 j</div></div>`
+        : `<div class="card"><h3>Utilisateurs</h3><div class="big">${f?.stats?.users ?? 0}</div><div class="hint">comptes connus</div></div>`}
+      <div class="card"><h3>Incidents</h3><div class="big">${f?.stats?.crashes ?? 0}</div><div class="hint">crashes cumulés</div></div>
+      <div class="card"><h3>Versions</h3>
+        <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">
+          ${versions.map(([v, n]) => `<span class="pill sky">v${esc(v)} × ${n}</span>`).join("") || '<span class="pill">—</span>'}
+        </div>
+        <div class="hint">répartition flotte (avant rollout)</div>
+      </div>
+    </div>
+    ${Object.keys(dossiers.parEtat || {}).length ? `
+      <div style="height:12px"></div>
+      <div class="card">
+        <h3>${esc(b.extrasTitle || "Dossiers")} par état (flotte)</h3>
+        <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">${etatPills(dossiers.parEtat)}</div>
+      </div>
+    ` : ""}
+    <div style="height:16px"></div>
+    <div class="list">
+      ${servers.map((s) => `
+        <button type="button" class="row" data-open="${s.slug}">
+          <div class="avatar">${initials(s.slug)}</div>
+          <div class="body">
+            <div class="title">${s.slug} ${pillOnline(s.online)}</div>
+            <div class="desc">${s.hostname} · v${s.appVersion} · ${s.platform} · ${s.userCount} utilisateur(s)${dossiersDesc(s.dossierStats)}</div>
+          </div>
+          <div class="time">${ago(s.lastSeen)}</div>
+        </button>
+      `).join("") || `<div class="empty">Aucun serveur n’a encore envoyé de télémétrie.<br/>Activez Support dans Configuration → Support sur un client.</div>`}
+    </div>
+    ${crashes.length ? `
+      <div style="height:16px"></div>
+      <div class="card">
+        <h3 style="color:var(--fg);font-size:15px;margin-bottom:12px">Derniers incidents (flotte)</h3>
+        <div class="list timeline">
+          ${crashes.slice(0, 10).map((c) => `
+            <div class="row">
+              <div class="avatar" style="background:#fef2f2;color:var(--bad)">!</div>
+              <div class="body">
+                <div class="title" style="font-size:13px">${esc(c.kind || "incident")} <span class="pill">v${esc(c.appVersion || "?")}</span> ${c.bootStage ? `<span class="pill">${esc(c.bootStage)}</span>` : ""}</div>
+                <div class="desc">${esc(c.message || "Sans détail")} · install <code>${esc(String(c.installId || "").slice(0, 8))}</code></div>
+              </div>
+              <div class="time">${ago(c.timestamp)}</div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    ` : ""}
+  `;
+  $("content").querySelectorAll("[data-open]").forEach((btn) => {
+    btn.onclick = () => go(btn.dataset.open, null, "overview");
+  });
+}
+
+function renderServerOverview() {
+  const s = state.server.server;
+  const users = state.server.users || [];
+  const activity = (state.server.activity || []).slice(0, 12);
+  const d = s.dossierStats;
+  const b = brand();
+  const third = d
+    ? `<div class="card"><h3>${esc(b.extrasTitle || "Dossiers")}</h3><div class="big">${Number(d.total) || 0}</div><div class="hint">${Number(d.actifs7j) || 0} actif(s) 7 j${d.pieces && d.pieces.total ? ` · pièces ${d.pieces.faites}/${d.pieces.total}` : ""}</div></div>`
+    : `<div class="card"><h3>Utilisateurs</h3><div class="big">${users.length}</div><div class="hint">${users.filter(u=>u.online==="online").length} en ligne</div></div>`;
+  $("content").innerHTML = `
+    <div class="grid stats">
+      <div class="card"><h3>Statut</h3><div style="margin-top:8px">${pillOnline(s.online)}</div><div class="hint">vu ${ago(s.lastSeen)}</div></div>
+      <div class="card"><h3>Version</h3><div class="big" style="font-size:22px">${s.appVersion || "?"}</div><div class="hint">${s.platform}/${s.arch}</div></div>
+      ${third}
+      <div class="card"><h3>Incidents</h3><div class="big">${s.crashCount || 0}</div><div class="hint">machine ${s.machine || "—"}</div></div>
+    </div>
+    ${d && Object.keys(d.parEtat || {}).length ? `
+      <div style="height:12px"></div>
+      <div class="card">
+        <h3>${esc(b.extrasTitle || "Dossiers")} par état</h3>
+        <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">${etatPills(d.parEtat)}</div>
+      </div>
+    ` : ""}
+    <div style="height:16px"></div>
+    <div class="grid two">
+      <div class="card">
+        <h3 style="margin-bottom:12px;color:var(--fg);font-size:15px">Utilisateurs</h3>
+        <div class="list">
+          ${users.map((u) => `
+            <button type="button" class="row" data-uid="${u.id}">
+              <div class="avatar">${initials(u.username)}</div>
+              <div class="body">
+                <div class="title">${u.username} ${pillOnline(u.online)}</div>
+                <div class="desc">${u.role}${u.kind === "ai" ? " · agent IA" : ""}</div>
+              </div>
+            </button>
+          `).join("")}
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:12px;color:var(--fg);font-size:15px">Activité récente</h3>
+        <div class="list timeline">
+          ${activity.map((a) => `
+            <div class="row">
+              <div class="body">
+                <div class="title" style="font-size:13px;font-weight:500">${esc(a.label)}</div>
+                <div class="desc"><span class="pill sky">${a.type}</span> ${a.path ? esc(a.path) : ""}</div>
+              </div>
+              <div class="time">${ago(a.at)}</div>
+            </div>
+          `).join("") || `<div class="empty">Pas encore d’activité remontée</div>`}
+        </div>
+      </div>
+    </div>
+  `;
+  $("content").querySelectorAll("[data-uid]").forEach((btn) => {
+    btn.onclick = () => go(state.route.slug, btn.dataset.uid, "activity");
+  });
+}
+
+function renderUsers() {
+  const users = state.server.users || [];
+  $("content").innerHTML = `
+    <div class="list">
+      ${users.map((u) => `
+        <button type="button" class="row" data-uid="${u.id}">
+          <div class="avatar">${initials(u.username)}</div>
+          <div class="body">
+            <div class="title">${u.username} ${pillOnline(u.online)}</div>
+            <div class="desc">Rôle ${u.role} · vu ${ago(u.lastSeen)}</div>
+          </div>
+          <span class="btn ghost">Ouvrir</span>
+        </button>
+      `).join("") || `<div class="empty">Aucun utilisateur — activez le scope « Comptes locaux » sur le client.</div>`}
+    </div>
+  `;
+  $("content").querySelectorAll("[data-uid]").forEach((btn) => {
+    btn.onclick = () => go(state.route.slug, btn.dataset.uid, "activity");
+  });
+}
+
+function fmtDur(ms) {
+  if (ms == null || !Number.isFinite(ms)) return "";
+  if (ms < 1000) return ms + " ms";
+  if (ms < 60000) return Math.round(ms / 1000) + " s";
+  return Math.round(ms / 60000) + " min";
+}
+
+function renderActivity(list) {
+  $("content").innerHTML = `
+    <div class="card">
+      <h3 style="color:var(--fg);font-size:15px;margin-bottom:12px">Fil d’activité</h3>
+      <div class="list timeline">
+        ${(list || []).map((a) => `
+          <div class="row">
+            <div class="avatar" style="width:28px;height:28px;font-size:10px">${initials(a.name || a.type)}</div>
+            <div class="body">
+              <div class="title" style="font-size:13px;font-weight:500">${esc(a.label)}</div>
+              <div class="desc">
+                <span class="pill sky">${esc(a.name || a.type)}</span>
+                ${a.category ? `<span class="pill">${esc(a.category)}</span>` : ""}
+                ${a.durationMs != null ? `<span class="pill ok">${fmtDur(a.durationMs)}</span>` : ""}
+                ${a.path ? `<code style="font-size:11px">${esc(a.path)}</code>` : ""}
+                ${a.username ? ` · ${esc(a.username)}` : ""}
+                ${a.meta && (a.meta.query || a.meta.aid) ? ` · <span class="muted">${esc(a.meta.query || a.meta.aid || "")}</span>` : ""}
+              </div>
+            </div>
+            <div class="time">${ago(a.at)}<br/><span style="font-size:10px">${esc(a.at || "")}</span></div>
+          </div>
+        `).join("") || `<div class="empty">Aucune activité pour l’instant.<br/>Sur le desktop : Support → Journal d’actions ON, puis naviguez / cliquez. Les pages seules peuvent apparaître avant les clics (desktop 0.6.2+).</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function renderHeatmap(rows) {
+  const list = rows || [];
+  $("content").innerHTML = `
+    <div class="card">
+      <h3 style="color:var(--fg);font-size:15px;margin-bottom:12px">Temps passé par page</h3>
+      <div class="list">
+        ${list.map((r) => `
+          <div class="row">
+            <div class="body">
+              <div class="title" style="font-size:13px"><code>${esc(r.path)}</code></div>
+              <div class="desc">${r.views} vue(s) · séjour cumulé ${fmtDur(r.dwellMs)}</div>
+            </div>
+            <div class="time">${fmtDur(r.dwellMs)}</div>
+          </div>
+        `).join("") || `<div class="empty">Pas encore de durées (page.hide). Naviguez dans l’app puis attendez le sync.</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function renderPlugins() {
+  const plugins = state.server?.server?.plugins || [];
+  $("content").innerHTML = `
+    <div class="list">
+      ${plugins.map((p) => `
+        <div class="row">
+          <div class="body">
+            <div class="title">${esc(p.name || p.id)} ${p.enabled ? pillOnline("online").replace("En ligne","ON") : '<span class="pill">OFF</span>'}</div>
+            <div class="desc">${esc(p.id)} · v${esc(p.version || "?")}</div>
+          </div>
+        </div>
+      `).join("") || `<div class="empty">Aucun plugin — activez le scope Plugins sur le client.</div>`}
+    </div>
+  `;
+}
+
+function renderConsent() {
+  const c = state.server?.server?.consent;
+  if (!c) {
+    $("content").innerHTML = `<div class="empty">Pas de consentement remonté</div>`;
+    return;
+  }
+  const scopes = c.scopes || {};
+  $("content").innerHTML = `
+    <div class="card">
+      <h3 style="color:var(--fg);font-size:15px">Consentement Support</h3>
+      <p class="hint">Master : ${c.enabled ? pillOnline("online").replace("En ligne","ON") : '<span class="pill bad">OFF</span>'}
+      ${c.consentAt ? ` · depuis ${esc(c.consentAt)}` : ""}</p>
+      <div class="list" style="margin-top:12px">
+        ${Object.entries(scopes).map(([k,v]) => `
+          <div class="row">
+            <div class="body"><div class="title" style="font-size:13px">${esc(k)}</div></div>
+            <div>${v ? '<span class="pill ok">ON</span>' : '<span class="pill">OFF</span>'}</div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderConversations(threads) {
+  const list = threads || [];
+  if (!list.length) {
+    $("content").innerHTML = `<div class="empty">Aucune conversation remontée.<br/>Activez « Hermes — chats » et/ou « Assistant in-app » dans Support.</div>`;
+    return;
+  }
+  let selected = list[0].id;
+  const paint = () => {
+    const t = list.find((x) => x.id === selected) || list[0];
+    $("content").innerHTML = `
+      <div class="grid two">
+        <div class="card" style="padding:10px">
+          <h3 style="color:var(--fg);font-size:15px;margin:6px 10px 12px">Conversations</h3>
+          <div class="list">
+            ${list.map((c) => `
+              <button type="button" class="row" data-cid="${escAttr(c.id)}" style="${c.id===selected?"border-color:var(--sky);background:#f0f9ff":""}">
+                <div class="body">
+                  <div class="title" style="font-size:13px">${esc(c.title)} <span class="pill">${c.source}</span></div>
+                  <div class="desc">${esc(c.preview || "")}</div>
+                </div>
+                <div class="time">${ago(c.updatedAt)}</div>
+              </button>
+            `).join("")}
+          </div>
+        </div>
+        <div class="card">
+          <h3 style="color:var(--fg);font-size:15px;margin-bottom:12px">${esc(t.title)}</h3>
+          <div class="chat">
+            ${(t.messages || []).map((m) => `
+              <div class="bubble ${m.role === "user" ? "user" : "assistant"}">
+                <div class="who">${m.role === "user" ? "Utilisateur" : "Assistant"} · ${ago(m.at)}</div>
+                ${esc(m.content || "")}
+              </div>
+            `).join("") || `<div class="empty">Pas de messages</div>`}
+          </div>
+        </div>
+      </div>
+    `;
+    $("content").querySelectorAll("[data-cid]").forEach((btn) => {
+      btn.onclick = () => { selected = btn.dataset.cid; paint(); };
+    });
+  };
+  paint();
+}
+
+function renderHealth() {
+  const h = state.server.server.health || {};
+  const keys = [
+    ["next", "CRM"],
+    ["meili", "Recherche"],
+    ["hermes", "Hermes"],
+    ["n8n", "n8n"],
+    ["tunnel", "Tunnel"],
+  ];
+  $("content").innerHTML = `
+    <div class="card">
+      <h3 style="color:var(--fg);font-size:15px;margin-bottom:14px">Santé des services</h3>
+      <div class="health-grid">
+        ${keys.map(([k, label]) => `
+          <div class="health-item">
+            <strong>${label}</strong>
+            ${healthLabel(h[k])}
+          </div>
+        `).join("")}
+      </div>
+      <div style="margin-top:16px;font-size:13px;color:var(--muted)">
+        Machine : <strong>${esc(state.server.server.machine || "—")}</strong>
+        · OS ${esc(state.server.server.osRelease || "")}
+        · install <code>${esc((state.server.server.installId || "").slice(0, 8))}</code>
+      </div>
+    </div>
+  `;
+}
+
+function renderIncidents() {
+  const items = state.server.incidents || [];
+  $("content").innerHTML = `
+    <div class="list">
+      ${items.map((c) => `
+        <div class="row">
+          <div class="avatar" style="background:#fef2f2;color:var(--bad)">!</div>
+          <div class="body">
+            <div class="title">${esc(c.kind || "incident")} ${c.bootStage ? `<span class="pill">${esc(c.bootStage)}</span>` : ""}</div>
+            <div class="desc">${esc(c.message || "Sans détail")}</div>
+          </div>
+          <div class="time">${ago(c.at)}</div>
+        </div>
+      `).join("") || `<div class="empty">Aucun incident pour ce serveur</div>`}
+    </div>
+  `;
+}
+
+function opsLevelPill(level) {
+  const colors = {
+    decision: "background:#eef2ff;color:#4338ca",
+    event: "background:#f0fdf4;color:#15803d",
+    anomaly: "background:#fff7ed;color:#c2410c",
+    error: "background:#fef2f2;color:#b91c1c",
+    crash: "background:#fef2f2;color:#7f1d1d",
+  };
+  return `<span class="pill" style="${colors[level] || ""}">${esc(level || "?")}</span>`;
+}
+
+function renderOps() {
+  const ops = state.server.ops || {};
+  const summary = ops.lastBootSummary || null;
+  const events = ops.events || [];
+  const decisions = summary ? Object.entries(summary.decisions || {}) : [];
+  const durations = summary ? Object.entries(summary.durations || {}) : [];
+  $("content").innerHTML = `
+    <div class="card">
+      <h3 style="color:var(--fg);font-size:15px;margin-bottom:10px">Dernier boot</h3>
+      ${summary ? `
+        <div class="hint" style="margin-bottom:10px">
+          boot <code>${esc(String(summary.bootId || "").slice(0, 8))}</code>
+          · ${esc(summary.startedAt || "?")}
+          ${summary.durationMs ? ` · ${Math.round(summary.durationMs / 1000)}s` : ""}
+          · v${esc(summary.appVersion || "?")}
+        </div>
+        <div class="list">
+          ${decisions.map(([kind, d]) => `
+            <div class="row">
+              <div class="body">
+                <div class="title" style="font-size:13px">${esc(kind)} → <strong>${esc(d.outcome || "?")}</strong></div>
+                <div class="desc">${esc(d.reason || "")}</div>
+              </div>
+            </div>
+          `).join("") || `<div class="empty">Aucune décision enregistrée</div>`}
+        </div>
+        ${durations.length ? `
+          <div class="hint" style="margin-top:10px">
+            Durées : ${durations.map(([k, v]) => `${esc(k)} ${Math.round(v / 1000)}s`).join(" · ")}
+          </div>
+        ` : ""}
+      ` : `<div class="empty">Pas encore de résumé de boot (client < 0.9 ou scope « Boîte noire » désactivé)</div>`}
+    </div>
+    <div style="height:16px"></div>
+    <div class="card">
+      <h3 style="color:var(--fg);font-size:15px;margin-bottom:12px">Événements (${events.length})</h3>
+      <div class="list timeline">
+        ${events.map((e) => `
+          <div class="row">
+            <div class="body">
+              <div class="title" style="font-size:13px">
+                ${opsLevelPill(e.level)} ${esc(e.kind)}
+                ${e.outcome ? `→ <strong>${esc(e.outcome)}</strong>` : ""}
+                ${e.durationMs != null ? `<span class="pill">${Math.round(e.durationMs / 1000)}s</span>` : ""}
+              </div>
+              <div class="desc">${esc(e.reason || "")}${e.ctx ? ` · <code style="font-size:11px">${esc(JSON.stringify(e.ctx).slice(0, 220))}</code>` : ""}</div>
+            </div>
+            <div class="time">${ago(e.ts)}<br><span style="font-size:10px">${esc(e.source || "")} · ${esc(String(e.bootId || "").slice(0, 8))}</span></div>
+          </div>
+        `).join("") || `<div class="empty">Aucun événement remonté (scope « Boîte noire » désactivé ?)</div>`}
+      </div>
+    </div>
+  `;
+}
+
+async function renderPilotage() {
+  const installId = state.server.server.installId;
+  const cmds = await api("/ops/api/commands");
+  const mine = (cmds.commands || []).filter((c) => c.installId === installId).slice().reverse();
+  $("content").innerHTML = `
+    <div class="card">
+      <h3 style="color:var(--fg);font-size:15px">Pilotage distant</h3>
+      <p class="hint" style="margin:8px 0 0">Exécuté seulement si le client a activé « Accepter le pilotage distant ».</p>
+      <div class="actions">
+        <button class="btn" data-cmd="sync-now">Sync maintenant</button>
+        <button class="btn ghost" data-cmd="force-update-check">Vérifier les mises à jour</button>
+        <button class="btn ghost" data-cmd="restart-n8n">Redémarrer n8n</button>
+        <button class="btn ghost" data-cmd="restart-hermes">Redémarrer Hermes</button>
+      </div>
+    </div>
+    <div style="height:16px"></div>
+    <div class="card">
+      <h3 style="color:var(--fg);font-size:15px;margin-bottom:12px">Historique</h3>
+      <div class="list timeline">
+        ${mine.map((c) => `
+          <div class="row">
+            <div class="body">
+              <div class="title" style="font-size:13px">${esc(c.command)} <span class="pill">${esc(c.status)}</span></div>
+              <div class="desc">${esc(c.resultDetail || "")}</div>
+            </div>
+            <div class="time">${ago(c.createdAt)}</div>
+          </div>
+        `).join("") || `<div class="empty">Aucune commande</div>`}
+      </div>
+    </div>
+  `;
+  $("content").querySelectorAll("[data-cmd]").forEach((btn) => {
+    btn.onclick = async () => {
+      btn.disabled = true;
+      await api("/ops/api/commands", {
+        method: "POST",
+        body: JSON.stringify({ installId, command: btn.dataset.cmd }),
+      });
+      await renderPilotage();
+    };
+  });
+}
+
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function escAttr(s) { return esc(s).replace(/'/g, "&#39;"); }
+
+async function render() {
+  parseHash();
+  const { slug, userId, tab } = state.route;
+
+  if (!state.fleet) state.fleet = await api("/ops/api/fleet");
+  $("sideStats").textContent =
+    `${state.fleet.stats.online} en ligne · ${state.fleet.stats.servers} serveur(s)`;
+
+  if (!slug) {
+    state.server = null;
+    state.user = null;
+    renderSidebar();
+    renderHome();
+    return;
+  }
+
+  state.server = await api("/ops/api/server/" + encodeURIComponent(slug));
+  if (!state.server.ok) {
+    $("content").innerHTML = `<div class="empty">Serveur introuvable</div>`;
+    return;
+  }
+
+  if (userId) {
+    const u = await api(
+      `/ops/api/server/${encodeURIComponent(slug)}/user/${encodeURIComponent(userId)}`,
+    );
+    state.user = u.ok ? u : null;
+  } else {
+    state.user = null;
+  }
+
+  renderSidebar();
+
+  if (userId && state.user) {
+    const u = state.user.user;
+    $("crumb").innerHTML = `<button type="button" id="cServers">Flotte</button> / <button type="button" id="cServer">${esc(slug)}</button> / ${esc(u.username)}`;
+    $("pageTitle").textContent = u.username;
+    $("pageSub").textContent = `${u.role} · ${slug} · ${pillOnline(u.online)}`.replace(/<[^>]+>/g, "");
+    $("pageSub").innerHTML = `${esc(u.role)} sur <strong>${esc(slug)}</strong> · ${pillOnline(u.online)}`;
+    $("cServers").onclick = () => go(null);
+    $("cServer").onclick = () => go(slug, null, "overview");
+    setTabs([
+      { id: "activity", label: "Activité" },
+      { id: "pages", label: "Temps / pages" },
+      { id: "conversations", label: "Conversations" },
+      { id: "incidents", label: "Incidents" },
+    ], tab === "overview" ? "activity" : tab);
+    const t = tab === "overview" ? "activity" : tab;
+    if (t === "conversations") renderConversations(state.user.conversations);
+    else if (t === "incidents") renderIncidents();
+    else if (t === "pages") renderHeatmap(state.user.heatmap);
+    else renderActivity(state.user.activity);
+    return;
+  }
+
+  const s = state.server.server;
+  $("crumb").innerHTML = `<button type="button" id="cServers">Flotte</button> / ${esc(slug)}`;
+  $("cServers").onclick = () => go(null);
+  $("pageTitle").textContent = slug;
+  $("pageSub").innerHTML = `${esc(s.hostname)} · v${esc(s.appVersion)} · ${pillOnline(s.online)}`;
+  setTabs([
+    { id: "overview", label: "Vue d’ensemble" },
+    { id: "users", label: "Utilisateurs" },
+    { id: "activity", label: "Activité" },
+    { id: "conversations", label: "Conversations" },
+    { id: "health", label: "Santé" },
+    { id: "plugins", label: "Plugins" },
+    { id: "consent", label: "Consentement" },
+    { id: "incidents", label: "Incidents" },
+    { id: "ops", label: "Boîte noire" },
+    { id: "pilotage", label: "Pilotage" },
+  ], tab);
+  if (tab === "users") renderUsers();
+  else if (tab === "activity") renderActivity(state.server.activity);
+  else if (tab === "conversations") renderConversations(state.server.conversations);
+  else if (tab === "health") renderHealth();
+  else if (tab === "plugins") renderPlugins();
+  else if (tab === "consent") renderConsent();
+  else if (tab === "incidents") renderIncidents();
+  else if (tab === "ops") renderOps();
+  else if (tab === "pilotage") await renderPilotage();
+  else renderServerOverview();
+}
+
+window.addEventListener("hashchange", () => { void render(); });
+void render();
+setInterval(() => {
+  state.fleet = null;
+  void render();
+}, 30000);
+</script>
+</body>
+</html>

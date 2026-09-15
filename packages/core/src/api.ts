@@ -1,3 +1,4 @@
+import type { D1Database } from "@cloudflare/workers-types";
 import type { ApiContext, BeforeWrite, Identity, Module, Role, Workspace } from './types.ts';
 import { ApiError, boundedInteger, fail, requireModuleRole, requireRole, roles, validateData } from './validation.ts';
 import { checkOrigin, hash, inviteToken, json, readBytes, readJson } from './http.ts';
@@ -15,7 +16,7 @@ function audit(db: D1Database, org: string, user: string, action: string, resour
   return db.prepare(`INSERT INTO lite_audit (id, org_id, user_id, action, resource_id, details, created_at) SELECT ?,?,?,?,?,?,? ${condition}`)
     .bind(uuid(), org, user, action, resource, JSON.stringify(details), timestamp());
 }
-async function workspace(db: D1Database, user: Identity, id: string | null): Promise<Workspace> {
+export async function workspace(db: D1Database, user: Identity, id: string | null): Promise<Workspace> {
   const row = id
     ? await db.prepare('SELECT o.id, o.name, m.role FROM lite_orgs o JOIN lite_members m ON m.org_id=o.id WHERE m.user_id=? AND o.id=?').bind(user.userId,id).first<Workspace>()
     : await db.prepare('SELECT o.id, o.name, m.role FROM lite_orgs o JOIN lite_members m ON m.org_id=o.id WHERE m.user_id=? ORDER BY o.created_at, o.id LIMIT 1').bind(user.userId).first<Workspace>();
@@ -39,7 +40,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     if (path === 'health' && request.method === 'GET') {
       if (!context.env.DB) fail(503,'database_unavailable','Base de données indisponible.');
       await context.env.DB.prepare('SELECT id FROM lite_orgs LIMIT 1').first();
-      return json({ok:true,kit:'creezio-lite',version:'0.1.0',database:'ready'});
+      return json({ok:true,kit:'creezio-lite',version:'0.2.0',database:'ready'});
     }
     const user = context.identity;
     if (!user?.userId || !user.email) fail(401,'authentication_required','Connectez-vous pour continuer.');

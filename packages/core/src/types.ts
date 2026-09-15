@@ -1,3 +1,4 @@
+import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
 export type Role = 'owner' | 'admin' | 'member' | 'viewer';
 export type Identity = { userId: string; email: string; displayName: string };
 export type Field = {

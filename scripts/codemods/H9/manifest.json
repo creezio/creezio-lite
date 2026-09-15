@@ -1,0 +1,4 @@
+{
+  "scripts": ["h9-import-module-contract.mjs"],
+  "since": "0.16.0"
+}

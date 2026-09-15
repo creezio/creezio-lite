@@ -1,0 +1,26 @@
+{
+  "brandId": "tempoflow3",
+  "brandName": "TempoFlow",
+  "vertical": "chr",
+  "entityIds": [
+    "fournisseurs",
+    "produits",
+    "prix",
+    "panier_lignes",
+    "commandes"
+  ],
+  "pagePaths": [
+    "/dashboard",
+    "/fournisseurs",
+    "/produits",
+    "/prix",
+    "/panier",
+    "/commandes"
+  ],
+  "flowId": "commande_fournisseur",
+  "platformNeeds": {
+    "auth": true,
+    "desktop": true,
+    "pluginApi": true
+  }
+}

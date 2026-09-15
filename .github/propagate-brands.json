@@ -1,0 +1,17 @@
+{
+  "$comment": "Config data-driven du rollout npm flotte (P3.b) — consommée par scripts/propagate-brands.mjs via le workflow propagate.yml. Ajouter une marque = ajouter une entrée ici (aucun nom en dur dans packages/*/src).",
+  "brands": [
+    {
+      "brandId": "tempoflow3",
+      "label": "TempoFlow3",
+      "repo": "creezio/tempoflow3",
+      "defaultBranch": "main"
+    },
+    {
+      "brandId": "tempoflowadmin",
+      "label": "TempoFlow Admin",
+      "repo": "creezio/tempoflow3-admin",
+      "defaultBranch": "main"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "scripts": ["h13-ui-debrand.mjs"],
+  "since": "0.26.0"
+}

@@ -1,0 +1,33 @@
+brandId: {{brandId}}
+brandName: {{brandName}}
+domain: {{domain}}
+tagline: {{tagline}}
+vertical: {{vertical}}
+sandbox: true
+
+platform:
+  auth: true
+  desktop: true
+  pluginApi: true
+  chat: true
+  sync: false
+  meili: true
+  mcp: true
+  onboarding: {{onboardingEnabled}}
+
+meili:
+  enabled: true
+  feedPreset: {{meiliPreset}}
+
+mcp:
+  enabled: true
+  allowUnauthenticated: true
+  spaces:
+    - module
+    - plugin
+
+onboarding:
+  enabled: {{onboardingEnabled}}
+  slugPlaceholder: mon-espace
+  requireOpenaiKey: false
+  afterCompleteHref: {{afterCompleteHref}}

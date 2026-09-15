@@ -1,0 +1,48 @@
+{
+  "name": "@creezio/api-kernel",
+  "version": "0.26.0",
+  "description": "Façade HTTP unique Creezio — core/platform/modules/plugins (deny-by-default)",
+  "type": "module",
+  "main": "./dist-cjs/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist-cjs/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "dist-cjs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@creezio/brand-config": "^0.26.0",
+    "@creezio/platform-core": "^0.26.0",
+    "hono": "^4.12.32"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  },
+  "license": "UNLICENSED",
+  "module": "./dist/index.js",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/creezio/creezio.git",
+    "directory": "packages/api-kernel"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

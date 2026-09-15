@@ -1,0 +1,58 @@
+# Rollout npm flotte-wide (P3.b) — après chaque Publish réussi sur main,
+# ouvre une PR de bump `@creezio/*` chez chaque marque configurée
+# (.github/propagate-brands.json) avec le rapport kit:impact en corps
+# (@creezio/propagation — buildAllBrandPrPayloads).
+#
+# Le script scripts/propagate-brands.mjs est no-op si le HEAD n'est pas un
+# commit release changesets (« chore(release): version packages ») : Publish
+# tourne sur chaque push main, mais seule une release doit propager.
+#
+# Secret requis : CREEZIO_PROPAGATE_TOKEN — PAT du compte creezio avec
+# `repo` (contents + pull_requests write sur creezio/tempoflow3 et
+# creezio/tempoflow3-admin) et `read:packages` (régénération lockfile
+# contre npm.pkg.github.com). Le GITHUB_TOKEN éphémère ne suffit pas
+# (pas d'accès cross-repo).
+name: Propagate
+
+on:
+  workflow_run:
+    workflows: [Publish]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Propager même si HEAD n'est pas un commit release"
+        type: boolean
+        default: false
+
+concurrency:
+  group: propagate-kit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  propagate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Build packages (dist propagation + deps)
+        run: npm run build:packages
+      - name: Ouvrir les PRs de bump marque
+        run: node scripts/propagate-brands.mjs
+        env:
+          CREEZIO_PROPAGATE_TOKEN: ${{ secrets.CREEZIO_PROPAGATE_TOKEN }}
+          CREEZIO_NPM_TOKEN: ${{ secrets.CREEZIO_PROPAGATE_TOKEN }}
+          PROPAGATE_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force && '1' || '' }}

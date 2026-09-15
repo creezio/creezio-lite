@@ -1,28 +1,36 @@
-# Créer une application avec Creezio Lite dans ChatGPT
+# Créer une application à partir de Creezio Lite
 
-Ce document est le point d'entrée destiné à l'agent qui reçoit le dépôt.
+Ce fichier est le point d’entrée pour une nouvelle conversation ChatGPT. Dépôt : https://github.com/creezio/creezio-lite.
 
-## Résultat attendu
+## Contrat à respecter
 
-Créer une application métier indépendante à partir de ce kit, puis la publier dans **Sites**. Le dépôt Creezio Lite reste le socle partagé. Une application client n'est jamais développée en écrasant le kit.
+Creezio Lite est un fork du kit Creezio avec un profil Sites. **Il faut réutiliser le vrai code et le vrai design.** Ne pas redessiner une sidebar, un système d’onglets, une palette ou des écrans ressemblants. Le shell est `WorkspaceRoot` ; les composants viennent des packages `@creezio/*` restaurés.
 
-1. Lire `AGENTS.md`, `docs/COMPATIBILITY.md` et le README. Vérifier l'accès au dépôt et la présence des capacités Sites et d'exécution de code. Ne pas promettre de publication si ces capacités sont absentes.
-2. Comprendre l'objectif, les utilisateurs, les entités, les données à mémoriser et les parcours. Poser uniquement les questions métier indispensables. Le produit doit être défini avant de choisir les modules ; les exemples ne sont pas le produit par défaut.
-3. Cloner ou récupérer ce dépôt et relever son commit. Ne pas chercher de token npm Creezio : le générateur n'en a pas besoin.
-4. Transformer le brief en un JSON conforme à `examples/services.json` et aux types de `packages/core/src/types.ts`. Les identifiants de modules sont stables ; les champs de sélection portent leurs options métier.
-5. Exécuter `node bin/creezio-lite.mjs create --spec /chemin/brief.json --out /chemin/application-vide`. Le générateur refuse les écrasements et produit une application sans identifiant Sites, données, clés ni Git du kit.
-6. Lire le `AGENTS.md` de l'application générée. À partir de là, travailler dans cette application. Utiliser la version **actuellement installée** du workflow Sites pour configurer l'environnement et installer le projet existant. Préserver son architecture, ses dépendances et son lockfile ; ne pas recouvrir le projet avec un starter générique.
-7. Adapter `brand.json`, les pages, `app/business-rules.ts` et, si nécessaire, créer des tables D1 et routes métier dédiées. Le CRUD déclaratif ne remplace pas une logique de facturation, de stock ou de réservation transactionnelle.
-8. Pour de nouveaux schémas, utiliser `db:generate`, examiner la migration et garder les migrations déjà appliquées immuables. Vérifier les permissions sur chaque route, la séparation des espaces et les erreurs de stockage.
-9. Exécuter le doctor depuis le kit, le typecheck et le build de l'application. Tester les parcours réels demandés et les accès refusés. Pour les fonctionnalités non disponibles dans Sites, annoncer la limite et proposer une intégration compatible sans l'inventer.
-10. Publier via Sites, avec l'audience autorisée par l'utilisateur. Réutiliser `.openai/hosting.json.project_id` s'il existe ; sinon enregistrer un nouveau Site une seule fois et conserver son ID exact. Le Git de l'application doit être indépendant du dépôt du kit. Vérifier le statut final de publication avant de remettre l'URL.
+Lire `README.md`, `docs/COMPATIBILITY.md` et `AGENTS.md`. La matrice indique ce qui fonctionne, ce qui est seulement conservé en source et ce qui exige un hôte externe. Ne pas annoncer une compatibilité générale à partir de la seule présence des packages. Hermes et n8n sont désactivés dans le profil Sites.
 
-## Connexion et partage
+## Parcours pour l’agent
 
-La version 0.1 utilise Sign in with ChatGPT, pas les mots de passe du Creezio original. Le partage Sites et les membres d'un espace applicatif sont deux contrôles complémentaires. Une invitation applicative ne modifie jamais le partage Sites. Une app client publique avec un autre fournisseur d'identité nécessite une adaptation validée avec les capacités Sites du moment.
+1. Utiliser les plugins GitHub et Sites disponibles dans la conversation. Lire leurs instructions. Si Sites n’est pas disponible, préparer le projet et expliquer qu’il faut activer Sites pour le publier ; ne pas inventer de lien.
+2. Lire le besoin métier, préciser seulement les inconnues bloquantes, puis choisir les modules et les droits adaptés. Une fonction native non portée ne doit pas être remplacée silencieusement par un faux écran ou une liste en mémoire.
+3. Récupérer ce dépôt sans l’écraser. Il est le kit, pas l’application finale. Lire ses sources avant de les modifier.
+4. Pour le profil Sites, créer un brief JSON à partir de `examples/services.json` ou `examples/catalogue.json`. Ce format propre au profil web ne remplace pas le BrandSpec YAML ni la factory desktop du monorepo.
+5. Générer une application **indépendante** dans un dossier vide :
 
-## Brief minimal
+   ```bash
+   node /chemin/creezio-lite/bin/creezio-lite.mjs create --spec /chemin/brief.json --out /chemin/nouvelle-app
+   ```
 
-« Une app pour [public] qui permet [activité]. Les utilisateurs gèrent [entités], avec [champs/règles]. Les rôles sont [rôles]. Les données doivent être conservées. Je veux la publier dans Sites. »
+   Le générateur copie les vrais packages, leur configuration source, les adaptateurs Sites et le template. Il ne copie aucun secret, donnée, dépôt Git ni `project_id`. Il ne crée pas lui-même de Site.
+6. Lire `AGENTS.md` dans le projet généré. Utiliser le workflow Sites pour ce projet existant : configuration du profil, installation depuis son lockfile, migrations D1, construction, enregistrement et publication. Ne pas lancer un autre initializer qui remplacerait le shell.
+7. Personnaliser l’identité et le métier dans `brand.json`, `app` et les migrations applicatives. Les fonctions spécifiques restent dans l’application. Pour une modification générique, corriger le kit puis propager le changement avec contrôle de provenance.
+8. Vérifier `doctor`, les opérations réelles, les droits, le typecheck et le build. Tester les règles métier relationnelles avec des tables et transactions adaptées ; le CRUD JSON n’est pas une comptabilité ou un moteur de réservation.
+9. Enregistrer un nouveau Site quand l’application ne possède pas de `project_id`. Pour les modifications suivantes, préserver ce `project_id`, ses données et son audience. Publier puis remettre l’URL confirmée par Sites.
 
-Si la personne dit seulement « Crée une app à partir de Creezio Lite », commencer par lui demander ce que l'app doit permettre de faire. Aucun module métier arbitraire ne doit être présenté comme son application terminée.
+## Points de vigilance techniques
+
+- Backend Sites : Worker, D1 asynchrone, R2 ; aucune équivalence automatique avec `better-sqlite3` ou le runtime Electron.
+- Identité : `getChatGPTUser()` lit l’identité vérifiée par le dispatcher Sites. Ne pas accepter un rôle ou un identifiant utilisateur arbitraire dans les données client.
+- Les couches du kernel original existent. L’isolation physique SQLite core/brand/plugin n’est pas simulée : le profil utilise une base D1 par app avec isolation des espaces dans les requêtes.
+- Les routes natives branchées sont visibles dans `packages/sites-adapter`. Les fonctions absentes de cette intégration ne sont pas déclarées opérationnelles.
+- Ne pas recopier une application métier dans `creezio/creezio-lite`. Le code propre à l’app appartient à son dépôt et au projet Sites.
+- Ne pas reprendre l’application Atelier ni son identifiant : c’est seulement une validation du kit.

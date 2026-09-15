@@ -1,0 +1,27 @@
+{
+  "id": "insights-assistant",
+  "name": "Insights Assistant",
+  "version": "1.0.0",
+  "description": "Synthèse IA générique des données de l'application (découverte des modules via /api/v1/core/architecture — zéro métier marque).",
+  "main": "index.js",
+  "permissions": ["crm:read", "llm:use", "ui:panel", "net:loopback"],
+  "panel": { "title": "Synthèse IA", "path": "/" },
+  "mcpTools": [
+    {
+      "name": "synthesize",
+      "description": "Analyse toutes les données de l'application et génère une synthèse IA (dry=true : sans appel LLM)",
+      "method": "POST",
+      "path": "/api/synthesis",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dry": {
+            "type": "boolean",
+            "description": "true = collecte + prompt sans appel LLM"
+          }
+        }
+      }
+    }
+  ],
+  "source": "kit-template"
+}

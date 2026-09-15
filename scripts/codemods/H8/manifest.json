@@ -1,0 +1,4 @@
+{
+  "scripts": ["h8-materialize-brand-manifest.mjs"],
+  "since": "0.13.0"
+}

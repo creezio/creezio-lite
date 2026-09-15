@@ -1,4 +1,4 @@
-# API HTTP 0.1
+# API HTTP — profil Sites 0.2
 
 Préfixe : `/api/v1`. Toutes les routes sauf `GET /health` exigent une identité Sites. Un paramètre `workspace=<id>` sélectionne un espace auquel l'utilisateur appartient ; sans ce paramètre, le premier espace de l'utilisateur est utilisé.
 
@@ -36,3 +36,22 @@ Les listes de documents renvoient `items`, `total`, `limit`, `offset` et `search
 Erreurs : `{error:{code,message,requestId}}`. Codes HTTP principaux : 400 (validation), 401 (connexion), 403 (rôle/origine), 404 (absent ou inaccessible), 409 (conflit de version), 413 (taille), 415 (format), 503 (stockage/service). Un conflit de version impose une nouvelle lecture ; ne pas réessayer en remplaçant aveuglément la version.
 
 Les écritures d'un document et de son audit sont atomiques. Un hook métier qui exige une atomicité multi-documents doit utiliser une route dédiée et un batch/une contrainte de base de données.
+
+
+## Modules natifs branchés
+
+Ces routes utilisent le kernel original et les contrats de ses composants React :
+
+| Routes | Usage |
+|---|---|
+| `GET /api/v1/auth/me` | Session Creezio adaptée à l’identité vérifiée de Sites ; rôle et permissions issus de l’espace courant |
+| `POST /api/v1/workspaces/select` | Vérifie l’appartenance puis enregistre la préférence d’espace dans un cookie HttpOnly |
+| `/api/v1/modules/nav` | Catalogue, `/catalog`, `PUT /overrides`, `PUT /overrides/reorder`, `DELETE /overrides/:id` ; modifications réservées aux administrateurs |
+| `/api/v1/platform/platform-support` | Tickets, `/:id`, `/:id/messages`, `/:id/reply`, `/:id/statut`, `/export` ; réponse admin et export protégés |
+| `/api/v1/modules/interactive-demo` | `/scenarios`, `/scenarios/:id`, `/preferences` ; overrides admin et préférences limitées à l’identité courante |
+| `/api/v1/tasks` | Kanban humain, `/meta`, création, `/:id` lecture/modification/suppression ; pas de lancement IA ou Hermes |
+| `/api/v1/core/health`, `/version`, `/architecture` | Routes du kernel original ; l’architecture indique honnêtement l’absence de runtime SQLite |
+
+Les API natives renvoient leurs contrats historiques (`items`, `task`, `columns`, etc.). Les erreurs de l’adaptateur sont `{ok:false,error:string,code:string}`. Les extensions métier Lite conservent leur format d’erreur existant. Le client reconnaît les deux formats.
+
+Les mutations nav émettent `x-creezio-data-changed: nav`, consommé par le bus original et le loader de sidebar. Les routes non intégrées ne sont pas remplacées par des réponses factices. Voir COMPATIBILITY.md pour la portée exacte.

@@ -1,0 +1,18 @@
+# Copier vers wrangler.toml côté ops marque, puis renseigner name / account_id.
+# Les domaines NE sont PAS hardcodés ici — injectés en vars Worker.
+
+name = "creezio-email-inbound"
+main = "worker.js"
+compatibility_date = "2026-01-15"
+# account_id = "YOUR_CF_ACCOUNT_ID"
+
+[vars]
+# MAIL_ROOT_DOMAIN = "tempoflow.fr"
+# MAIL_SUBDOMAIN = "mail"
+# CRM_INBOUND_URL_TEMPLATE = "https://{slug}.{root}/api/v1/email/inbound"
+
+# Secret :
+#   wrangler secret put EMAIL_INBOUND_SECRET
+#
+# Puis Email Routing (zone) :
+#   Catch-all → Send to Worker → ce worker

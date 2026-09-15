@@ -1,0 +1,42 @@
+{
+  "appId": "io.creezio.demobrand",
+  "productName": "DemoBrand",
+  "copyright": "© DemoBrand",
+  "directories": {
+    "output": "dist-electron",
+    "buildResources": "resources"
+  },
+  "files": [
+    "build/electron/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "build/electron",
+      "to": "build/electron",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "resources/renderer",
+      "to": "renderer"
+    }
+  ],
+  "asar": true,
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "include": "installer.nsh"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ]
+  }
+}

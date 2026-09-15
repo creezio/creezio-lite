@@ -1,6 +1,6 @@
 {
   "name": "creezio-lite-template",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -13,7 +13,10 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "typecheck": "tsc --noEmit",
-    "db:local": "node scripts/migrate-local.mjs"
+    "db:local": "node scripts/migrate-local.mjs",
+    "prebuild": "node scripts/prepare-creezio.mjs",
+    "pretypecheck": "node scripts/prepare-creezio.mjs",
+    "predev": "node scripts/prepare-creezio.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -39,7 +42,21 @@
     "sonner": "^2.0.8",
     "tailwind-merge": "3.6.0",
     "vaul": "^1.1.2",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@radix-ui/react-avatar": "1.1.10",
+    "@radix-ui/react-dialog": "1.1.15",
+    "@radix-ui/react-dropdown-menu": "2.1.16",
+    "@radix-ui/react-label": "2.1.7",
+    "@radix-ui/react-scroll-area": "1.2.10",
+    "@radix-ui/react-select": "2.2.6",
+    "@radix-ui/react-separator": "1.1.7",
+    "@radix-ui/react-slot": "1.2.3",
+    "@radix-ui/react-tabs": "1.1.13",
+    "@radix-ui/react-tooltip": "1.2.8",
+    "@tanstack/react-table": "8.21.3",
+    "creezio-resizable-panels": "npm:react-resizable-panels@3.0.6",
+    "creezio-recharts": "npm:recharts@2.15.4",
+    "hono": "4.12.32"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",

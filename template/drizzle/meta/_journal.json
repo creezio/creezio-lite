@@ -8,6 +8,13 @@
       "when": 1789455624296,
       "tag": "0000_new_jane_foster",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789459671460,
+      "tag": "0001_strange_praxagora",
+      "breakpoints": true
     }
   ]
 }

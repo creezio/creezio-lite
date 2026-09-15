@@ -1,0 +1,606 @@
+{
+  "$comment": "Allowlist DÉCROISSANTE de la gate test-phase-no-brand-vocab.mjs (P1.a). Chaque entrée = dette héritée matérialisée (fichier + pattern + compteur + ticket audit). Règles : nouvelle occurrence hors allowlist = rouge ; compteur réel < compteur listé = rouge (décrémenter ici) ; entrée sans occurrence = rouge (la retirer). Maintenance : node scripts/lib/brand-vocab.mjs --write-allowlist (rétrécit uniquement — refuse tout ajout/incrément). NE JAMAIS ajouter une entrée pour faire passer un commit.",
+  "globalExclusions": [],
+  "entries": [
+    {
+      "file": "packages/admin/ui/prospects-kanban-client.tsx",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/app-runtime/src/compose-brand-os.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/app-runtime/src/listen-brand-os-http.ts",
+      "pattern": "foove",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/app-runtime/src/listen-brand-os-http.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/app-runtime/src/listen-brand-os-http.ts",
+      "pattern": "winhub",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/app-runtime/src/mount-brand-platform-surface.ts",
+      "pattern": "tf2",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/assistant/src/runtime/agent-loop.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/assistant/src/runtime/assistant-chat.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/assistant/src/runtime/chat-db.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/assistant/src/runtime/tasks-tools.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/assistant/ui/ui-driver.tsx",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/auth/src/hono-middleware.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/auth/src/hono-middleware.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/auth/src/hono-middleware.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/auth/src/session.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/brand-config/src/create-manifest.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "F1.4 — brand-config : identités marque câblées hors manifests"
+    },
+    {
+      "file": "packages/brand-config/src/create-manifest.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "F1.4 — brand-config : identités marque câblées hors manifests"
+    },
+    {
+      "file": "packages/brand-config/src/create-manifest.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "F1.4 — brand-config : identités marque câblées hors manifests"
+    },
+    {
+      "file": "packages/database/src/engine.ts",
+      "pattern": "tf2",
+      "count": 4,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/database/src/http/admin-routes.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/database/src/webhooks.ts",
+      "pattern": "tf2",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/desktop-tooling/src/desktop-build-status.ts",
+      "pattern": "tempoflow",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/desktop-tooling/src/resolve-publish-config.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/desktop-tooling/src/resolve-publish-config.ts",
+      "pattern": "tf3",
+      "count": 5,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/admin-repo.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/cli.ts",
+      "pattern": "tempoflow",
+      "count": 8,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/cli.ts",
+      "pattern": "tf3",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/generators/brand-workflows.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/generators/modules-registry.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/generators/native-runtime.ts",
+      "pattern": "foove",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/generators/os-ui.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/generators/os-ui.ts",
+      "pattern": "tf3",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/generators/tests.ts",
+      "pattern": "foove",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/generators/tests.ts",
+      "pattern": "tf2",
+      "count": 8,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/github-repos.ts",
+      "pattern": "foove",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/github-repos.ts",
+      "pattern": "tempoflow",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/product-model.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/product-model.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/product-model.ts",
+      "pattern": "foove",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/product-model.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/server-docker-cli.ts",
+      "pattern": "foove",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/factory/src/server-docker-tunnel.ts",
+      "pattern": "foove",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/ai-workspace/bindings.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/ai-workspace/bindings.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/ai-workspace/bindings.ts",
+      "pattern": "tempoflow",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/ai-workspace/bindings.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/brand-host-runtime.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/brand-host-stack.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/brand-host-stack.ts",
+      "pattern": "fidu",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/context.ts",
+      "pattern": "tempoflow",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/local-config.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/n8n/agent-isolation.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/n8n/launcher.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/n8n/launcher.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/node-runtime.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/npm-cli.ts",
+      "pattern": "tempoflow",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/plugins/control-adapters.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/plugins/control-plane.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/plugins/crm-key.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/plugins/launcher.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/plugins/runtime.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/safe-storage.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/sandbox/embed-sandbox.ts",
+      "pattern": "tempoflow",
+      "count": 3,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/sandbox/os-sandbox.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/host-runtime/src/server-launcher.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/mails/src/config.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/observability/src/ops/types.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "F1.6 — observability/propagation : registre org et marques en dur"
+    },
+    {
+      "file": "packages/observability/src/ops/types.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "F1.6 — observability/propagation : registre org et marques en dur"
+    },
+    {
+      "file": "packages/os-ui/src/boot.tsx",
+      "pattern": "foove",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/platform-core/src/app-require.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/platform-core/src/embeds/hermes-embed.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/platform-core/src/licensing.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/platform-core/src/plugins/plugin-execution-grant.ts",
+      "pattern": "tf2",
+      "count": 3,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/platform-core/src/tunnel-cf.ts",
+      "pattern": "winhub",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/platform-core/src/web-allowlist.ts",
+      "pattern": "tf3",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/acl.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/acl.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/control-plane/handler.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/control-plane/handler.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/control-plane/types.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/impact.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/impact.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/lifecycle.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/lifecycle.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/n8n-provisioning.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/schema-sql.ts",
+      "pattern": "certivan",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/product-hub/src/schema-sql.ts",
+      "pattern": "tf2",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/shell-ui/src/brand.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/shell-ui/ui/app-error-boundary.tsx",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/shell-ui/ui/desktop/site-link.tsx",
+      "pattern": "tf2",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/shell-ui/ui/lib/aid.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/shell-ui/ui/settings/api-keys-settings.tsx",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/shell-ui/ui/settings/ops-diagnostic-settings.tsx",
+      "pattern": "tf2",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/shell/src/ipc-channels.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/shell/src/ipc-channels.ts",
+      "pattern": "fidu",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/shell/src/types.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/shell/src/types.ts",
+      "pattern": "tf2",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/shell/src/window.d.ts",
+      "pattern": "certivan",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/tasks/src/brand/config.ts",
+      "pattern": "tempoflow",
+      "count": 1,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    },
+    {
+      "file": "packages/tasks/src/brand/config.ts",
+      "pattern": "tf2",
+      "count": 2,
+      "ticket": "P1.a — inventaire initial audit (héritage contractuel divers, à ventiler lors du nettoyage P1.b+)"
+    }
+  ]
+}

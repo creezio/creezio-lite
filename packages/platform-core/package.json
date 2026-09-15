@@ -1,0 +1,68 @@
+{
+  "name": "@creezio/platform-core",
+  "version": "0.26.0",
+  "description": "Paths userData / local-config schema paramétrés par brand-config (sans marque hardcodée)",
+  "type": "module",
+  "main": "./dist-cjs/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist-cjs/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "dist-cjs",
+    "kit-packages.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@creezio/brand-config": "^0.26.0"
+  },
+  "peerDependencies": {
+    "@creezio/auth": ">=0.4.0",
+    "@creezio/database": ">=0.4.0",
+    "@creezio/product-hub": ">=0.4.0",
+    "better-sqlite3": ">=9"
+  },
+  "peerDependenciesMeta": {
+    "@creezio/auth": {
+      "optional": true
+    },
+    "@creezio/database": {
+      "optional": true
+    },
+    "@creezio/product-hub": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  },
+  "license": "UNLICENSED",
+  "module": "./dist/index.js",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/creezio/creezio.git",
+    "directory": "packages/platform-core"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

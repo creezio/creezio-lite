@@ -1,0 +1,65 @@
+{
+  "name": "@creezio/granola",
+  "version": "0.26.0",
+  "description": "Module natif Granola — réception webhook signée (Standard Webhooks), sync notes/transcripts et proxy API Granola",
+  "type": "module",
+  "main": "./dist-cjs/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist-cjs/index.js",
+      "default": "./dist/index.js"
+    },
+    "./ui": {
+      "types": "./ui/index.ts",
+      "import": "./ui/index.ts",
+      "default": "./ui/index.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "dist-cjs",
+    "ui"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@creezio/api-kernel": "^0.26.0",
+    "@creezio/platform-core": "^0.26.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/react": "^18.3.12",
+    "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "@creezio/shell-ui": ">=0.4.0",
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@creezio/shell-ui": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "license": "UNLICENSED",
+  "module": "./dist/index.js",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/creezio/creezio.git",
+    "directory": "packages/granola"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "name": "@creezio/automations",
+  "version": "0.26.0",
+  "description": "Lifecycle automations ONLY (plugins/org/factory/obs) — V3 prototype ≠ Database row-level (@creezio/database)",
+  "type": "module",
+  "main": "./dist-cjs/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist-cjs/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "dist-cjs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@creezio/api-kernel": "^0.26.0",
+    "@creezio/observability": "^0.26.0",
+    "@creezio/platform-core": "^0.26.0",
+    "@creezio/product-hub": "^0.26.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  },
+  "license": "UNLICENSED",
+  "module": "./dist/index.js",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/creezio/creezio.git",
+    "directory": "packages/automations"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

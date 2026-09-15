@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "build/electron",
+    "rootDir": "src/electron",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["src/electron/**/*.ts", "src/electron/**/*.d.ts"]
+}

@@ -1,6 +1,6 @@
 # Mettre à jour le socle d'une application
 
-La version initiale utilise un snapshot versionné de sources. Aucune publication npm de Creezio Lite n'est requise pour un nouveau créateur. Le lockfile applicatif enregistre les empreintes des sources communes ; une copie brute de nouveaux fichiers n'est pas une mise à niveau contrôlée.
+Le profil Sites utilise un snapshot versionné de sources. Aucune publication npm de Creezio Lite n'est requise pour un nouveau créateur. Le lockfile applicatif enregistre les empreintes des sources communes ; une copie brute de nouveaux fichiers n'est pas une mise à niveau contrôlée.
 
 1. Récupérer la version souhaitée du dépôt Creezio Lite. Lire son CHANGELOG et relever son commit. Préférer une version figée pour un déploiement reproductible.
 2. Vérifier que les changements de l'app sont commités et que son `.openai/hosting.json` désigne le bon Site.
@@ -15,3 +15,8 @@ Si le schéma commun change, l'upgrade automatique s'arrête avant toute modific
 Pour récupérer une amélioration du Creezio original, comparer le commit enregistré dans UPSTREAM.json avec la source actuelle, porter les changements compatibles et refaire les tests. Une mise à jour de Creezio ne met pas automatiquement à jour Lite.
 
 Après la première publication, ne pas modifier une version diffusée sans augmenter son numéro. Les anciens projets restent sur leur version jusqu'à une mise à jour explicite.
+
+
+## Passage de 0.1 à 0.2
+
+Ce changement remplace le shell et ajoute une migration D1. Il demande la mise à jour du template applicatif, des dépendances, des pages et de la configuration TypeScript/Vite, en préservant l’identité Sites, le brief métier, la migration 0000 et les données. Le simple `upgrade --apply` des sources est volontairement refusé par le contrôle de schéma. Effectuer cette migration sur une copie contrôlée, construire puis publier sur le même Site.

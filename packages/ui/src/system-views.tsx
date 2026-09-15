@@ -1,11 +1,11 @@
 'use client';
 import { useRef, useState } from 'react';
 import { Upload, Download, Trash2, Plus, Copy, Settings2, ChevronRight, ChevronLeft } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Button } from '@creezio/shell-ui/ui/kit';
+import { Input } from '@creezio/shell-ui/ui/kit';
+import { Label } from '@creezio/shell-ui/ui/kit';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@creezio/shell-ui/ui/kit';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@creezio/shell-ui/ui/kit';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
 import { Table, TableHeader, TableHead, TableRow, TableBody, TableCell } from '@/components/ui/table';
 import { toast } from 'sonner';
@@ -26,7 +26,7 @@ export function FilesView({api,workspace,revision,onMutation}:{api:Api;workspace
 export function TeamView({api,workspace,revision,onMutation}:{api:Api;workspace:Workspace;revision:number;onMutation:()=>void}) {
   const [inviting,setInviting]=useState(false),[email,setEmail]=useState(''),[role,setRole]=useState('member'),[inviteLink,setInviteLink]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[remove,setRemove]=useState<any>(null);
   const list=useLoad<{members:any[];invitations:any[]}>(async()=>{const [m,i]=await Promise.all([api('members'),api('invites')]);return{members:m.items,invitations:i.items};},[api,revision]);
-  async function invite(e:React.FormEvent){e.preventDefault();setBusy(true);setError('');try{const result=await api('invites',{method:'POST',body:JSON.stringify({email,role})});setInviteLink(`${location.origin}/#invite=${result.token}`);onMutation();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+  async function invite(e:React.FormEvent){e.preventDefault();setBusy(true);setError('');try{const result=await api('invites',{method:'POST',body:JSON.stringify({email,role})});setInviteLink(`${location.origin}/dashboard#invite=${result.token}`);onMutation();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function change(id:string,newRole:string){try{await api(`members/${id}`,{method:'PATCH',body:JSON.stringify({role:newRole})});onMutation();toast.success('Rôle mis à jour');}catch(e){toast.error((e as Error).message);}}
   async function revoke(id:string){try{await api(`invites/${id}`,{method:'DELETE'});onMutation();toast.success('Invitation révoquée');}catch(e){toast.error((e as Error).message);}}
   async function removeMember(){setBusy(true);try{await api(`members/${remove.user_id}`,{method:'DELETE'});setRemove(null);onMutation();toast.success('Accès retiré');}catch(e){toast.error((e as Error).message);}finally{setBusy(false);}}

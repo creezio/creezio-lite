@@ -9,9 +9,16 @@ const packageInfo=JSON.parse(await readFile(join(root,'package.json'),'utf8'));
 const source=JSON.parse(await readFile(join(root,'UPSTREAM.json'),'utf8'));
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 async function exists(path){try{await stat(path);return true;}catch(e){if(e.code==='ENOENT')return false;throw e;}}
-async function files(directory,prefix=''){const list=[];for(const e of await readdir(directory,{withFileTypes:true})){if(e.isSymbolicLink())throw new Error(`Lien symbolique non autorisé : ${join(prefix,e.name)}`);const path=join(prefix,e.name);if(e.isDirectory())list.push(...await files(join(directory,e.name),path));else list.push(path);}return list.sort();}
+async function files(directory,prefix=''){const list=[];for(const e of await readdir(directory,{withFileTypes:true})){if(['node_modules','dist','dist-cjs'].includes(e.name))continue;if(e.isSymbolicLink())throw new Error(`Lien symbolique non autorisé : ${join(prefix,e.name)}`);const path=join(prefix,e.name);if(e.isDirectory())list.push(...await files(join(directory,e.name),path));else list.push(path);}return list.sort();}
 function within(parent,child){const path=relative(parent,child);return path===''||(!path.startsWith('..'+sep)&&path!=='..'&&!path.startsWith(sep));}
-async function runtimeAt(destination){for(const name of ['core','ui'])await cp(join(root,'packages',name,'src'),join(destination,'creezio',name),{recursive:true});}
+async function runtimeAt(destination){
+  for(const name of ['core','ui'])await cp(join(root,'packages',name,'src'),join(destination,'creezio',name),{recursive:true});
+  for(const entry of await readdir(join(root,'packages'),{withFileTypes:true})){
+    if(!entry.isDirectory()||['core','ui'].includes(entry.name))continue;
+    await cp(join(root,'packages',entry.name),join(destination,'creezio/packages',entry.name),{recursive:true,filter:path=>!/(?:^|\/)(?:node_modules|dist|dist-cjs)(?:\/|$)/.test(path)});
+  }
+  await cp(join(root,'tsconfig.base.json'),join(destination,'creezio/tsconfig.base.json'));
+}
 async function runtimeHashes(app){const result={};for(const file of await files(join(app,'creezio')))result['creezio/'+file.replaceAll(sep,'/')]=digest(await readFile(join(app,'creezio',file)));return result;}
 async function writeLock(app){const lock={formatVersion:1,kitVersion:packageInfo.version,sourceRepository:packageInfo.repository.url,upstreamCommit:source.commit,schemaHash:digest(await readFile(join(app,'db/schema.ts'))),runtimeFiles:await runtimeHashes(app)};await writeFile(join(app,'creezio-lite.lock.json'),JSON.stringify(lock,null,2)+'\n');return lock;}
 export async function createApp({out,spec}) {
@@ -50,7 +57,7 @@ export async function doctor(appPath){
   const actual=await runtimeHashes(app);
   for(const [file,hash]of Object.entries(lock.runtimeFiles??{}))if(actual[file]!==hash)issues.push(`Socle modifié ou manquant : ${file}`);
   for(const file of Object.keys(actual))if(!(file in (lock.runtimeFiles??{})))issues.push(`Fichier ajouté au socle : ${file}`);
-  for(const file of Object.keys(actual)){if(!/\.[cm]?[jt]sx?$/.test(file))continue;const code=await readFile(join(app,file),'utf8');if(/(?:from\s*|import\s*\(|require\s*\()['"](?:node:|electron|better-sqlite3|@creezio\/(?:app-runtime|host-runtime|search))/.test(code))issues.push(`Dépendance système interdite : ${file}`);}
+  for(const file of Object.keys(actual)){if(file.startsWith('creezio/packages/'))continue;if(!/\.[cm]?[jt]sx?$/.test(file))continue;const code=await readFile(join(app,file),'utf8');if(/(?:from\s*|import\s*\(|require\s*\()['"](?:node:|electron|better-sqlite3|@creezio\/(?:app-runtime|host-runtime|search))/.test(code))issues.push(`Dépendance système interdite : ${file}`);}
   const migrations=(await readdir(join(app,'drizzle'))).filter(f=>f.endsWith('.sql'));
   if(!migrations.length)issues.push('Migration D1 manquante.');
   return{ok:!issues.length,kitVersion:lock.kitVersion,registered:Boolean(host.project_id),issues};

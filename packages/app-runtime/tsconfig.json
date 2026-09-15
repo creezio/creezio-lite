@@ -1,0 +1,27 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "composite": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts"],
+  "references": [
+    { "path": "../brand-config" },
+    { "path": "../electron-shell" },
+    { "path": "../mcp-facade" },
+    { "path": "../auth" },
+    { "path": "../shell-ui" },
+    { "path": "../assistant" },
+    { "path": "../tasks" },
+    { "path": "../mails" },
+    { "path": "../nav" },
+    { "path": "../support" },
+    { "path": "../integrations" },
+    { "path": "../api-kernel" },
+    { "path": "../platform-core" },
+    { "path": "../browser-host" },
+    { "path": "../host-runtime" },
+    { "path": "../search" }
+  ]
+}

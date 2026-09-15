@@ -1,0 +1,55 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.4/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [
+    [
+      "@creezio/brand-config",
+      "@creezio/shell",
+      "@creezio/platform-core",
+      "@creezio/product-hub",
+      "@creezio/search",
+      "@creezio/host-runtime",
+      "@creezio/electron-shell",
+      "@creezio/desktop-tooling",
+      "@creezio/api-kernel",
+      "@creezio/mcp-facade",
+      "@creezio/os-ui",
+      "@creezio/shell-ui",
+      "@creezio/nav",
+      "@creezio/onboarding",
+      "@creezio/interactive-demo",
+      "@creezio/cockpit",
+      "@creezio/auth",
+      "@creezio/access-control",
+      "@creezio/assistant",
+      "@creezio/tasks",
+      "@creezio/mails",
+      "@creezio/observability",
+      "@creezio/fleet",
+      "@creezio/landing",
+      "@creezio/admin",
+      "@creezio/support",
+      "@creezio/integrations",
+      "@creezio/granola",
+      "@creezio/grokbot",
+      "@creezio/browser-host",
+      "@creezio/automations",
+      "@creezio/database",
+      "@creezio/brand-spec",
+      "@creezio/app-runtime"
+    ]
+  ],
+  "linked": [],
+  "access": "restricted",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [],
+  "privatePackages": {
+    "version": true,
+    "tag": false
+  },
+  "___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH": {
+    "onlyUpdatePeerDependentsWhenOutOfRange": true
+  }
+}

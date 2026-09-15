@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
+    />
+    <title>DemoBrand — Admin Plugins L3</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        --ink: #1a2421;
+        --muted: #5a6661;
+        --line: rgba(26, 36, 33, 0.12);
+        --ok: #1f6b4a;
+        --bad: #9b2c2c;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: linear-gradient(160deg, #e8f1f0, #f7f4ee 55%, #eef2f7);
+        color: var(--ink);
+      }
+      main { max-width: 48rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+      h1 { font-size: 1.75rem; letter-spacing: -0.02em; margin: 0 0 0.35rem; }
+      .meta { color: var(--muted); margin: 0 0 1.5rem; line-height: 1.45; }
+      form, .panel {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.72);
+        padding: 1rem 1.1rem;
+        margin-bottom: 1rem;
+      }
+      label { display: block; font-size: 0.85rem; margin: 0.55rem 0 0.2rem; color: var(--muted); }
+      input, select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0.45rem 0.55rem;
+        border: 1px solid var(--line);
+        background: #fff;
+        font: inherit;
+      }
+      .caps { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem; }
+      .caps label { display: flex; gap: 0.35rem; align-items: center; margin: 0; color: var(--ink); }
+      button {
+        margin-top: 0.9rem;
+        border: 1px solid var(--ink);
+        background: var(--ink);
+        color: #fff;
+        padding: 0.45rem 0.9rem;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.secondary { background: transparent; color: var(--ink); }
+      table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+      th, td { text-align: left; padding: 0.45rem 0.35rem; border-bottom: 1px solid var(--line); }
+      #log { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 0.8rem; }
+      .ok { color: var(--ok); }
+      .bad { color: var(--bad); }
+      a { color: var(--ink); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p><a href="./index.html">← DemoBrand</a></p>
+      <h1>Admin Plugins L3</h1>
+      <p class="meta">
+        Édition binding org + caps <code>see</code> / <code>install</code> /
+        <code>execute</code> (Phase I5). Les appels passent par
+        <code>admin-plugins</code> API (même logique que les tests E2E).
+      </p>
+
+      <form id="upsert" class="panel">
+        <strong>Upsert binding</strong>
+        <label>pluginId</label>
+        <input name="pluginId" required placeholder="weather-demo" />
+        <label>ownerOrgId</label>
+        <input name="ownerOrgId" required placeholder="org-a" value="org-a" />
+        <label>org membre (CSV)</label>
+        <input name="orgIds" placeholder="org-a,org-b" value="org-a" />
+        <div class="caps">
+          <label><input type="checkbox" name="cap_see" checked /> see</label>
+          <label><input type="checkbox" name="cap_install" /> install</label>
+          <label><input type="checkbox" name="cap_execute" checked /> execute</label>
+        </div>
+        <button type="submit">Enregistrer (admin)</button>
+      </form>
+
+      <form id="preview" class="panel">
+        <strong>Preview accès (deny cross-org)</strong>
+        <label>pluginId</label>
+        <input name="pluginId" required placeholder="weather-demo" />
+        <label>acteur orgId</label>
+        <input name="orgId" required placeholder="org-b" value="org-b" />
+        <label>action</label>
+        <select name="action">
+          <option value="see">see</option>
+          <option value="install">install</option>
+          <option value="execute">execute</option>
+        </select>
+        <button type="submit" class="secondary">Prévisualiser</button>
+      </form>
+
+      <div class="panel">
+        <strong>Bindings</strong>
+        <table>
+          <thead>
+            <tr>
+              <th>Plugin</th>
+              <th>Owner org</th>
+              <th>Orgs</th>
+              <th>Caps</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <strong>Journal</strong>
+        <div id="log" class="meta">En attente — brancher via preload / tests API.</div>
+      </div>
+    </main>
+    <script src="./admin-plugins.js"></script>
+  </body>
+</html>

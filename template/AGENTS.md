@@ -10,3 +10,6 @@
 8. Préserver `.openai/hosting.json.project_id` lorsqu'il existe. Ne jamais reprendre le projet Sites d'une autre app. Garder les secrets dans les paramètres d'environnement Sites.
 9. Tester les parcours métier, les cas d'accès refusé, le typecheck et le build avant publication. Vérifier le statut final Sites et remettre l'URL réellement déployée.
 10. Ne pas écrire l'application dans le dépôt source `creezio/creezio-lite`. Utiliser le dépôt demandé par l'utilisateur et/ou le dépôt propre au projet Sites.
+
+11. Le shell original et ses composants sont obligatoires : WorkspaceRoot, sidebar, tabs, DataTable et thème proviennent de creezio/packages/shell-ui. Ne pas les remplacer par une imitation. Les pages natives Tâches, Support et Navigation sont importées de leurs packages.
+12. La présence des 36 sources n’est pas une preuve de portage complet : consulter docs/COMPATIBILITY.md du dépôt avant de promettre une fonctionnalité. Ne pas remplacer un module non branché par une fausse interface.

@@ -1,0 +1,13 @@
+{
+  "n8nPin": "2.31.5",
+  "decision": "download-on-first-run",
+  "package": {
+    "name": "n8n",
+    "version": "2.31.5",
+    "installArgs": ["install", "--omit=dev", "--no-fund", "--no-audit", "n8n@2.31.5"]
+  },
+  "engines": {
+    "node": ">=22.22"
+  },
+  "notes": "Pas de bundle dans l’exe (arbre npm trop lourd). Install sous userData/n8n-runtime via Node embarqué TempoFlow."
+}

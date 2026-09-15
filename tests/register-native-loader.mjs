@@ -1,0 +1,15 @@
+import { registerHooks, createRequire } from 'node:module';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+const root=fileURLToPath(new URL('../',import.meta.url));
+const deps=createRequire(join(root,'template/package.json'));
+function source(path){const normalized=path.replace(/\/dist\//g,'/src/');return [normalized,normalized.replace(/\.js$/,'.ts'),`${normalized}.ts`,`${normalized}.tsx`,join(normalized,'index.ts')].find(p=>existsSync(p)&&!p.endsWith('/src'));}
+registerHooks({resolve(spec,context,next){
+  let file;
+  if(spec==='@creezio-lite/core'||spec.startsWith('@creezio-lite/core/'))file=source(resolve(root,'packages/core/src',spec.slice('@creezio-lite/core/'.length)||'index.ts'));
+  else if(spec.startsWith('@creezio/')){const [name,...parts]=spec.slice(9).split('/');const base=join(root,'packages',name),manifest=JSON.parse(readFileSync(join(base,'package.json'),'utf8'));const key=parts.length?'./'+parts.join('/'):'.';const entry=manifest.exports?.[key];file=source(resolve(base,typeof entry==='string'?entry:entry?.import??(parts.length?parts.join('/'):'src/index.ts')));}
+  else if(spec.startsWith('.')&&context.parentURL?.startsWith(pathToFileURL(join(root,'packages')).href))file=source(fileURLToPath(new URL(spec,context.parentURL)));
+  if(file)return next(file,context);
+  try{return next(spec,context);}catch(e){if(spec.startsWith('.')||spec.startsWith('/')||spec.startsWith('node:'))throw e;return next(deps.resolve(spec),context);}
+}});

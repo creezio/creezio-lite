@@ -1,0 +1,52 @@
+{
+  "hermesAgentPin": "0.18.2",
+  "decision": "download-on-first-run",
+  "rationale": "L’install Hermes (venv Python ~300 Mo + checkout) + WebUI (~21 Mo archive) dépasse le budget raisonnable de l’exe NSIS (déjà ~221 Mo). Bundle in-exe = remote-build timeout/disk + SmartScreen. Fallback automatique : install.ps1/install.sh officiel + archive WebUI pinée + sha256.",
+  "sizeBudget": {
+    "exeCurrentMb": 221,
+    "exeHardCeilingMb": 400,
+    "agentInstallTypicalMb": "300-800 (first-run, userData / LOCALAPPDATA)",
+    "webuiArchiveMb": 21,
+    "fullBundleRejectedMb": "800+"
+  },
+  "agentInstall": {
+    "scriptsVendored": "install.ps1 / install.sh sont EMBARQUÉS dans vendor/hermes-agent (aucun téléchargement au first-run — un changement upstream ne peut plus casser les installs). Re-pin : re-télécharger les scripts + mettre à jour scriptSha256 + commitPin, puis release.",
+    "commitPin": "5fde131eb2a6683a3879497e69918feae33224d0",
+    "windows": {
+      "scriptUrl": "https://hermes-agent.nousresearch.com/install.ps1",
+      "scriptSha256": "558456de6dc680cecd286018fa1a565a8b31454ed45e6d5b74bdada3142f6c3c",
+      "args": ["-NonInteractive", "-SkipSetup", "-SkipBrowser"],
+      "stages": [
+        "uv",
+        "python",
+        "git",
+        "node",
+        "repository",
+        "venv",
+        "dependencies",
+        "node-deps",
+        "config-templates",
+        "platform-sdks",
+        "bootstrap-marker"
+      ],
+      "stagesExcludedRationale": {
+        "system-packages": "installe ripgrep/ffmpeg via winget/choco au niveau MACHINE — hors périmètre OS TempoFlow (features optionnelles, fallback findstr)",
+        "path": "inscrit Hermes dans le PATH registre de l'utilisateur — jamais : conflit possible avec un Hermes personnel, résolution TempoFlow = chemins absolus sandbox",
+        "configure": "wizard interactif — TempoFlow gère la config",
+        "gateway": "TempoFlow lance/supervise le gateway lui-même"
+      }
+    },
+    "posix": {
+      "scriptUrl": "https://hermes-agent.nousresearch.com/install.sh",
+      "scriptSha256": "e1091d11094768aaddc71ab6807ee41dc128637ed61cda3a7f3df15432c41248",
+      "args": ["--non-interactive", "--skip-setup", "--skip-browser"]
+    }
+  },
+  "webui": {
+    "repo": "nesquena/hermes-webui",
+    "ref": "exp-v0.52.148",
+    "archiveUrl": "https://github.com/nesquena/hermes-webui/archive/refs/tags/exp-v0.52.148.tar.gz",
+    "sha256": "18c0a6b1df65bee8d2baeed893ed7b3185f3211adb9121f590a4fd028e1c583c",
+    "license": "MIT"
+  }
+}

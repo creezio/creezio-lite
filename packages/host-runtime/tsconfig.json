@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "composite": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../brand-config" },
+    { "path": "../observability" },
+    { "path": "../platform-core" },
+    { "path": "../product-hub" },
+    { "path": "../search" }
+  ]
+}

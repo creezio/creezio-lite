@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Creezio Server Admin</title>
+<style>
+:root {
+  --bg: #14182f;
+  --bg-soft: #1b2140;
+  --card: #1e2447;
+  --line: #2c3462;
+  --fg: #e6e9f5;
+  --muted: #8a93b8;
+  --accent: #f0701d;
+  --accent-soft: rgba(240,112,29,.14);
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --radius: 12px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: var(--bg); color: var(--fg);
+  padding: 0 0 60px;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button { font: inherit; cursor: pointer; }
+
+.topbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 18px 28px; border-bottom: 1px solid var(--line);
+  background: rgba(20,24,47,.9); position: sticky; top: 0; z-index: 5;
+  backdrop-filter: blur(8px);
+}
+.mark {
+  width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
+  background: linear-gradient(135deg, #f0701d, #c24e08);
+  display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #fff;
+}
+.topbar h1 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+.topbar .sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.topbar .spacer { flex: 1; }
+.pill {
+  font-size: 12px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+}
+.pill.ok { color: var(--ok); border-color: rgba(52,211,153,.35); }
+.pill.bad { color: var(--bad); border-color: rgba(248,113,113,.35); }
+
+.wrap { max-width: 1080px; margin: 0 auto; padding: 24px 28px; }
+.section-title {
+  font-size: 12px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted); margin: 26px 0 12px;
+}
+
+.card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px;
+}
+.srv-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.srv-name { font-size: 15px; font-weight: 650; }
+.srv-meta { font-size: 12px; color: var(--muted); }
+.badge {
+  font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.badge.running { background: rgba(52,211,153,.15); color: var(--ok); }
+.badge.exited, .badge.created, .badge.paused { background: rgba(251,191,36,.14); color: var(--warn); }
+.badge.absent, .badge.unknown, .badge.dead { background: rgba(248,113,113,.14); color: var(--bad); }
+.badge.orphan { background: var(--accent-soft); color: var(--accent); }
+.health { font-size: 11px; color: var(--muted); }
+.health.healthy { color: var(--ok); }
+.health.unhealthy { color: var(--bad); }
+.srv-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.btn {
+  background: var(--bg-soft); border: 1px solid var(--line); color: var(--fg);
+  padding: 6px 12px; border-radius: 8px; font-size: 12.5px;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.danger:hover { border-color: var(--bad); color: var(--bad); }
+.btn:disabled { opacity: .5; cursor: default; }
+.srv-disk { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+
+/* Boot splash */
+.boot {
+  margin-top: 12px; padding: 14px 16px; border-radius: 10px;
+  background: var(--bg); border: 1px solid var(--line);
+}
+.boot-head { display: flex; align-items: baseline; gap: 10px; }
+.boot-head .headline { font-size: 13px; font-weight: 600; }
+.boot-head .pct { margin-left: auto; font-size: 13px; color: var(--accent); font-weight: 650; font-variant-numeric: tabular-nums; }
+.boot-bar {
+  height: 6px; border-radius: 999px; background: var(--bg-soft);
+  overflow: hidden; margin: 10px 0 12px;
+}
+.boot-bar > div {
+  height: 100%; border-radius: 999px; width: 0%;
+  background: linear-gradient(90deg, #f0701d, #ff9a4d);
+  transition: width .5s ease;
+}
+.boot-steps { display: grid; gap: 4px; font-size: 12px; }
+.boot-step { display: flex; gap: 8px; align-items: baseline; color: var(--muted); }
+.boot-step .ico { width: 14px; text-align: center; flex-shrink: 0; }
+.boot-step.running { color: var(--fg); }
+.boot-step.running .ico { color: var(--accent); }
+.boot-step.done .ico { color: var(--ok); }
+.boot-step.error { color: var(--bad); }
+.boot-step .detail { color: var(--muted); font-size: 11px; }
+.boot-footer { margin-top: 8px; font-size: 11px; color: var(--muted); }
+
+/* Panels logs/ops */
+.panel {
+  margin-top: 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: #0e1226; overflow: hidden;
+}
+.panel-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-bottom: 1px solid var(--line);
+  font-size: 12px; color: var(--muted);
+}
+.panel-head .spacer { flex: 1; }
+.panel pre {
+  margin: 0; padding: 12px; font-size: 11.5px; line-height: 1.5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+  color: #b8c0e0;
+}
+
+/* Formulaire */
+.form-grid { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.field input, .field select {
+  background: var(--bg-soft); border: 1px solid var(--line); color: var(--fg);
+  padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 13px; min-width: 160px;
+}
+.field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+.form-msg { font-size: 12.5px; margin-top: 10px; }
+.form-msg.err { color: var(--bad); }
+.form-msg.ok { color: var(--ok); }
+.empty { color: var(--muted); font-size: 13.5px; padding: 20px 4px; }
+.disk-global { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="mark">CZ</div>
+  <div>
+    <h1>Creezio Server Admin</h1>
+    <div class="sub">Serveurs marque headless — Docker</div>
+  </div>
+  <div class="spacer"></div>
+  <span class="pill" id="pillDocker">docker : …</span>
+  <span class="pill" id="pillDisk">disque : …</span>
+</div>
+
+<div class="wrap">
+  <div class="section-title">Hôtes flotte (VPS enrôlés)</div>
+  <div class="card">
+    <div id="hosts"><div class="empty">Chargement…</div></div>
+    <div class="form-grid" style="margin-top:10px">
+      <div class="field">
+        <label for="fHostLabel">Label du prochain VPS</label>
+        <input id="fHostLabel" placeholder="resto-lyon-1"/>
+      </div>
+      <button class="btn" id="btnEnrollToken">Générer un token d'enrôlement</button>
+    </div>
+    <div class="form-msg" id="hostMsg"></div>
+  </div>
+
+  <div class="section-title">Nouveau serveur (hôte local)</div>
+  <div class="card">
+    <div class="form-grid">
+      <div class="field">
+        <label for="fBrand">Marque</label>
+        <select id="fBrand"></select>
+      </div>
+      <div class="field">
+        <label for="fName">Nom</label>
+        <input id="fName" placeholder="demo" pattern="[a-z0-9][a-z0-9-]{0,30}"/>
+      </div>
+      <div class="field">
+        <label for="fPort">Port (optionnel)</label>
+        <input id="fPort" placeholder="auto" inputmode="numeric" style="min-width:110px"/>
+      </div>
+      <button class="btn primary" id="btnCreate">Créer + démarrer</button>
+    </div>
+    <div class="form-msg" id="formMsg"></div>
+  </div>
+
+  <div class="section-title" style="display:flex;align-items:center;gap:10px">
+    <span>Serveurs</span>
+    <span class="spacer" style="flex:1"></span>
+    <button class="btn" id="btnUpdateAll">Tout mettre à jour…</button>
+  </div>
+  <div class="form-msg" id="updateAllMsg"></div>
+  <div id="servers"><div class="empty">Chargement…</div></div>
+</div>
+
+<script>
+"use strict";
+const $ = (sel, root) => (root || document).querySelector(sel);
+
+const state = {
+  servers: [],
+  hosts: [],
+  brandRoots: [],
+  disk: null,
+  openPanels: {},   // key → "logs"|"ops"
+  bootPollers: {},  // key → true (poll actif)
+  bootModels: {},   // key → dernier boot-status détaillé
+};
+
+const keyOf = (s) => `${s.hostId || "local"}/${s.brandId}/${s.name}`;
+const isLocal = (s) => !s.hostId || s.hostId === "local";
+const apiBase = (s) =>
+  isLocal(s)
+    ? `/admin/api/servers/${encodeURIComponent(s.brandId)}/${encodeURIComponent(s.name)}`
+    : `/admin/api/hosts/${encodeURIComponent(s.hostId)}/servers/${encodeURIComponent(s.brandId)}/${encodeURIComponent(s.name)}`;
+
+function fmtBytes(n) {
+  if (n === null || n === undefined) return "?";
+  const u = ["o", "Ko", "Mo", "Go", "To"];
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  let json = null;
+  try { json = await res.json(); } catch { /* vide */ }
+  return { status: res.status, json };
+}
+
+/* ------------------------------------------------------------ rendering */
+
+function stepIcon(status) {
+  if (status === "done") return "✓";
+  if (status === "running") return "●";
+  if (status === "error") return "!";
+  if (status === "skip") return "–";
+  return "○";
+}
+
+function renderBoot(key) {
+  const model = state.bootModels[key];
+  if (!model) return "";
+  const pct = Math.max(0, Math.min(100, Math.round(model.overallPercent || 0)));
+  const steps = (model.steps || []).map((st) => `
+    <div class="boot-step ${st.status}">
+      <span class="ico">${stepIcon(st.status)}</span>
+      <span>${escapeHtml(st.label || st.id)}</span>
+      ${st.detail ? `<span class="detail">${escapeHtml(st.detail)}</span>` : ""}
+    </div>`).join("");
+  return `
+    <div class="boot">
+      <div class="boot-head">
+        <span class="headline">${escapeHtml(model.headline || "Démarrage…")}</span>
+        <span class="pct">${pct}%</span>
+      </div>
+      <div class="boot-bar"><div style="width:${pct}%"></div></div>
+      <div class="boot-steps">${steps}</div>
+      ${model.footer ? `<div class="boot-footer">${escapeHtml(model.footer)}</div>` : ""}
+    </div>`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+function diskOf(s) {
+  if (!state.disk || !isLocal(s)) return null;
+  return (state.disk.instances || []).find(
+    (d) => d.brandId === s.brandId && d.name === s.name,
+  );
+}
+
+function renderHosts() {
+  const root = $("#hosts");
+  if (!state.hosts.length) {
+    root.innerHTML = `<div class="empty">Aucun VPS enrôlé — générer un token puis, sur le VPS restaurant :<br/>
+      <code>creezio server-docker enroll --brand-root . --admin &lt;URL admin&gt; --token &lt;token&gt; --slug &lt;slug&gt;</code></div>`;
+    return;
+  }
+  root.innerHTML = state.hosts.map((h) => `
+    <div class="srv-head" style="padding:6px 0">
+      <span class="srv-name">${escapeHtml(h.label || h.hostId)}</span>
+      <span class="srv-meta">${escapeHtml(h.agentUrl || "")}</span>
+      <span class="badge ${h.online ? "running" : "absent"}">${h.online ? "online" : "offline"}</span>
+      <span class="srv-meta">${h.lastSeen ? `vu ${escapeHtml(new Date(h.lastSeen).toLocaleString())}` : "jamais vu"}</span>
+      <div class="srv-actions">
+        <button class="btn danger" data-host-act="rm" data-host-id="${escapeHtml(h.hostId)}">Retirer</button>
+      </div>
+    </div>`).join("");
+}
+
+function renderServer(s) {
+  const key = keyOf(s);
+  const st = s.docker?.state || "unknown";
+  const running = st === "running";
+  const health = s.docker?.health;
+  const d = diskOf(s);
+  const panel = state.openPanels[key];
+  const crmUrl = crmUrlOf(s, running);
+  return `
+  <div class="card" data-key="${escapeHtml(key)}">
+    <div class="srv-head">
+      <span class="srv-name">${escapeHtml(s.name)}</span>
+      <span class="srv-meta">${escapeHtml(s.brandId || "?")}${s.port ? ` · :${s.port}` : ""}</span>
+      ${!isLocal(s) ? `<span class="badge orphan">${escapeHtml(s.hostLabel || s.hostId)}</span>` : ""}
+      <span class="badge ${escapeHtml(st)}">${escapeHtml(st)}</span>
+      ${health ? `<span class="health ${escapeHtml(health)}">${escapeHtml(health)}</span>` : ""}
+      ${s.version ? `<span class="srv-meta">v${escapeHtml(s.version)}</span>` : ""}
+      ${s.image ? `<span class="srv-meta" title="image">${escapeHtml(s.image)}</span>` : ""}
+      ${s.orphan ? `<span class="badge orphan">orphelin</span>` : ""}
+      ${crmUrl ? `<a href="${escapeHtml(crmUrl)}" target="_blank" rel="noopener">ouvrir le CRM ↗</a>` : ""}
+      <div class="srv-actions">
+        ${s.orphan ? "" : `
+        <button class="btn" data-act="start" ${running ? "disabled" : ""}>Start</button>
+        <button class="btn" data-act="stop" ${running ? "" : "disabled"}>Stop</button>
+        <button class="btn" data-act="update">Mettre à jour</button>
+        <button class="btn" data-act="logs">Logs</button>
+        <button class="btn" data-act="ops">Ops</button>
+        <button class="btn danger" data-act="rm">Supprimer</button>`}
+      </div>
+    </div>
+    ${d ? `<div class="srv-disk">données : ${fmtBytes(d.sizeBytes)} (${escapeHtml(d.dataDir || "")})</div>` : ""}
+    ${renderBoot(key)}
+    ${panel ? `
+    <div class="panel">
+      <div class="panel-head">
+        <span>${panel === "logs" ? "docker logs (tail 200)" : "événements ops (JSONL)"}</span>
+        <span class="spacer"></span>
+        <button class="btn" data-act="refresh-panel">Rafraîchir</button>
+        <button class="btn" data-act="close-panel">Fermer</button>
+      </div>
+      <pre id="panel-${escapeHtml(key).replace(/[^a-z0-9]/gi, "_")}">Chargement…</pre>
+    </div>` : ""}
+  </div>`;
+}
+
+function renderAll() {
+  const root = $("#servers");
+  if (!state.servers.length) {
+    root.innerHTML = `<div class="empty">Aucun serveur — créer une instance ci-dessus.</div>`;
+    return;
+  }
+  root.innerHTML = state.servers.map(renderServer).join("");
+  for (const s of state.servers) {
+    const key = keyOf(s);
+    if (state.openPanels[key]) loadPanel(s, state.openPanels[key]);
+  }
+}
+
+/* ------------------------------------------------------------ actions */
+
+function crmUrlOf(s, running) {
+  if (!running) return null;
+  if (isLocal(s)) return s.port ? `http://127.0.0.1:${s.port}/` : null;
+  // Serveur distant : URL publique tunnel dérivée du slug (env persisté).
+  const slug = s.env && s.env.CREEZIO_TUNNEL_SLUG;
+  const host = state.hosts.find((h) => h.hostId === s.hostId);
+  const agentUrl = host?.agentUrl || "";
+  const m = agentUrl.match(/^https:\/\/agent\.(.+)$/);
+  if (slug && m) {
+    // agent.{slug}.{zone} → {slug}.{zone} ; slug de l'instance si différent.
+    const rest = m[1];
+    const zone = rest.split(".").slice(1).join(".");
+    return `https://${slug}.${zone || rest}/`;
+  }
+  if (m) return `https://${m[1]}/`;
+  return null;
+}
+
+async function loadPanel(s, kind) {
+  const key = keyOf(s);
+  const el = document.getElementById(`panel-${key.replace(/[^a-z0-9]/gi, "_")}`);
+  if (!el) return;
+  const base = apiBase(s);
+  if (kind === "logs") {
+    const r = await api(`${base}/logs?tail=200`);
+    el.textContent = r.json?.ok
+      ? (r.json.lines || []).join("\n") || "(vide)"
+      : `erreur: ${r.json?.error || r.status}`;
+  } else {
+    const r = await api(`${base}/ops?limit=100`);
+    const ev = r.json?.events || [];
+    el.textContent = ev.length
+      ? ev.map((e) => JSON.stringify(e)).join("\n")
+      : "(aucun événement ops)";
+  }
+  el.scrollTop = el.scrollHeight;
+}
+
+/**
+ * Update en masse : même image cible pour tous les serveurs d'une marque
+ * (hôtes locaux + enrôlés), séquentiel — un resto à la fois, on s'arrête
+ * de compter les échecs mais on continue la file.
+ */
+async function updateAll() {
+  const msg = $("#updateAllMsg");
+  const candidates = state.servers.filter((s) => !s.orphan);
+  if (!candidates.length) return alert("Aucun serveur à mettre à jour.");
+  const brands = [...new Set(candidates.map((s) => s.brandId))];
+  const brand = brands.length === 1
+    ? brands[0]
+    : prompt(`Marque à mettre à jour (${brands.join(", ")}) :`, brands[0]);
+  if (!brand) return;
+  const targets = candidates.filter((s) => s.brandId === brand);
+  const sample = targets.find((s) => (s.image || "").includes(":"));
+  const input = prompt(
+    `Mettre à jour ${targets.length} serveur(s) « ${brand} »\n\nImage actuelle (exemple) : ${sample?.image || "?"}\n\nEntrer un TAG (ex. 0.2.1) ou une image complète :`,
+  );
+  if (!input) return;
+  let image = input.trim();
+  if (!image.includes("/") && !image.includes(":") && sample?.image?.includes(":")) {
+    image = `${sample.image.slice(0, sample.image.lastIndexOf(":"))}:${image}`;
+  }
+  const todo = targets.filter((s) => s.image !== image);
+  if (!todo.length) return alert(`Tous les serveurs « ${brand} » sont déjà sur :\n${image}`);
+  if (!confirm(`Mettre à jour ${todo.length}/${targets.length} serveur(s) vers :\n${image}\n\n(séquentiel — backup /data + rollback automatique par serveur)`)) return;
+  const results = [];
+  for (const s of todo) {
+    const key = keyOf(s);
+    msg.className = "form-msg";
+    msg.textContent = `Update ${results.length + 1}/${todo.length} : ${key}…`;
+    const base = apiBase(s);
+    const r = await api(`${base}/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image }),
+    });
+    if (!r.json?.ok) {
+      results.push(`✗ ${key} : refusé (${r.json?.error || r.status})`);
+      continue;
+    }
+    startBootPoll(s);
+    const final = await pollUpdateStatus(base);
+    const out = final?.result || {};
+    results.push(
+      final?.status === "done"
+        ? `✓ ${key} → ${out.version || image}`
+        : `✗ ${key} : ${out.error || final?.status}${out.rolledBack ? " (rollback OK)" : ""}`,
+    );
+    await refresh();
+  }
+  const failed = results.filter((l) => l.startsWith("✗")).length;
+  msg.className = `form-msg ${failed ? "err" : "ok"}`;
+  msg.textContent = `Update en masse terminé — ${todo.length - failed}/${todo.length} OK`;
+  alert(`Update en masse terminé :\n\n${results.join("\n")}`);
+  await refresh();
+}
+
+/** Poll de l'update asynchrone (agent ou local) jusqu'à done/error. */
+async function pollUpdateStatus(base, timeoutMs = 15 * 60 * 1000) {
+  const t0 = Date.now();
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 4000));
+    try {
+      const r = await api(`${base}/update-status`);
+      const u = r.json?.update;
+      if (u && u.status !== "running") return u;
+    } catch {
+      /* agent momentanément injoignable pendant le recreate */
+    }
+    if (Date.now() - t0 > timeoutMs) {
+      return { status: "error", result: { error: "timeout suivi update" } };
+    }
+  }
+}
+
+async function doAction(s, act) {
+  const key = keyOf(s);
+  const base = apiBase(s);
+  if (act === "start") {
+    await api(`${base}/start`, { method: "POST" });
+    startBootPoll(s);
+  } else if (act === "update") {
+    const current = s.image || "";
+    const input = prompt(
+      `Mettre à jour ${key}\n\nImage actuelle : ${current}\nVersion actuelle : ${s.version || "?"}\n\nEntrer un TAG (ex. 0.2.0) ou une image complète :`,
+    );
+    if (!input) return;
+    let image = input.trim();
+    if (!image.includes("/") && !image.includes(":") && current.includes(":")) {
+      image = `${current.slice(0, current.lastIndexOf(":"))}:${image}`;
+    }
+    if (!confirm(`Recréer ${key} avec :\n${image}\n\n(backup /data automatique, rollback si santé KO)`)) return;
+    // Update asynchrone (202) : le pull+backup+recreate+boot dépasse la
+    // durée max d'une requête proxifiée — on suit via /update-status.
+    const r = await api(`${base}/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image }),
+    });
+    if (!r.json?.ok) {
+      alert(`Update refusé : ${r.json?.error || r.status}`);
+      return;
+    }
+    startBootPoll(s);
+    const final = await pollUpdateStatus(base);
+    const out = final?.result || {};
+    alert(
+      final?.status === "done"
+        ? `Update OK → ${out.image || image} (version ${out.version || "?"})`
+        : `Update KO : ${out.error || final?.status || "?"}${out.rolledBack ? "\nRollback effectué → " + out.previousImage : ""}`,
+    );
+    startBootPoll(s);
+  } else if (act === "stop") {
+    await api(`${base}/stop`, { method: "POST" });
+    delete state.bootModels[key];
+  } else if (act === "rm") {
+    const purge = confirm(
+      `Supprimer le serveur ${key} ?\n\nOK = container supprimé, données conservées.\n(Une seconde confirmation propose la purge des données.)`,
+    );
+    if (!purge) return;
+    const purgeData = confirm("Supprimer AUSSI le dossier de données ? (irréversible)");
+    await api(`${base}?purgeData=${purgeData ? 1 : 0}`, { method: "DELETE" });
+    delete state.bootModels[key];
+    delete state.openPanels[key];
+  } else if (act === "logs" || act === "ops") {
+    state.openPanels[key] = state.openPanels[key] === act ? undefined : act;
+  } else if (act === "close-panel") {
+    delete state.openPanels[key];
+  } else if (act === "refresh-panel") {
+    renderAll();
+    return;
+  }
+  await refresh();
+}
+
+$("#servers").addEventListener("click", (ev) => {
+  const btn = ev.target.closest("button[data-act]");
+  if (!btn) return;
+  const card = ev.target.closest("[data-key]");
+  const s = state.servers.find((x) => keyOf(x) === card?.dataset.key);
+  if (s) doAction(s, btn.dataset.act);
+});
+
+$("#hosts").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-host-act]");
+  if (!btn) return;
+  if (btn.dataset.hostAct === "rm") {
+    if (!confirm(`Retirer l'hôte ${btn.dataset.hostId} du registre flotte ?`)) return;
+    await api(`/admin/api/hosts/${encodeURIComponent(btn.dataset.hostId)}`, { method: "DELETE" });
+    await refresh();
+  }
+});
+
+$("#btnUpdateAll").addEventListener("click", () => {
+  updateAll().catch((e) => alert(`Update en masse KO : ${e?.message || e}`));
+});
+
+$("#btnEnrollToken").addEventListener("click", async () => {
+  const msg = $("#hostMsg");
+  msg.className = "form-msg";
+  const label = $("#fHostLabel").value.trim();
+  const r = await api("/admin/api/hosts/enroll-token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  if (r.json?.ok) {
+    msg.className = "form-msg ok";
+    msg.innerHTML = `Token (affiché UNE fois) : <code>${escapeHtml(r.json.enrollToken)}</code><br/>
+      Sur le VPS restaurant : <code>creezio server-docker enroll --brand-root . --admin &lt;URL admin&gt; --token ${escapeHtml(r.json.enrollToken)} --slug &lt;slug&gt;</code>`;
+  } else {
+    msg.className = "form-msg err";
+    msg.textContent = r.json?.error || `erreur HTTP ${r.status}`;
+  }
+});
+
+/* --------------------------------------------------------- boot polling */
+
+function startBootPoll(s) {
+  const key = keyOf(s);
+  if (state.bootPollers[key]) return;
+  state.bootPollers[key] = true;
+  const tick = async () => {
+    const r = await api(`${apiBase(s)}/boot-status`).catch(() => null);
+    const model = r && r.status === 200 ? r.json : null;
+    if (model) {
+      state.bootModels[key] = model;
+      renderAll();
+      const donePct = (model.overallPercent ?? 0) >= 100;
+      if (model.booting === false && donePct) {
+        delete state.bootPollers[key];
+        // Laisse la barre 100% visible 4s puis nettoie.
+        setTimeout(() => { delete state.bootModels[key]; refresh(); }, 4000);
+        return;
+      }
+    }
+    if (state.bootPollers[key]) setTimeout(tick, 2000);
+  };
+  tick();
+}
+
+/* --------------------------------------------------------------- create */
+
+$("#btnCreate").addEventListener("click", async () => {
+  const msg = $("#formMsg");
+  msg.className = "form-msg";
+  msg.textContent = "";
+  const brandRoot = $("#fBrand").value;
+  const name = $("#fName").value.trim();
+  const portRaw = $("#fPort").value.trim();
+  if (!brandRoot || !name) {
+    msg.className = "form-msg err";
+    msg.textContent = "Marque et nom requis.";
+    return;
+  }
+  const body = { brandRoot, name };
+  if (portRaw) body.port = Number(portRaw);
+  $("#btnCreate").disabled = true;
+  msg.textContent = "Création en cours…";
+  try {
+    const r = await api("/admin/api/servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (r.json?.ok) {
+      msg.className = "form-msg ok";
+      msg.textContent = `Serveur ${name} créé (port ${r.json.instance.port}) — boot en cours…`;
+      $("#fName").value = "";
+      $("#fPort").value = "";
+      await refresh();
+      startBootPoll({ hostId: "local", brandId: r.json.instance.brandId, name });
+    } else {
+      msg.className = "form-msg err";
+      msg.textContent = r.json?.error || `erreur HTTP ${r.status}`;
+    }
+  } finally {
+    $("#btnCreate").disabled = false;
+  }
+});
+
+/* -------------------------------------------------------------- refresh */
+
+async function refresh() {
+  const [srv, disk, hosts] = await Promise.all([
+    api("/admin/api/servers").catch(() => null),
+    api("/admin/api/disk").catch(() => null),
+    api("/admin/api/hosts").catch(() => null),
+  ]);
+  if (hosts?.json?.ok) {
+    state.hosts = hosts.json.hosts || [];
+    renderHosts();
+  }
+  if (srv?.json?.ok) {
+    state.servers = srv.json.servers;
+    const pd = $("#pillDocker");
+    pd.textContent = `docker : ${srv.json.docker ? "ok" : "indisponible"}`;
+    pd.className = `pill ${srv.json.docker ? "ok" : "bad"}`;
+    // Boot polling automatique sur les serveurs en cours de boot.
+    for (const s of state.servers) {
+      const bs = s.bootStatus;
+      if (bs && (bs.booting || (bs.overallPercent ?? 100) < 100)) {
+        startBootPoll(s);
+      }
+    }
+  }
+  if (disk?.json?.ok) {
+    state.disk = disk.json;
+    const f = disk.json.filesystem;
+    $("#pillDisk").textContent = f
+      ? `disque : ${fmtBytes(f.freeBytes)} libres / ${fmtBytes(f.totalBytes)}`
+      : "disque : ?";
+  }
+  renderAll();
+}
+
+async function init() {
+  const h = await api("/admin/api/health").catch(() => null);
+  state.brandRoots = h?.json?.brandRoots || [];
+  const sel = $("#fBrand");
+  sel.innerHTML = state.brandRoots.length
+    ? state.brandRoots
+        .map((r) => `<option value="${escapeHtml(r)}">${escapeHtml(r.split("/").pop() || r)} — ${escapeHtml(r)}</option>`)
+        .join("")
+    : `<option value="">(aucune marque — CREEZIO_ADMIN_BRAND_ROOTS)</option>`;
+  await refresh();
+  setInterval(refresh, 5000);
+}
+init();
+</script>
+</body>
+</html>

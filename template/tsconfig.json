@@ -23,13 +23,399 @@
       }
     ],
     "paths": {
+      "@creezio/interactive-demo/ui/interactive-demo.css": [
+        "./creezio/packages/interactive-demo/ui/interactive-demo.css"
+      ],
+      "@creezio/onboarding/ui/onboarding/onboarding.css": [
+        "./creezio/packages/onboarding/ui/onboarding/onboarding.css"
+      ],
+      "@creezio/observability/fleet-collector/*": [
+        "./creezio/packages/observability/fleet-collector/*"
+      ],
+      "@creezio/electron-shell/browser-tabs": [
+        "./creezio/packages/electron-shell/src/host/browser-tabs/index.ts"
+      ],
+      "@creezio/platform-core/package.json": [
+        "./creezio/packages/platform-core/package.json"
+      ],
+      "@creezio/desktop-tooling/scripts/*": [
+        "./creezio/packages/desktop-tooling/scripts/*"
+      ],
+      "@creezio/fleet/update-status-store": [
+        "./creezio/packages/fleet/src/update-status-store.ts"
+      ],
+      "@creezio/fleet/registry-pull-proxy": [
+        "./creezio/packages/fleet/src/registry-pull-proxy.ts"
+      ],
+      "@creezio/brand-config/manifests/*": [
+        "./creezio/packages/brand-config/src/manifests/*.ts"
+      ],
+      "@creezio/shell-ui/ui/primitives/*": [
+        "./creezio/packages/shell-ui/ui/primitives/*.tsx"
+      ],
+      "@creezio/shell-ui/tailwind-preset": [
+        "./creezio/packages/shell-ui/ui/theme/tailwind-preset.cjs"
+      ],
+      "@creezio/fleet/server-admin-main": [
+        "./creezio/packages/fleet/src/bin/server-admin-main.ts"
+      ],
+      "@creezio/landing/ui/landing.css": [
+        "./creezio/packages/landing/ui/landing.css"
+      ],
+      "@creezio/shell-ui/ui/settings/*": [
+        "./creezio/packages/shell-ui/ui/settings/*.tsx"
+      ],
+      "@creezio/fleet/host-agent-main": [
+        "./creezio/packages/fleet/src/bin/host-agent-main.ts"
+      ],
+      "@creezio/shell-ui/ui/os-pages": [
+        "./creezio/packages/shell-ui/ui/os-pages/index.ts"
+      ],
+      "@creezio/fleet/instance-stack": [
+        "./creezio/packages/fleet/src/instance-stack.ts"
+      ],
+      "@creezio/tasks/ui/tasks-types": [
+        "./creezio/packages/tasks/ui/tasks-types.ts"
+      ],
+      "@creezio-lite/core/validation": [
+        "./creezio/core/validation.ts"
+      ],
+      "@creezio/interactive-demo/ui": [
+        "./creezio/packages/interactive-demo/ui/index.ts"
+      ],
+      "@creezio/fleet/agent-updates": [
+        "./creezio/packages/fleet/src/agent-updates.ts"
+      ],
+      "@creezio/interactive-demo/*": [
+        "./creezio/packages/interactive-demo/*"
+      ],
+      "@creezio/shell-ui/theme.css": [
+        "./creezio/packages/shell-ui/ui/theme/theme.css"
+      ],
+      "@creezio/fleet/server-admin": [
+        "./creezio/packages/fleet/src/server-admin.ts"
+      ],
+      "@creezio/desktop-tooling/*": [
+        "./creezio/packages/desktop-tooling/*"
+      ],
+      "@creezio/access-control/ui": [
+        "./creezio/packages/access-control/ui/index.ts"
+      ],
+      "@creezio/os-ui/materialize": [
+        "./creezio/packages/os-ui/scripts/materialize.mjs"
+      ],
+      "@creezio/electron-shell/*": [
+        "./creezio/packages/electron-shell/*"
+      ],
+      "@creezio/interactive-demo": [
+        "./creezio/packages/interactive-demo/src/index.ts"
+      ],
+      "@creezio/access-control/*": [
+        "./creezio/packages/access-control/*"
+      ],
+      "@creezio/observability/ui": [
+        "./creezio/packages/observability/ui/index.ts"
+      ],
+      "@creezio/fleet/server-lib": [
+        "./creezio/packages/fleet/src/server-lib.ts"
+      ],
+      "@creezio/fleet/host-agent": [
+        "./creezio/packages/fleet/src/host-agent.ts"
+      ],
+      "@creezio/observability/*": [
+        "./creezio/packages/observability/*"
+      ],
+      "@creezio/platform-core/*": [
+        "./creezio/packages/platform-core/*"
+      ],
+      "@creezio/desktop-tooling": [
+        "./creezio/packages/desktop-tooling/src/index.ts"
+      ],
+      "@creezio/shell-ui/ui/kit": [
+        "./creezio/packages/shell-ui/ui/kit.ts"
+      ],
+      "@creezio/integrations/ui": [
+        "./creezio/packages/integrations/ui/index.ts"
+      ],
+      "@creezio/sites-adapter/*": [
+        "./creezio/packages/sites-adapter/src/*.ts"
+      ],
+      "@creezio-lite/core/types": [
+        "./creezio/core/types.ts"
+      ],
+      "@creezio-lite/core/index": [
+        "./creezio/core/index.ts"
+      ],
+      "@creezio/brand-config/*": [
+        "./creezio/packages/brand-config/*"
+      ],
+      "@creezio/electron-shell": [
+        "./creezio/packages/electron-shell/src/index.ts"
+      ],
+      "@creezio/access-control": [
+        "./creezio/packages/access-control/src/index.ts"
+      ],
+      "@creezio/host-runtime/*": [
+        "./creezio/packages/host-runtime/*"
+      ],
+      "@creezio/browser-host/*": [
+        "./creezio/packages/browser-host/*"
+      ],
+      "@creezio/integrations/*": [
+        "./creezio/packages/integrations/*"
+      ],
+      "@creezio/product-hub/ui": [
+        "./creezio/packages/product-hub/ui/index.ts"
+      ],
+      "@creezio/fleet/protocol": [
+        "./creezio/packages/fleet/src/protocol.ts"
+      ],
+      "@creezio-lite/core/http": [
+        "./creezio/core/http.ts"
+      ],
+      "@creezio/propagation/*": [
+        "./creezio/packages/propagation/*"
+      ],
+      "@creezio/automations/*": [
+        "./creezio/packages/automations/*"
+      ],
+      "@creezio/observability": [
+        "./creezio/packages/observability/src/index.ts"
+      ],
+      "@creezio/platform-core": [
+        "./creezio/packages/platform-core/src/index.ts"
+      ],
+      "@creezio/product-hub/*": [
+        "./creezio/packages/product-hub/*"
+      ],
+      "@creezio/app-runtime/*": [
+        "./creezio/packages/app-runtime/*"
+      ],
+      "@creezio/mcp-facade/ui": [
+        "./creezio/packages/mcp-facade/ui/index.ts"
+      ],
+      "@creezio/onboarding/ui": [
+        "./creezio/packages/onboarding/ui/index.ts"
+      ],
+      "@creezio/sites-adapter": [
+        "./creezio/packages/sites-adapter/src/index.ts"
+      ],
+      "@creezio-lite/core/api": [
+        "./creezio/core/api.ts"
+      ],
+      "@creezio/mcp-facade/*": [
+        "./creezio/packages/mcp-facade/*"
+      ],
+      "@creezio/brand-config": [
+        "./creezio/packages/brand-config/src/index.ts"
+      ],
+      "@creezio/onboarding/*": [
+        "./creezio/packages/onboarding/*"
+      ],
+      "@creezio/brand-spec/*": [
+        "./creezio/packages/brand-spec/*"
+      ],
+      "@creezio/host-runtime": [
+        "./creezio/packages/host-runtime/src/index.ts"
+      ],
+      "@creezio/browser-host": [
+        "./creezio/packages/browser-host/src/index.ts"
+      ],
+      "@creezio/integrations": [
+        "./creezio/packages/integrations/src/index.ts"
+      ],
+      "@creezio/api-kernel/*": [
+        "./creezio/packages/api-kernel/*"
+      ],
+      "@creezio/assistant/ui": [
+        "./creezio/packages/assistant/ui/index.ts"
+      ],
+      "@creezio/fleet/docker": [
+        "./creezio/packages/fleet/src/docker.ts"
+      ],
+      "@creezio/propagation": [
+        "./creezio/packages/propagation/src/index.ts"
+      ],
+      "@creezio/automations": [
+        "./creezio/packages/automations/src/index.ts"
+      ],
+      "@creezio/assistant/*": [
+        "./creezio/packages/assistant/*"
+      ],
+      "@creezio/product-hub": [
+        "./creezio/packages/product-hub/src/index.ts"
+      ],
+      "@creezio/app-runtime": [
+        "./creezio/packages/app-runtime/src/index.ts"
+      ],
+      "@creezio/database/ui": [
+        "./creezio/packages/database/ui/index.ts"
+      ],
+      "@creezio/shell-ui/ui": [
+        "./creezio/packages/shell-ui/ui/index.ts"
+      ],
+      "@creezio-lite/core/*": [
+        "./creezio/core/*.ts"
+      ],
+      "@creezio/mcp-facade": [
+        "./creezio/packages/mcp-facade/src/index.ts"
+      ],
+      "@creezio/onboarding": [
+        "./creezio/packages/onboarding/src/index.ts"
+      ],
+      "@creezio/brand-spec": [
+        "./creezio/packages/brand-spec/src/index.ts"
+      ],
+      "@creezio/database/*": [
+        "./creezio/packages/database/*"
+      ],
+      "@creezio/shell-ui/*": [
+        "./creezio/packages/shell-ui/*"
+      ],
+      "@creezio/api-kernel": [
+        "./creezio/packages/api-kernel/src/index.ts"
+      ],
+      "@creezio/support/ui": [
+        "./creezio/packages/support/ui/index.ts"
+      ],
+      "@creezio/landing/ui": [
+        "./creezio/packages/landing/ui/index.ts"
+      ],
+      "@creezio/os-ui/boot": [
+        "./creezio/packages/os-ui/src/boot.tsx"
+      ],
+      "@creezio/granola/ui": [
+        "./creezio/packages/granola/ui/index.ts"
+      ],
+      "@creezio/grokbot/ui": [
+        "./creezio/packages/grokbot/ui/index.ts"
+      ],
+      "@creezio/cockpit/ui": [
+        "./creezio/packages/cockpit/ui/index.ts"
+      ],
+      "@creezio/support/*": [
+        "./creezio/packages/support/*"
+      ],
+      "@creezio/assistant": [
+        "./creezio/packages/assistant/src/index.ts"
+      ],
+      "@creezio/landing/*": [
+        "./creezio/packages/landing/*"
+      ],
+      "@creezio/granola/*": [
+        "./creezio/packages/granola/*"
+      ],
+      "@creezio/grokbot/*": [
+        "./creezio/packages/grokbot/*"
+      ],
+      "@creezio/cockpit/*": [
+        "./creezio/packages/cockpit/*"
+      ],
+      "@creezio/factory/*": [
+        "./creezio/packages/factory/*"
+      ],
+      "@creezio-lite/core": [
+        "./creezio/core/index.ts"
+      ],
+      "@creezio/search/*": [
+        "./creezio/packages/search/*"
+      ],
+      "@creezio/database": [
+        "./creezio/packages/database/src/index.ts"
+      ],
+      "@creezio/shell-ui": [
+        "./creezio/packages/shell-ui/src/index.ts"
+      ],
+      "@creezio/mails/ui": [
+        "./creezio/packages/mails/ui/index.ts"
+      ],
+      "@creezio/admin/ui": [
+        "./creezio/packages/admin/ui/index.ts"
+      ],
+      "@creezio/tasks/ui": [
+        "./creezio/packages/tasks/ui/index.ts"
+      ],
+      "@creezio/support": [
+        "./creezio/packages/support/src/index.ts"
+      ],
+      "@creezio/mails/*": [
+        "./creezio/packages/mails/*"
+      ],
+      "@creezio/landing": [
+        "./creezio/packages/landing/src/index.ts"
+      ],
+      "@creezio/os-ui/*": [
+        "./creezio/packages/os-ui/*"
+      ],
+      "@creezio/granola": [
+        "./creezio/packages/granola/src/index.ts"
+      ],
+      "@creezio/shell/*": [
+        "./creezio/packages/shell/*"
+      ],
+      "@creezio/admin/*": [
+        "./creezio/packages/admin/*"
+      ],
+      "@creezio/tasks/*": [
+        "./creezio/packages/tasks/*"
+      ],
+      "@creezio/grokbot": [
+        "./creezio/packages/grokbot/src/index.ts"
+      ],
+      "@creezio/cockpit": [
+        "./creezio/packages/cockpit/src/index.ts"
+      ],
+      "@creezio/factory": [
+        "./creezio/packages/factory/src/index.ts"
+      ],
+      "@creezio/fleet/*": [
+        "./creezio/packages/fleet/*"
+      ],
+      "@creezio/auth/ui": [
+        "./creezio/packages/auth/ui/index.ts"
+      ],
+      "@creezio/auth/*": [
+        "./creezio/packages/auth/*"
+      ],
+      "@creezio/search": [
+        "./creezio/packages/search/src/index.ts"
+      ],
+      "@creezio/nav/ui": [
+        "./creezio/packages/nav/ui/index.ts"
+      ],
+      "@creezio/mails": [
+        "./creezio/packages/mails/src/index.ts"
+      ],
+      "@creezio/os-ui": [
+        "./creezio/packages/os-ui/src/index.ts"
+      ],
+      "@creezio/shell": [
+        "./creezio/packages/shell/src/index.ts"
+      ],
+      "@creezio/admin": [
+        "./creezio/packages/admin/src/index.ts"
+      ],
+      "@creezio/tasks": [
+        "./creezio/packages/tasks/src/index.ts"
+      ],
+      "@creezio/nav/*": [
+        "./creezio/packages/nav/*"
+      ],
+      "@creezio/fleet": [
+        "./creezio/packages/fleet/src/index.ts"
+      ],
+      "@creezio/auth": [
+        "./creezio/packages/auth/src/index.ts"
+      ],
+      "@creezio/nav": [
+        "./creezio/packages/nav/src/index.ts"
+      ],
       "@/*": [
         "./*"
       ]
     },
     "types": [
-      "node",
-      "@cloudflare/workers-types"
+      "node"
     ],
     "allowImportingTsExtensions": true
   },
@@ -43,6 +429,8 @@
   ],
   "exclude": [
     "node_modules",
-    "examples"
+    "examples",
+    "creezio/packages",
+    "creezio/ui/workspace.tsx"
   ]
 }

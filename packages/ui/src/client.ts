@@ -7,7 +7,7 @@ export function createClient(workspace: string): Api {
     if(workspace) url.searchParams.set('workspace',workspace);
     const response=await fetch(url,{...init,credentials:'same-origin',headers:{...(typeof init.body==='string'?{'Content-Type':'application/json'}:{}),...init.headers}});
     const result:any=await response.json();
-    if(!response.ok) throw new Error(result.error?.message??'Action impossible.');
+    if(!response.ok) throw new Error((typeof result.error==='string'?result.error:result.error?.message)??'Action impossible.');
     return result;
   };
 }

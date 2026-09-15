@@ -1,0 +1,42 @@
+{
+  "name": "@creezio/factory",
+  "version": "0.20.0",
+  "description": "Factory Creezio — scaffold new-app Client+Serveur depuis le kit",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "creezio": "./bin/creezio.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "templates",
+    "codemods"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-codemods.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@creezio/brand-config": "^0.26.0",
+    "@creezio/brand-spec": "^0.26.0",
+    "@creezio/platform-core": "^0.26.0",
+    "@creezio/product-hub": "^0.26.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=22.5"
+  }
+}

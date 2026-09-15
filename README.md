@@ -1,67 +1,57 @@
 # Creezio Lite
 
-Un socle réutilisable pour créer des applications métier dans **ChatGPT Sites** : backend, données persistantes, fichiers, interface et génération d'applications depuis un brief.
+Un fork du **vrai kit Creezio**, avec un profil web pour ChatGPT Sites.
 
-**Démarrer dans ChatGPT :** copiez ce message dans une conversation disposant de Sites et de l'accès GitHub :
+Les **36 packages Creezio 0.26.0** sont présents avec leurs sources, manifests et dépendances. La factory, les scripts, les applications et les documents du monorepo sont conservés. La référence est le commit [`6bd6507`](https://github.com/creezio/creezio/tree/6bd6507633b4c17bfc31206d82d1caa9a8af19af).
 
-> Je veux créer une app à partir de Creezio Lite : https://github.com/creezio/creezio-lite. Lis d'abord AGENTS.md et START-HERE.md. Mon application doit permettre de [objectif, utilisateurs et fonctions]. Utilise le générateur du dépôt, développe les fonctions demandées, puis publie mon application dans GPT Sites. Crée un projet indépendant du kit et conserve ses données entre les visites.
+La première version Lite avait remplacé l’essentiel du kit par une implémentation différente. **La version 0.2 corrige cette erreur**, réutilise le shell original et distingue le code restauré des fonctionnalités effectivement adaptées à Sites.
 
-Le lien du dépôt est nécessaire dans une nouvelle conversation. Le nom seul n'installe pas un plugin et ne donne pas automatiquement accès au code. ChatGPT doit disposer des capacités de lecture/exécution du projet et de publication Sites ; sinon il doit préciser la capacité manquante.
+## Créer une app dans ChatGPT Sites
 
-## Inclus dans la version 0.1.0
+Copier ce message dans une conversation où GitHub et Sites sont disponibles :
 
-- Générateur déterministe depuis un brief JSON, sans token npm et sans serveur Creezio à configurer.
-- Interface Creezio : palette or/encre, sidebar, onglets, recherche, formulaires, listes, documents, équipe et journal.
-- Backend Worker, D1 pour les données et R2 pour les fichiers. Toutes les écritures sont persistantes.
-- Connexion **Sign in with ChatGPT**. Espaces indépendants, rôles propriétaire/administrateur/collaborateur/lecture seule, invitations liées à une adresse e-mail.
-- Modules déclaratifs : texte, texte long, e-mail, nombre, date, sélection et booléen ; validation côté serveur, pagination, filtres et recherche textuelle.
-- Éditions avec contrôle de version, archivage et journal transactionnel des changements.
-- Fichiers privés à l'espace, téléchargement forcé, limite de 10 Mo par fichier.
-- Points d'extension pour règles métier et routes spécialisées.
-- Outils WebMCP lorsque le navigateur les prend en charge ; les autorisations restent vérifiées par le backend.
-- Verrouillage de la version du socle, vérification d'intégrité et mise à niveau sans écraser les modifications métier.
+> Je veux créer une app à partir de Creezio Lite : https://github.com/creezio/creezio-lite. Lis START-HERE.md. Garde le vrai shell et le design Creezio, puis crée une application indépendante dans Sites. Mon application doit permettre de : [décrire le besoin].
 
-Il s'agit d'un **dérivé ciblé** de Creezio, pas d'un port intégral de ses services desktop. La provenance des fichiers repris est dans [UPSTREAM.json](UPSTREAM.json). L'architecture garde une API HTTP et la séparation kit/métier ; ses contrats, son stockage et son runtime sont propres à Lite. Voir la [matrice de compatibilité](docs/COMPATIBILITY.md).
+Le nom seul n’installe pas le dépôt dans ChatGPT. Transmettre le lien rend le point de départ explicite. [Commencer →](START-HERE.md)
 
-## Génération locale
+## Ce qui fonctionne dans le profil Sites
 
-Node.js 24 ou plus récent est requis pour la CLI et les tests du kit. Aucune installation n'est nécessaire pour générer le projet.
+- **Shell natif** : WorkspaceRoot, sidebar, onglets persistants, navigation, recherche de pages, thème et primitives du package `@creezio/shell-ui`.
+- **Pages natives** : kanban Tâches humaines, Support, administration Navigation, moteur de visites interactives.
+- **API natives conservées** : `api-kernel`, handlers nav/support/interactive-demo avec persistance D1 injectable. Les signatures SQLite historiques restent disponibles.
+- **Connexion Sites** : interface LoginPage native et authentification ChatGPT ; contrôle des droits et isolation des espaces côté serveur.
+- **Fonctions web ajoutées** : modules métier déclaratifs, grilles DataTable natives, fichiers privés R2, invitations, espaces et journal D1. Ces ajouts ne sont pas présentés comme le module Database ou l’ACL complète du kit.
+- **Réutilisation** : génération de projets indépendants, sources épinglées et contrôle d’intégrité.
 
-```bash
-git clone https://github.com/creezio/creezio-lite.git
-cd creezio-lite
-node bin/creezio-lite.mjs create --spec examples/services.json --out ../mon-app
-node bin/creezio-lite.mjs doctor --app ../mon-app
-```
+**Ce n’est pas encore une parité complète du backend Creezio sur Sites.** Les sources des autres packages sont restaurées, mais certains services demandent encore un portage D1, un service externe ou un environnement desktop/serveur. Hermes et n8n sont désactivés à la demande du propriétaire. Le détail des 36 packages est dans [COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
-Dans ChatGPT, suivre ensuite le workflow **Sites** installé : configuration de l'environnement, installation selon le lockfile fourni, build, enregistrement du Site et publication. L'application générée contient toutes ses sources ; elle ne dépend pas de chemins de cette machine. Aucun identifiant Sites n'est hérité du kit.
+## Repères
 
-En développement hors ChatGPT, utiliser le gestionnaire indiqué par `packageManager` dans l'application (`pnpm`), puis `pnpm install --frozen-lockfile`. Voir [le guide de développement](docs/DEVELOPMENT.md) pour les migrations D1 locales et les tests.
-
-## Organisation
-
-| Chemin | Rôle |
+| Chemin | Contenu |
 |---|---|
-| `START-HERE.md`, `AGENTS.md` | Entrée pour une nouvelle conversation ChatGPT |
-| `bin/creezio-lite.mjs` | Création, doctor et upgrade |
-| `packages/core/src` | Backend indépendant du framework et validation |
-| `packages/ui/src` | Interface réutilisable et fichiers adaptés depuis Creezio |
-| `template` | Application Vinext/React compatible Sites, schéma et migration D1 |
-| `examples` | Deux briefs produit différents et exécutables |
-| `tests` | Isolation, permissions, stockage, D1/R2, génération et mises à jour |
-| `docs` | Contrats API, extensions, sécurité et publication |
+| `packages/<package natif>` | Vrais packages upstream ; changements ciblés et inventoriés |
+| `packages/sites-adapter` | Adaptateurs D1 des modules natifs |
+| `packages/core` et `packages/ui` | Extensions web Lite pour les données métier et les espaces |
+| `template` | Profil Sites, branchement du vrai shell et des routes |
+| `packages/factory`, `apps`, `docker`, scripts upstream | Outillage original conservé |
+| `bin/creezio-lite.mjs` | Générateur spécifique au profil Sites ; distinct de la factory desktop |
+| `upstream-packages.lock.json`, `upstream-patches.json` | Empreintes de l’amont et différences auditées |
+| `upstream-workflows` | Workflows upstream archivés, sans publication npm ni propagation automatique |
 
-Chaque application générée possède sa configuration `brand.json`, son code métier, son projet Sites et son stockage. Les applications ne partagent ni identifiants de déploiement, ni utilisateurs internes, ni données.
+[Architecture Sites](docs/SITES-ARCHITECTURE.md) · [API](docs/API.md) · [Vérifications](docs/VALIDATION.md) · [README upstream intégral](docs/UPSTREAM-README.md)
 
-## Maintenance
-
-Le socle livré dans chaque application est un **snapshot versionné et vérifié par SHA-256**. Il n'y a pas de publication npm de Creezio Lite dans cette livraison. Les dépendances tierces sont verrouillées par `pnpm-lock.yaml`.
+## Vérifier le profil Sites
 
 ```bash
-node bin/creezio-lite.mjs upgrade --app ../mon-app
-node bin/creezio-lite.mjs upgrade --app ../mon-app --apply
+npm run sync:template
+pnpm --dir template install --frozen-lockfile
+npm run test:sites
+npm run check
+pnpm --dir template run typecheck
+pnpm --dir template run build
+node scripts/validate-examples.mjs
 ```
 
-La première commande inspecte ; la seconde applique une mise à jour compatible et conserve une sauvegarde. Les différences locales dans le socle bloquent l'écrasement. Une évolution du schéma commun exige une migration explicite. Toute mise à jour doit être suivie de tests, d'un build et d'une nouvelle publication de l'application. [Procédure complète](docs/UPDATES.md).
+Dans ChatGPT, suivre la compétence Sites pour installer, construire et publier le projet existant. L’installation à la racine concerne le monorepo natif ; elle n’est pas nécessaire pour générer une app Sites. `npm test` conserve la suite upstream ; `npm run test:sites` vérifie le profil Sites.
 
-Les fichiers repris de Creezio conservent le statut de licence du projet d'origine (`UNLICENSED`). Les composants tiers conservent leurs licences incluses. La mise à disposition du dépôt ne transforme pas Creezio en projet sous licence MIT.
+Licence et mentions upstream conservées (`UNLICENSED`). Aucune publication npm de ce fork n’est effectuée.
