@@ -100,3 +100,21 @@ export const assistantMessages = sqliteTable('lite_assistant_messages', {
 export const assistantRuns = sqliteTable('lite_assistant_runs', {
   id:text('id').primaryKey(),conversationId:text('conversation_id').notNull().references(()=>assistantConversations.id,{onDelete:'cascade'}),orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull().references(()=>users.id),traceJson:text('trace_json').notNull(),createdAt:text('created_at').notNull(),
 },t=>[index('idx_assistant_runs_thread').on(t.conversationId,t.createdAt),check('assistant_trace_json',sql`json_valid(${t.traceJson})`)]);
+
+export const mailMessages=sqliteTable('lite_mail_messages',{
+ id:text('id').primaryKey(),orgId:text('org_id').notNull().references(()=>organizations.id,{onDelete:'cascade'}),
+ externalKey:text('external_key').notNull(),status:text('status').notNull(),folder:text('folder').notNull(),dataJson:text('data_json').notNull(),
+ readAt:text('read_at'),version:integer('version').notNull().default(1),createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[uniqueIndex('idx_mail_external').on(t.orgId,t.externalKey),index('idx_mail_folder').on(t.orgId,t.folder,t.createdAt)]);
+export const mailAttachments=sqliteTable('lite_mail_attachments',{
+ id:text('id').primaryKey(),orgId:text('org_id').notNull().references(()=>organizations.id,{onDelete:'cascade'}),
+ mailId:text('mail_id').notNull().references(()=>mailMessages.id,{onDelete:'cascade'}),objectKey:text('object_key').notNull(),filename:text('filename').notNull(),contentType:text('content_type').notNull(),sizeBytes:integer('size_bytes').notNull(),
+},t=>[index('idx_mail_parts').on(t.orgId,t.mailId)]);
+export const mailReceivers=sqliteTable('lite_mail_receivers',{
+ orgId:text('org_id').primaryKey().references(()=>organizations.id,{onDelete:'cascade'}),integrationId:text('integration_id').notNull().references(()=>integrations.id,{onDelete:'cascade'}),
+ tokenHash:text('token_hash').notNull(),updatedAt:text('updated_at').notNull(),
+});
+export const mailSync=sqliteTable('lite_mail_sync',{
+ integrationId:text('integration_id').primaryKey().references(()=>integrations.id,{onDelete:'cascade'}),orgId:text('org_id').notNull().references(()=>organizations.id,{onDelete:'cascade'}),
+ cursor:text('cursor').notNull().default(''),lockUntil:text('lock_until'),version:integer('version').notNull().default(1),updatedAt:text('updated_at').notNull(),
+});

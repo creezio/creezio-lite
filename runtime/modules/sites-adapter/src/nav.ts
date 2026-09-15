@@ -13,6 +13,7 @@ export function nativeEntries(app: AppDefinition): NavCatalogEntry[] {
   const extra = (id: string,href: string,label: string,icon: string,order: number,group: 'core'|'admin'='core'): NavCatalogEntry => ({id,href,label,icon,order,group,source:'os',available:true,defaultVisible:true,...(group==='admin'?{permission:'platform.access.manage'}:{})});
   return [extra('os.dashboard','/dashboard','Tableau de bord','LayoutDashboard',0),
     ...defaultOsCatalogEntries().filter(e=>live.has(e.href)),
+    extra('os.mails','/mails','Mail','Mail',23),
     extra('os.documents','/documents','Documents','FileText',24),
     extra('os.support','/support','Support','Circle',65),OS_ADMIN_NAV_ENTRY,
     extra('os.audit','/admin/activity','Journal d’activité','Activity',74,'admin'),

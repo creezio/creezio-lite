@@ -11,6 +11,7 @@ const admin: Role[] = ['owner', 'admin'];
 const writers: Role[] = ['owner', 'admin', 'member'];
 const field = (key: string, label: string): Field => ({ key, label, type: 'text' });
 const systems: RegisteredModule[] = [
+  {id:'mail',name:'Mail',description:'Messagerie partagée de cet espace',href:'/mails',titleField:'subject',fields:[field('subject','Objet'),field('from_addr','Expéditeur'),field('to_addr','Destinataires'),field('text_body','Message')],api:'email',readRoles:roles,writeRoles:writers},
   { id:'tasks', name:'Tâches', description:'Le travail de l’équipe', href:'/taches', titleField:'title',
     fields:[field('title','Titre'),field('body','Description'),field('status','Statut')], api:'tasks', readRoles:roles, writeRoles:writers },
   { id:'files', name:'Documents', description:'Noms et métadonnées des fichiers', href:'/documents', titleField:'name',
@@ -35,6 +36,7 @@ export function moduleRegistry(app: AppDefinition): RegisteredModule[] {
 export function visibleModules(app: AppDefinition, role: Role) { return moduleRegistry(app).filter(m=>m.readRoles.includes(role)); }
 export function businessModule(app: AppDefinition, id: string): Module | undefined { return app.modules.find(m=>m.id===id); }
 export function recordHref(module: RegisteredModule, id: string, data: Record<string, unknown>): string {
+  if(module.id==='mail')return `/mails?record=${encodeURIComponent(id)}`;
   if(module.id==='support')return `${module.href}?ticket=${encodeURIComponent(String(data._ticketId??id.replace(/^ticket:/,'')))}`;
   return `${module.href}?record=${encodeURIComponent(id)}`;
 }

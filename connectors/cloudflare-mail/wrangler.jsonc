@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "creezio-lite-email-inbound",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-15",
+  "workers_dev": false,
+  "vars": {
+    "INBOUND_URL": "https://YOUR-SITE/api/v1/email/inbound/YOUR-WORKSPACE",
+    "MAIL_DOMAIN": "your-domain.example"
+  }
+}

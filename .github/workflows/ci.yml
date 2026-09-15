@@ -26,3 +26,10 @@ jobs:
       - run: pnpm --dir template run build
       - name: Generate two independent applications
         run: node scripts/validate-examples.mjs
+      - name: Validate mail connectors without sending email
+        run: |
+          pnpm --dir connectors/mail-gateway install --frozen-lockfile
+          node --test connectors/mail-gateway/server.test.mjs
+          pnpm --dir connectors/cloudflare-mail install --frozen-lockfile
+          node --test connectors/cloudflare-mail/worker.test.mjs
+          pnpm --dir connectors/cloudflare-mail exec wrangler deploy --dry-run --outdir dist
