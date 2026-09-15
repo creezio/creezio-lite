@@ -19,6 +19,8 @@ export const UI_ACTION_EVENT_LEGACY = "tf2-assistant-ui-action";
 
 type UiActionDetail = {
   actionId: string;
+  expiresAt?: string;
+  signal?: AbortSignal;
   type: "list_targets" | "click" | "type" | "scroll";
   params: Record<string, unknown>;
 };
@@ -56,7 +58,9 @@ function isVisible(el: Element): boolean {
   if (el.closest("[data-lite-assistant-ui]")) return false;
   if (el.closest('[aria-hidden="true"]')) return false;
   const he = el as HTMLElement;
-  if (he.hidden) return false;
+  if (he.hidden || el.closest('[inert], [aria-disabled="true"]')) return false;
+  if (el instanceof HTMLInputElement && /^(password|hidden|file)$/.test(el.type)) return false;
+  if (el instanceof HTMLInputElement && /password|secret|token|api.?key/i.test(`${el.name} ${el.autocomplete}`)) return false;
   if ((he as HTMLButtonElement).disabled) return false;
   const rect = el.getBoundingClientRect();
   if (rect.width < 4 || rect.height < 4) return false;
@@ -111,7 +115,7 @@ function normalize(s: string): string {
 function pageContext() {
   const h1 = document.querySelector("h1");
   return {
-    path: window.location.pathname + window.location.search,
+    path: window.location.pathname,
     title: document.title,
     heading: h1 ? (h1.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120) : null,
   };
@@ -371,10 +375,10 @@ async function handleListTargets(params: Record<string, unknown>) {
   return { ok: true, page: pageContext(), targets, truncated, ...(note ? { note } : {}) };
 }
 
-async function handleClick(params: Record<string, unknown>) {
+async function handleClick(params: Record<string, unknown>, signal?: AbortSignal) {
   const ref = typeof params.ref === "string" ? params.ref : undefined;
   const label = typeof params.label === "string" ? params.label : undefined;
-  const { el, suggestions } = await resolveWithRepair(ref, label);
+  const { el, suggestions } = ref ? { el: resolveTarget(ref), suggestions: [] } : await resolveWithRepair(ref, label);
   if (!el) {
     return {
       ok: false,
@@ -383,16 +387,24 @@ async function handleClick(params: Record<string, unknown>) {
       page: pageContext(),
     };
   }
+  signal?.throwIfAborted();
+  if (!isVisible(el)) return { ok: false, error: "Cette cible n’est plus disponible. Repérez à nouveau les éléments." };
+  if (el instanceof HTMLAnchorElement && new URL(el.href, window.location.href).origin !== window.location.origin) {
+    return { ok: false, error: "Le curseur de cette application ne pilote pas les sites externes." };
+  }
   const cursor = getFakeCursor();
   const { x, y } = await moveCursorToElement(el);
   await cursor.clickEffect();
+  signal?.throwIfAborted();
+  if (!isVisible(el)) return { ok: false, error: "La cible a changé pendant le déplacement." };
   synthClick(el, x, y);
   cursor.hideSoon();
   // Laisser la navigation / le re-render RSC se produire.
   await sleep(850);
-  // Les toasts (ex. « Ajouté au panier ») peuvent arriver après le fetch : polling ~4 s.
+  // Laisser une courte fenêtre aux confirmations asynchrones.
   let toasts = visibleToasts();
-  for (let i = 0; i < 16 && !toasts.length; i++) {
+  for (let i = 0; i < 4 && !toasts.length; i++) {
+    signal?.throwIfAborted();
     await sleep(250);
     toasts = visibleToasts();
   }
@@ -404,13 +416,13 @@ async function handleClick(params: Record<string, unknown>) {
   };
 }
 
-async function handleType(params: Record<string, unknown>) {
+async function handleType(params: Record<string, unknown>, signal?: AbortSignal) {
   const ref = typeof params.ref === "string" ? params.ref : undefined;
   const label = typeof params.label === "string" ? params.label : undefined;
   const text = typeof params.text === "string" ? params.text : "";
   const submit = params.submit === true;
 
-  const resolved = await resolveWithRepair(ref, label);
+  const resolved = ref ? { el: resolveTarget(ref), suggestions: [] } : await resolveWithRepair(ref, label);
   let el: Element | null = resolved.el;
   // Si la cible n'est pas un champ, chercher un input à l'intérieur.
   if (el && !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
@@ -425,23 +437,31 @@ async function handleType(params: Record<string, unknown>) {
     };
   }
 
+  signal?.throwIfAborted();
+  if (!isVisible(el)) return { ok: false, error: "Cette cible n’est plus disponible. Repérez à nouveau les éléments." };
   const cursor = getFakeCursor();
   const { x, y } = await moveCursorToElement(el);
   await cursor.clickEffect();
+  signal?.throwIfAborted();
+  if (!isVisible(el) || el.readOnly) return { ok: false, error: "Ce champ n’est pas modifiable." };
   synthClick(el, x, y);
   await sleep(120);
 
   // Frappe progressive (vitesse plafonnée pour les textes longs).
+  signal?.throwIfAborted();
   setNativeValue(el, "");
   const perChar = Math.max(18, Math.min(55, Math.floor(1600 / Math.max(text.length, 1))));
   let acc = "";
   for (const ch of text) {
+    signal?.throwIfAborted();
+    if (!el.isConnected || !isVisible(el)) throw new Error("Le champ a changé pendant la saisie.");
     acc += ch;
     setNativeValue(el, acc);
     await sleep(perChar);
   }
 
   if (submit) {
+    signal?.throwIfAborted();
     const keyOpts = { bubbles: true, cancelable: true, key: "Enter", code: "Enter" };
     el.dispatchEvent(new KeyboardEvent("keydown", keyOpts));
     el.dispatchEvent(new KeyboardEvent("keyup", keyOpts));
@@ -451,7 +471,7 @@ async function handleType(params: Record<string, unknown>) {
   cursor.hideSoon();
   // Debounce recherche (300 ms) + refresh RSC.
   await sleep(900);
-  return { ok: true, page: pageContext(), typed: text, toasts: visibleToasts() };
+  return { ok: true, page: pageContext(), typedCharacters: text.length, toasts: visibleToasts() };
 }
 
 function findScrollableRoot(): Element {
@@ -476,8 +496,9 @@ function findScrollableRoot(): Element {
   return best || doc || document.documentElement;
 }
 
-async function handleScroll(params: Record<string, unknown>) {
+async function handleScroll(params: Record<string, unknown>, signal?: AbortSignal) {
   const direction = params.direction === "up" ? -1 : 1;
+  signal?.throwIfAborted();
   const root = findScrollableRoot();
   const delta = direction * Math.round(window.innerHeight * 0.75);
   root.scrollBy({ top: delta, behavior: "smooth" });
@@ -490,15 +511,16 @@ async function handleScroll(params: Record<string, unknown>) {
 
 async function executeUiAction(detail: UiActionDetail): Promise<Record<string, unknown>> {
   try {
+    detail.signal?.throwIfAborted();
     switch (detail.type) {
       case "list_targets":
         return await handleListTargets(detail.params);
       case "click":
-        return await handleClick(detail.params);
+        return await handleClick(detail.params, detail.signal);
       case "type":
-        return await handleType(detail.params);
+        return await handleType(detail.params, detail.signal);
       case "scroll":
-        return await handleScroll(detail.params);
+        return await handleScroll(detail.params, detail.signal);
       default:
         return { ok: false, error: `Action inconnue: ${String(detail.type)}` };
     }
@@ -525,31 +547,37 @@ export async function runUiNavigate(href: string, navigate: (href: string) => vo
 
 export function UiDriver() {
   useEffect(() => {
-    let disposed = false;
+    const lifetime = new AbortController();
 
     async function onAction(e: Event) {
       const detail = (e as CustomEvent<UiActionDetail>).detail;
-      if (!detail?.actionId || !detail.type) return;
-      const result = await executeUiAction(detail);
-      if (disposed) {
-        /* la page a été démontée : on tente quand même le POST */
-      }
+      if (!detail?.actionId || !detail.type || !detail.expiresAt) return;
+      const remaining = Date.parse(detail.expiresAt) - Date.now();
+      if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 30_000) return;
+      const signal = AbortSignal.any([lifetime.signal, ...(detail.signal ? [detail.signal] : []), AbortSignal.timeout(Math.ceil(remaining))]);
+      const endpoint = `/api/v1/assistant/ui-actions/${encodeURIComponent(detail.actionId)}`;
       try {
-        await fetch(`/api/v1/assistant/ui-actions/${encodeURIComponent(detail.actionId)}/result`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(result),
-          keepalive: true,
+        // Claim once before moving: SSE duplicates and another tab cannot replay the action.
+        // Keep the current workspace cookie: switching spaces invalidates the claim.
+        const claim = await fetch(`${endpoint}/claim`, { method: "POST", signal });
+        if (!claim.ok) return;
+        signal.throwIfAborted();
+        const result = await executeUiAction({ ...detail, signal });
+        signal.throwIfAborted();
+        await fetch(`${endpoint}/result`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(result), signal,
         });
       } catch {
-        /* le serveur timeoutera */
+        getFakeCursor().hideSoon();
+        // No acknowledgement is fabricated: the server reports interruption/timeout.
       }
     }
 
     window.addEventListener(UI_ACTION_EVENT, onAction);
     window.addEventListener(UI_ACTION_EVENT_LEGACY, onAction);
     return () => {
-      disposed = true;
+      lifetime.abort();
       window.removeEventListener(UI_ACTION_EVENT, onAction);
       window.removeEventListener(UI_ACTION_EVENT_LEGACY, onAction);
     };

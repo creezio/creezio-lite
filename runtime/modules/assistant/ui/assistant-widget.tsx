@@ -230,6 +230,7 @@ type SseHandlers = {
   onCancelled?: () => void;
   onUiAction?: (action: {
     actionId: string;
+    expiresAt?: string;
     type: string;
     params: Record<string, unknown>;
   }) => void;
@@ -297,12 +298,14 @@ async function readSse(
           round?: number;
           error?: string;
           actionId?: string;
+          expiresAt?: string;
           type?: string;
           params?: Record<string, unknown>;
         };
         if (event === "ui_action" && data.actionId && data.type) {
           handlers.onUiAction?.({
             actionId: data.actionId,
+            expiresAt: data.expiresAt,
             type: data.type,
             params: data.params || {},
           });
@@ -1181,6 +1184,7 @@ export function AssistantWidget() {
         body: JSON.stringify({
           messages: [{role:"user",content:text}],
           stream: true,
+          uiDriver: true,
           conversationId: activeIdRef.current,
           model: activeModelRef.current,
           mode: preferredModeRef.current,
@@ -1283,7 +1287,7 @@ export function AssistantWidget() {
           },
           onUiAction: (action) => {
             window.dispatchEvent(
-              new CustomEvent("lite-assistant-ui-action", { detail: action }),
+              new CustomEvent("lite-assistant-ui-action", { detail: { ...action, signal: ctrl.signal } }),
             );
           },
         });
@@ -1358,6 +1362,7 @@ export function AssistantWidget() {
         }, 1200);
       }
     } finally {
+      ctrl.abort();
       abortRef.current = null;
       setBusy(false);
     }

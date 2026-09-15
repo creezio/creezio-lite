@@ -106,6 +106,7 @@ export function coreOperations(app:AppDefinition):Operation[]{
     ['status','GET','llm-status','État des intégrations du chat'],['models','GET','models','Modèles OpenAI configurés'],['hermes.models','GET','hermes-models','Modèles Hermes configurés'],
     ['conversations.list','GET','conversations','Lister ses conversations'],['conversations.create','POST','conversations','Créer une conversation'],
     ['conversations.get','GET','conversations/:id','Lire sa conversation'],['conversations.update','PATCH','conversations/:id','Modifier sa conversation'],['conversations.delete','DELETE','conversations/:id','Supprimer sa conversation'],
+    ['ui.claim','POST','ui-actions/:id/claim','Réserver une action du curseur dans sa session'],['ui.result','POST','ui-actions/:id/result','Confirmer une action du curseur dans sa session'],
     ['trace','GET','conversations/:id/trace','Actions et diagnostics de sa conversation'],['chat','POST','chat','Dialoguer avec OpenAI ou Hermes'],['transcribe','POST','transcribe','Transcrire un message vocal'],
   ] as const)add(`assistant.${id}`,method,`assistant/${path}`,'assistant','Assistant',description,{...personalAssistant,...(id==='transcribe'?{requestType:'file' as const}:method==='POST'||method==='PATCH'?{bodySchema:{type:'object',additionalProperties:true}}:{})});
   for(const module of app.modules){

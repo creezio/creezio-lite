@@ -118,3 +118,9 @@ export const mailSync=sqliteTable('lite_mail_sync',{
  integrationId:text('integration_id').primaryKey().references(()=>integrations.id,{onDelete:'cascade'}),orgId:text('org_id').notNull().references(()=>organizations.id,{onDelete:'cascade'}),
  cursor:text('cursor').notNull().default(''),lockUntil:text('lock_until'),version:integer('version').notNull().default(1),updatedAt:text('updated_at').notNull(),
 });
+
+export const assistantUiActions = sqliteTable('lite_assistant_ui_actions', {
+  id:text('id').primaryKey(),conversationId:text('conversation_id').notNull().references(()=>assistantConversations.id,{onDelete:'cascade'}),
+  orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull().references(()=>users.id),
+  runId:text('run_id').notNull(),status:text('status').notNull(),resultJson:text('result_json'),expiresAt:text('expires_at').notNull(),
+},t=>[index('idx_assistant_ui_expiry').on(t.orgId,t.userId,t.expiresAt),check('assistant_ui_status',sql`${t.status} IN ('pending','claimed','completed')`)]);

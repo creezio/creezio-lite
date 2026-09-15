@@ -38,3 +38,7 @@ Les anciennes connexions SMTP/IMAP restent conservées ; compléter leurs param�
 ## Correction 0.6.1
 
 Remplacer le runtime par l’upgrade habituel, puis reconstruire l’application. Aucune migration ni modification des intégrations enregistrées n’est nécessaire. Les appels OpenAI, Hermes et Mail utilisent désormais le mode de redirection compatible avec workerd et refusent explicitement les redirections sans transmettre les identifiants à une autre adresse. Mettre aussi à jour le Worker de réception Cloudflare s’il est installé.
+
+## Migration 0.6.1 vers 0.7.0
+
+Fusion explicite requise pour le relais du curseur. Après un doctor sans conflit, préserver le brief, les règles métier, l’identité Sites, les dépendances et toutes les migrations 0000 à 0007 avec leurs métadonnées. Fusionner le runtime et `db/schema.ts`, ajouter `0008_assistant_ui_cursor.sql`, son snapshot et son entrée de journal, puis régénérer le verrou après contrôle des sources. La nouvelle table ne contient que les confirmations temporaires des actions du navigateur ; aucun enregistrement métier ni secret d’intégration n’est modifié.
