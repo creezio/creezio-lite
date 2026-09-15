@@ -37,7 +37,7 @@ export async function handleNativeApi(request:Request,context:ApiContext):Promis
     if(path==='workspaces/select'&&request.method==='POST'){const b=await readJson(request);const next=await getWorkspace(db,user,String(b.workspaceId??''));const r=json({workspace:next});r.headers.set('Set-Cookie',`lite_workspace=${next.id}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`);return r;}
     if(path==='users'&&request.method==='GET'){const rows=await db.prepare('SELECT u.id,u.name AS username,m.role FROM lite_members m JOIN lite_users u ON u.id=m.user_id WHERE m.org_id=?').bind(org.id).all();return json({ok:true,users:rows.results.map(r=>({...r,role:r.role==='owner'?'owner':'collaborator',kind:'human',enabled:true})),can_impersonate:false});}
     if(path.startsWith('auth/'))fail(422,'sites_identity','Cette opération utilise la connexion ChatGPT du Site.');
-    const kernel=createApiKernel({brandId:context.app.id,appVersion:'0.3.0',authorizeModuleAccess:({permission})=>({allow:permissions(c,context.app).includes(permission),reason:'permission_denied'})});
+    const kernel=createApiKernel({brandId:context.app.id,appVersion:'0.3.1',authorizeModuleAccess:({permission})=>({allow:permissions(c,context.app).includes(permission),reason:'permission_denied'})});
     kernel.registerModuleApi('nav',navMount(c,context.app));
     kernel.registerModuleApi('interactive-demo',demoMount(c,context.app.name));
     kernel.registerModuleApi('tasks',tasksMount(c));

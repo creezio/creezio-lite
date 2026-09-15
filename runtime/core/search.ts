@@ -7,33 +7,51 @@ import { json, readJson } from './http.ts';
 const sources = ['records','tasks','files','support','members','audit'];
 type Override = {module_id:string;enabled:number;fields_json:string;version:number};
 export type SearchPolicy = RegisteredModule & {search:{enabled:boolean;fields:string[]};version:number};
-export async function searchPolicies(db:D1Database,app:AppDefinition,org:string):Promise<SearchPolicy[]> {
-  const stored=await db.prepare('SELECT module_id,enabled,fields_json,version FROM lite_search_settings WHERE org_id=?').bind(org).all<Override>();
+type SearchProgress = {source:string;cursor:string;complete:number};
+function applySearchPolicies(app:AppDefinition,stored:Override[]):SearchPolicy[] {
   return moduleRegistry(app).map(m=>{
-    const setting=stored.results.find(s=>s.module_id===m.id);
+    const setting=stored.find(s=>s.module_id===m.id);
     return {...m,version:setting?.version??0,search:setting?{enabled:Boolean(setting.enabled),fields:(JSON.parse(setting.fields_json) as string[]).filter(key=>m.fields.some(f=>f.key===key))}:m.search};
   });
 }
+export async function searchPolicies(db:D1Database,app:AppDefinition,org:string):Promise<SearchPolicy[]> {
+  const stored=await db.prepare('SELECT module_id,enabled,fields_json,version FROM lite_search_settings WHERE org_id=?').bind(org).all<Override>();
+  return applySearchPolicies(app,stored.results);
+}
 
-/** Bounded, resumable backfill. Writes and their index changes share a DB transaction. */
-export async function prepareSearchIndex(db:D1Database,org:string) {
-  for(const source of sources){
-    await db.prepare('INSERT OR IGNORE INTO lite_search_progress(org_id,source,cursor,complete) VALUES(?,?,?,0)').bind(org,source,'').run();
-    const state=await db.prepare('SELECT cursor,complete FROM lite_search_progress WHERE org_id=? AND source=?').bind(org,source).first<{cursor:string;complete:number}>();
-    if(state?.complete)continue;
-    const cursor=state?.cursor??'';
-    const rows=await db.prepare(`SELECT source_key FROM lite_search_source_${source} WHERE org_id=? AND source=? AND source_key>? ORDER BY source_key LIMIT 50`).bind(org,source,cursor).all<{source_key:string}>();
-    const last=rows.results.at(-1)?.source_key??cursor;
-    await db.batch([
-      db.prepare(`INSERT INTO lite_search_documents(org_id,module_id,record_id,data,updated_at)
+/** Read current policies and index state in one trip; never cache permissions. */
+async function searchContext(db:D1Database,app:AppDefinition,org:string) {
+  const [settings,progress]=await db.batch([
+    db.prepare('SELECT module_id,enabled,fields_json,version FROM lite_search_settings WHERE org_id=?').bind(org),
+    db.prepare('SELECT source,cursor,complete FROM lite_search_progress WHERE org_id=?').bind(org),
+  ]);
+  return {policies:applySearchPolicies(app,settings.results as Override[]),indexing:await prepareSearchIndex(db,org,progress.results as SearchProgress[])};
+}
+
+/** Bounded, resumable backfill. A ready index needs no writes or source scans. */
+export async function prepareSearchIndex(db:D1Database,org:string,progress?:SearchProgress[]) {
+  const states=progress??(await db.prepare('SELECT source,cursor,complete FROM lite_search_progress WHERE org_id=?').bind(org).all<SearchProgress>()).results;
+  const pending=sources.filter(source=>!states.some(state=>state.source===source&&state.complete));
+  if(!pending.length)return false;
+  const cursors=pending.map(source=>states.find(state=>state.source===source)?.cursor??'');
+  // Fetch one extra key to distinguish a full final page from a partial backfill.
+  const pages=await db.batch(pending.map((source,i)=>db.prepare(`SELECT source_key FROM lite_search_source_${source} WHERE org_id=? AND source=? AND source_key>? ORDER BY source_key LIMIT 51`).bind(org,source,cursors[i])));
+  const writes=pending.flatMap((source,i)=>{
+    const rows=pages[i].results as {source_key:string}[],last=rows.slice(0,50).at(-1)?.source_key??cursors[i];
+    return [
+      ...(rows.length?[db.prepare(`INSERT INTO lite_search_documents(org_id,module_id,record_id,data,updated_at)
         SELECT org_id,module_id,record_id,data,updated_at FROM lite_search_source_${source}
         WHERE org_id=? AND source=? AND source_key>? AND source_key<=?
-        ON CONFLICT(org_id,module_id,record_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at`).bind(org,source,cursor,last),
-      db.prepare('UPDATE lite_search_progress SET cursor=?,complete=? WHERE org_id=? AND source=? AND cursor=?').bind(last,rows.results.length<50?1:0,org,source,cursor),
-    ]);
-  }
-  const remaining=await db.prepare('SELECT COUNT(*) AS n FROM lite_search_progress WHERE org_id=? AND complete=0').bind(org).first<{n:number}>();
-  return Boolean(remaining?.n);
+        ON CONFLICT(org_id,module_id,record_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at`).bind(org,source,cursors[i],last)]:[]),
+      db.prepare(`INSERT INTO lite_search_progress(org_id,source,cursor,complete) VALUES(?,?,?,?)
+        ON CONFLICT(org_id,source) DO UPDATE SET cursor=excluded.cursor,complete=excluded.complete
+        WHERE lite_search_progress.cursor=? AND lite_search_progress.complete=0`).bind(org,source,last,rows.length<=50?1:0,cursors[i]),
+    ];
+  });
+  // Check the committed progress in the same transaction. Concurrent searches
+  // may advance the cursor, but a stale batch must never move it backwards.
+  const result=await db.batch([...writes,db.prepare(`SELECT COUNT(*) AS completed FROM lite_search_progress WHERE org_id=? AND complete=1 AND source IN (${sources.map(()=>'?').join(',')})`).bind(org,...sources)]);
+  return (result.at(-1)?.results[0] as {completed:number}|undefined)?.completed!==sources.length;
 }
 
 export function searchTerms(query:string):string[] {
@@ -44,9 +62,10 @@ export function searchTerms(query:string):string[] {
 }
 
 export async function searchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:{limit?:number;offset?:number;moduleId?:string}={}) {
-  const terms=searchTerms(query),limit=options.limit??30,offset=options.offset??0;
-  const policies=(await searchPolicies(db,app,org.id)).filter(m=>m.readRoles.includes(org.role)&&m.search.enabled&&m.search.fields.length&&(!options.moduleId||options.moduleId===m.id));
-  const indexing=await prepareSearchIndex(db,org.id);
+  const terms=searchTerms(query);
+  const context=await searchContext(db,app,org.id);
+  const policies=context.policies.filter(m=>m.readRoles.includes(org.role)&&m.search.enabled&&m.search.fields.length&&(!options.moduleId||options.moduleId===m.id));
+  const indexing=context.indexing;
   if(!terms.length||!policies.length)return {cte:'WITH ranked AS (SELECT id,0 AS score FROM lite_search_documents WHERE 0)',bindings:[],policies,indexing};
   // Policy filtering happens inside the query, before counts, excerpts and pagination.
   // One FTS row per field lets an administrator remove a field immediately.
@@ -63,13 +82,13 @@ export async function searchSelection(db:D1Database,app:AppDefinition,org:Worksp
 export async function searchData(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:{limit?:number;offset?:number;moduleId?:string}={}) {
   const {cte,bindings,policies,indexing}=await searchSelection(db,app,org,query,options);
   const terms=searchTerms(query),limit=options.limit??30,offset=options.offset??0;
-  const [found,count]=await Promise.all([
-    db.prepare(`${cte} SELECT d.module_id,d.record_id,d.data,d.updated_at,r.score FROM ranked r JOIN lite_search_documents d ON d.id=r.id ORDER BY r.score DESC,d.updated_at DESC,d.id LIMIT ? OFFSET ?`).bind(...bindings,limit,offset).all<{module_id:string;record_id:string;data:string;updated_at:string;score:number}>(),
-    db.prepare(`${cte} SELECT COUNT(*) AS total FROM ranked`).bind(...bindings).first<{total:number}>(),
+  const [found,count]=await db.batch([
+    db.prepare(`${cte} SELECT d.module_id,d.record_id,d.data,d.updated_at,r.score FROM ranked r JOIN lite_search_documents d ON d.id=r.id ORDER BY r.score DESC,d.updated_at DESC,d.id LIMIT ? OFFSET ?`).bind(...bindings,limit,offset),
+    db.prepare(`${cte} SELECT COUNT(*) AS total FROM ranked`).bind(...bindings),
   ]);
   const plain=(value:unknown)=>typeof value==='boolean'?(value?'Oui':'Non'):value==null?'':String(value);
   const normalize=(value:string)=>value.normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('fr');
-  const items=found.results.map(row=>{
+  const items=(found.results as {module_id:string;record_id:string;data:string;updated_at:string;score:number}[]).map(row=>{
     const module=policies.find(m=>m.id===row.module_id)!,data=JSON.parse(row.data) as Record<string,unknown>;
     const excerpts=module.search.fields.map(key=>({label:module.fields.find(f=>f.key===key)?.label??key,value:plain(data[key])}));
     const matching=excerpts.filter(f=>terms.some(term=>normalize(f.value).includes(normalize(term))));
@@ -77,7 +96,7 @@ export async function searchData(db:D1Database,app:AppDefinition,org:Workspace,q
     return {index:module.id,id:row.record_id,moduleName:module.name,title:plain(data[module.titleField])||module.name,description:snippet,href:recordHref(module,row.record_id,data),updatedAt:row.updated_at};
   });
   const pages=terms.length?policies.filter(m=>terms.every(t=>normalize(m.name).includes(normalize(t)))).map(m=>({index:'pages',id:m.id,title:m.name,description:'Ouvrir le module',href:m.href})):[];
-  return {items,pages,total:count?.total??0,indexing,engine:'d1-fts5'};
+  return {items,pages,total:(count.results[0] as {total:number}|undefined)?.total??0,indexing,engine:'d1-fts5'};
 }
 
 export async function searchRoute(request:Request,db:D1Database,app:AppDefinition,org:Workspace,user:Identity):Promise<Response|null> {
