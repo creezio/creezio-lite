@@ -18,7 +18,7 @@ L’adaptation au serveur Sites a conservé une partie des composants mais a rem
 
 ## Frontières de l’adaptation
 
-Les exécuteurs de tâches sur un hôte, les processus persistants, la flotte et les automatisations externes ne sont pas des capacités du serveur Sites. Le catalogue doit distinguer les opérations disponibles des fonctionnalités non montées, sans inventer des endpoints fonctionnels. L’authentification du navigateur reste celle de ChatGPT ; les connexions externes existantes utilisent une clé personnelle. Aucun serveur OAuth propre à l’application n’est ajouté implicitement.
+Les exécuteurs de tâches sur un hôte, les processus persistants, la flotte et les automatisations externes ne sont pas des capacités du serveur Sites. Le catalogue doit distinguer les opérations disponibles des fonctionnalités non montées, sans inventer des endpoints fonctionnels. L’authentification du navigateur reste celle de ChatGPT ; les clés personnelles restent prises en charge. Le raccordement OAuth demandé explicitement est fourni depuis 0.8.0, avec le même compte Sites et les mêmes contrôles d’accès.
 
 ## Ordre d’implémentation
 

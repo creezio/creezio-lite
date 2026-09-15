@@ -124,3 +124,21 @@ export const assistantUiActions = sqliteTable('lite_assistant_ui_actions', {
   orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull().references(()=>users.id),
   runId:text('run_id').notNull(),status:text('status').notNull(),resultJson:text('result_json'),expiresAt:text('expires_at').notNull(),
 },t=>[index('idx_assistant_ui_expiry').on(t.orgId,t.userId,t.expiresAt),check('assistant_ui_status',sql`${t.status} IN ('pending','claimed','completed')`)]);
+
+// OAuth clients are public registrations; grants are bound to an existing member.
+export const oauthClients=sqliteTable('lite_oauth_clients',{
+ id:text('id').primaryKey(),name:text('name').notNull(),redirectsJson:text('redirects_json').notNull(),authMethod:text('auth_method').notNull(),secretHash:text('secret_hash'),createdAt:text('created_at').notNull(),revokedAt:text('revoked_at'),
+},t=>[check('oauth_client_method',sql`${t.authMethod} IN ('none','client_secret_post','client_secret_basic')`),check('oauth_redirect_json',sql`json_valid(${t.redirectsJson})`)]);
+export const oauthRequests=sqliteTable('lite_oauth_requests',{
+ id:text('id').primaryKey(),clientId:text('client_id').notNull().references(()=>oauthClients.id,{onDelete:'cascade'}),redirectUri:text('redirect_uri').notNull(),scope:text('scope').notNull(),resource:text('resource').notNull(),challenge:text('challenge').notNull(),state:text('state').notNull(),expiresAt:text('expires_at').notNull(),status:text('status').notNull(),
+ userId:text('user_id'),csrfHash:text('csrf_hash'),codeHash:text('code_hash'),orgId:text('org_id'),grantId:text('grant_id'),
+},t=>[uniqueIndex('idx_oauth_code').on(t.codeHash),index('idx_oauth_request_expiry').on(t.expiresAt),check('oauth_request_status',sql`${t.status} IN ('pending','approved','used','denied')`)]);
+export const oauthGrants=sqliteTable('lite_oauth_grants',{
+ id:text('id').primaryKey(),clientId:text('client_id').notNull().references(()=>oauthClients.id,{onDelete:'cascade'}),orgId:text('org_id').notNull().references(()=>organizations.id,{onDelete:'cascade'}),userId:text('user_id').notNull().references(()=>users.id,{onDelete:'cascade'}),scope:text('scope').notNull(),resource:text('resource').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),revokedAt:text('revoked_at'),
+},t=>[index('idx_oauth_grant_org').on(t.orgId,t.createdAt)]);
+export const oauthTokens=sqliteTable('lite_oauth_tokens',{
+ id:text('id').primaryKey(),grantId:text('grant_id').notNull().references(()=>oauthGrants.id,{onDelete:'cascade'}),scope:text('scope').notNull(),accessHash:text('access_hash').notNull(),refreshHash:text('refresh_hash').notNull(),accessExpiresAt:text('access_expires_at').notNull(),refreshExpiresAt:text('refresh_expires_at').notNull(),rotatedTo:text('rotated_to'),
+},t=>[uniqueIndex('idx_oauth_access').on(t.accessHash),uniqueIndex('idx_oauth_refresh').on(t.refreshHash),index('idx_oauth_token_grant').on(t.grantId)]);
+export const oauthLimits=sqliteTable('lite_oauth_limits',{
+ id:text('id').primaryKey(),count:integer('count').notNull(),expiresAt:text('expires_at').notNull(),
+},t=>[index('idx_oauth_limit_expiry').on(t.expiresAt)]);

@@ -40,19 +40,25 @@ export async function mcpAdminRoute(request:Request,c:ApiContext,org:Workspace,o
   }
   const clientMatch=path.match(/^admin\/mcp\/clients\/([^/]+)$/);
   if(clientMatch&&request.method==='DELETE'){
-    const client=await db.prepare('SELECT t.id,m.role FROM lite_access_tokens t JOIN lite_members m ON m.org_id=t.org_id AND m.user_id=t.user_id WHERE t.org_id=? AND t.id=?').bind(org.id,clientMatch[1]).first<{id:string;role:string}>();
+    const oauth=clientMatch[1].startsWith('oauth:'),id=oauth?clientMatch[1].slice(6):clientMatch[1],table=oauth?'lite_oauth_grants':'lite_access_tokens';
+    const client=await db.prepare(`SELECT t.id,m.role FROM ${table} t LEFT JOIN lite_members m ON m.org_id=t.org_id AND m.user_id=t.user_id WHERE t.org_id=? AND t.id=?`).bind(org.id,id).first<{id:string;role:string}>();
     if(!client)fail(404,'client_not_found','Connexion introuvable.');
     if(client.role==='owner'&&org.role!=='owner')fail(403,'owner_protected','Seul le propriétaire peut révoquer cette connexion.');
-    await db.batch<Record<string,any>>([db.prepare('UPDATE lite_access_tokens SET revoked_at=? WHERE org_id=? AND id=?').bind(new Date().toISOString(),org.id,client.id),audit('mcp.client.revoke',client.id)]);return json({ok:true});
+    await db.batch<Record<string,any>>([db.prepare(`UPDATE ${table} SET revoked_at=? WHERE org_id=? AND id=?`).bind(new Date().toISOString(),org.id,client.id),audit(oauth?'mcp.oauth.revoke':'mcp.client.revoke',client.id)]);return json({ok:true});
   }
-  if(path==='admin/mcp/clients'&&request.method==='GET')return json({clients:(await db.prepare('SELECT t.id,t.name,t.mode,t.created_at,t.expires_at,t.revoked_at,u.name AS owner_name FROM lite_access_tokens t JOIN lite_users u ON u.id=t.user_id WHERE t.org_id=? ORDER BY t.created_at DESC LIMIT 500').bind(org.id).all()).results});
+  if(path==='admin/mcp/clients'&&request.method==='GET')return json({clients:(await db.prepare(`
+    SELECT t.id,t.name,t.mode,t.created_at,t.expires_at,t.revoked_at,u.name AS owner_name,'api-key' AS kind FROM lite_access_tokens t JOIN lite_users u ON u.id=t.user_id WHERE t.org_id=?
+    UNION ALL
+    SELECT 'oauth:'||g.id,c.name,CASE WHEN instr(g.scope,'crm:write')>0 THEN 'write' ELSE 'read' END,g.created_at,g.expires_at,g.revoked_at,u.name,'oauth' FROM lite_oauth_grants g JOIN lite_oauth_clients c ON c.id=g.client_id JOIN lite_users u ON u.id=g.user_id WHERE g.org_id=?
+    ORDER BY created_at DESC LIMIT 500`).bind(org.id,org.id).all()).results});
   if(path==='admin/mcp/status'&&request.method==='GET'){
-    const count=await db.prepare('SELECT COUNT(*) AS total,SUM(CASE WHEN revoked_at IS NULL AND expires_at>? THEN 1 ELSE 0 END) AS enabled FROM lite_access_tokens WHERE org_id=?').bind(new Date().toISOString(),org.id).first<{total:number;enabled:number}>();
-    return json({ready:true,publicUrl:url.origin,mcpUrl:`${url.origin}/api/mcp`,authentication:'personal-bearer',toolCount:bindings.length,enabledToolCount:bindings.filter(t=>t.enabled).length,clientCount:count?.total??0,enabledClientCount:count?.enabled??0});
+    const count=await db.prepare(`SELECT COUNT(*) AS total,SUM(CASE WHEN revoked_at IS NULL AND expires_at>? THEN 1 ELSE 0 END) AS enabled FROM (
+      SELECT revoked_at,expires_at FROM lite_access_tokens WHERE org_id=? UNION ALL SELECT revoked_at,expires_at FROM lite_oauth_grants WHERE org_id=?)`).bind(new Date().toISOString(),org.id,org.id).first<{total:number;enabled:number}>();
+    return json({ready:true,oauthReady:true,publicUrl:url.origin,mcpUrl:`${url.origin}/api/mcp`,authentication:'oauth2.1-and-personal-bearer',authorizationServer:`${url.origin}/.well-known/oauth-authorization-server`,toolCount:bindings.length,enabledToolCount:bindings.filter(t=>t.enabled).length,clientCount:count?.total??0,enabledClientCount:count?.enabled??0});
   }
   if(path==='admin/mcp/diagnostics'||path==='admin/mcp/diagnostics/export'){
-    const checks=[{id:'database',ok:Boolean(await db.prepare('SELECT id FROM lite_orgs WHERE id=?').bind(org.id).first()),message:'Base de données accessible'},{id:'catalog',ok:operations.every(o=>o.description&&o.id),message:'Catalogue des opérations documenté'},{id:'bindings',ok:bindings.every(t=>operations.some(o=>o.id===t.operationId)),message:'Chaque outil est rattaché à une API'},{id:'access',ok:true,message:'Droits contrôlés à chaque appel HTTP et MCP'}];
-    const response=json({healthy:checks.every(c=>c.ok),checks,version:'0.4.0',operations:operations.length,tools:bindings.length});if(path.endsWith('/export'))response.headers.set('Content-Disposition','attachment; filename="lite-mcp-diagnostic.json"');return response;
+    const checks=[{id:'oauth',ok:Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='lite_oauth_tokens'").first()),message:'OAuth disponible avec autorisation et révocation des connexions'},{id:'database',ok:Boolean(await db.prepare('SELECT id FROM lite_orgs WHERE id=?').bind(org.id).first()),message:'Base de données accessible'},{id:'catalog',ok:operations.every(o=>o.description&&o.id),message:'Catalogue des opérations documenté'},{id:'bindings',ok:bindings.every(t=>operations.some(o=>o.id===t.operationId)),message:'Chaque outil est rattaché à une API'},{id:'access',ok:true,message:'Droits contrôlés à chaque appel HTTP et MCP'}];
+    const response=json({healthy:checks.every(c=>c.ok),checks,version:'0.8.0',operations:operations.length,tools:bindings.length});if(path.endsWith('/export'))response.headers.set('Content-Disposition','attachment; filename="lite-mcp-diagnostic.json"');return response;
   }
   if(path==='admin/mcp/metrics'){
     const rows=(await db.prepare("SELECT status,duration_ms,detail_json FROM lite_request_logs WHERE org_id=? AND source='mcp' ORDER BY created_at DESC LIMIT 1000").bind(org.id).all<{status:number;duration_ms:number;detail_json:string}>()).results;

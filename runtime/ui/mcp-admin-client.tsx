@@ -14,7 +14,7 @@ type Status = {
   publicUrl: string | null;
   mcpUrl: string | null;
   oauthReady: boolean;
-  jwtConfigured: boolean;
+
   toolCount: number;
   enabledToolCount: number;
   clientCount: number;
@@ -37,7 +37,7 @@ type Tool = {
   annotations?: Record<string, boolean>;
 };
 
-type Client={id:string;name:string;mode:string;owner_name:string;expires_at:string;revoked_at:string|null};
+type Client={kind:'oauth'|'api-key';id:string;name:string;mode:string;owner_name:string;expires_at:string;revoked_at:string|null};
 type Diagnostics = {
   healthy: boolean;
   checks: Array<{ id: string; ok: boolean; message: string }>;
@@ -198,16 +198,16 @@ export function McpAdminClient({ logsSlot }: { logsSlot?: ReactNode } = {}) {
           </div>
         </TabsContent>
 
-        <TabsContent value="access"><div className="space-y-3">{clients.map(client=><Card key={client.id}><CardContent className="p-4 flex flex-wrap items-center justify-between gap-3"><div><strong>{client.name}</strong><p className="text-sm text-slate-500">{client.owner_name} · {client.mode==='read'?'Lecture':'Lecture et écriture'} · {client.revoked_at?'Révoquée':Date.parse(client.expires_at)<Date.now()?'Expirée':`Expire le ${new Date(client.expires_at).toLocaleDateString('fr-FR')}`}</p></div>{!client.revoked_at&&<Button variant="destructive" size="sm" onClick={()=>void revokeClient(client)}>Révoquer</Button>}</CardContent></Card>)}{!clients.length&&<p className="p-6 text-sm text-slate-500">Aucune connexion enregistrée.</p>}<a className="text-sm text-sky-700 underline" href="/admin/connections">Gérer mes clés personnelles</a></div></TabsContent>
+        <TabsContent value="access"><div className="space-y-3">{clients.map(client=><Card key={client.id}><CardContent className="p-4 flex flex-wrap items-center justify-between gap-3"><div><strong>{client.name}</strong><p className="text-sm text-slate-500">{client.kind==='oauth'?'OAuth':'Clé API'} · {client.owner_name} · {client.mode==='read'?'Lecture':'Lecture et écriture'} · {client.revoked_at?'Révoquée':Date.parse(client.expires_at)<Date.now()?'Expirée':`Expire le ${new Date(client.expires_at).toLocaleDateString('fr-FR')}`}</p></div>{!client.revoked_at&&<Button variant="destructive" size="sm" onClick={()=>void revokeClient(client)}>Révoquer</Button>}</CardContent></Card>)}{!clients.length&&<p className="p-6 text-sm text-slate-500">Aucune connexion enregistrée.</p>}<a className="text-sm text-sky-700 underline" href="/admin/connections">Gérer mes clés personnelles</a></div></TabsContent>
 
         <TabsContent value="logs">{logsSlot ?? <div className="rounded-xl border bg-white p-8 text-center text-sm text-slate-500">Slot logs — passez logsSlot=&lt;RequestLogsClient /&gt; depuis la marque.</div>}</TabsContent>
 
         <TabsContent value="connection" className="space-y-4">
           <Card><CardHeader><CardTitle className="text-base">URL MCP</CardTitle></CardHeader><CardContent>
-            <div className="flex gap-2"><code className="min-w-0 flex-1 truncate rounded bg-slate-100 p-3 text-sm">{status?.mcpUrl || "Tunnel non configuré"}</code><Button variant="outline" onClick={() => void copy(status?.mcpUrl || null)} disabled={!status?.mcpUrl}><Copy className="h-4 w-4" /></Button></div>
-            {!status?.publicUrl ? <div className="mt-3 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"><ShieldAlert className="h-4 w-4 shrink-0" />Configurez APP_PUBLIC_URL ou MCP_PUBLIC_URL pour ChatGPT, Claude et Cursor. Hermes loopback continue d’utiliser sa clé API locale.</div> : null}
+            <div className="flex gap-2"><code className="min-w-0 flex-1 truncate rounded bg-slate-100 p-3 text-sm">{status?.mcpUrl || "Adresse indisponible"}</code><Button variant="outline" onClick={() => void copy(status?.mcpUrl || null)} disabled={!status?.mcpUrl}><Copy className="h-4 w-4" /></Button></div>
+            {!status?.publicUrl ? <div className="mt-3 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"><ShieldAlert className="h-4 w-4 shrink-0" />L’adresse publique sera disponible après le chargement de la configuration.</div> : null}
           </CardContent></Card>
-          <Card><CardHeader><CardTitle className="text-base">Clients compatibles</CardTitle></CardHeader><CardContent className="text-sm text-slate-600">Utilisez cette URL dans un client MCP HTTP qui accepte une clé Bearer. Créez votre clé personnelle dans « Clés et connexions ». WebMCP utilise votre session dans l’application.</CardContent></Card>
+          <Card><CardHeader><CardTitle className="text-base">Clients compatibles</CardTitle></CardHeader><CardContent className="text-sm text-slate-600">Ajoutez cette URL dans ChatGPT ou un client MCP HTTP et choisissez OAuth. Connectez-vous avec votre compte, choisissez l’espace puis autorisez l’accès. Aucun identifiant client ni secret n’est à saisir : le client s’enregistre automatiquement. Les connexions apparaissent dans « Accès/clients », où vous pouvez les révoquer. Les clés Bearer restent disponibles pour les outils qui les utilisent.</CardContent></Card>
         </TabsContent>
       </Tabs>
     </div>

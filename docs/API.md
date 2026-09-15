@@ -24,7 +24,7 @@ Les mutations de fiches utilisent `{data:{...}}`, avec `version` pour modifier o
 
 ## MCP HTTP
 
-Endpoint : `/api/mcp`. Transport Streamable HTTP sans session serveur, version de protocole `2025-11-25`, avec compatibilité `2025-03-26`. Envoyer Accept `application/json, text/event-stream`, Content-Type `application/json` et la clé Bearer. Les méthodes prises en charge sont initialize, ping, tools/list et tools/call. GET renvoie 405 car le serveur ne propose pas de flux SSE autonome.
+Endpoint : `/api/mcp`. Transport Streamable HTTP sans session serveur, version de protocole `2025-11-25`, avec compatibilité `2025-03-26`. Envoyer Accept `application/json, text/event-stream`, Content-Type `application/json` et `Authorization: Bearer <jeton OAuth ou clé personnelle>`. Les méthodes prises en charge sont initialize, ping, tools/list et tools/call. GET renvoie 405 car le serveur ne propose pas de flux SSE autonome.
 
 `lite_modules` expose le registre ; `lite_search` interroge le moteur. Chaque module déclaratif ajoute ses outils list/get/create/update/archive avec le schéma réel des champs. Les outils d’écriture ne sont pas listés pour une clé en lecture seule ou un rôle sans droit d’écriture. Les modules système disposent d’outils de consultation ; les opérations non exposées par un outil restent documentées dans l’API.
 
@@ -34,6 +34,8 @@ Les outils utilisent la même validation et les mêmes règles métier que les f
 
 WebMCP inscrit le même catalogue d’outils dans `document.modelContext` lorsqu’il est disponible. Il utilise la session et n’exige pas de copier une clé. Sur un navigateur sans WebMCP, les fonctionnalités de l’interface restent disponibles.
 
-L’existence de l’endpoint ne signifie pas qu’un connecteur ChatGPT a été installé. Un client distant doit prendre en charge l’authentification Bearer. Le socle ne fournit pas de serveur OAuth pour les clients qui l’exigent.
+L’existence de l’endpoint ne signifie pas qu’un connecteur ChatGPT a été installé. Depuis 0.8.0, les clients distants peuvent choisir OAuth ou les clés personnelles Bearer. Pour ChatGPT, saisir l’URL publique `/api/mcp`, choisir OAuth et laisser l’inscription automatique du client fournir ses identifiants. Autoriser ensuite l’espace et les droits avec le compte utilisé dans le Site.
+
+Voir [OAUTH.md](OAUTH.md) pour le parcours, les routes, les garanties et la révocation.
 
 Référence : [transport MCP 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).

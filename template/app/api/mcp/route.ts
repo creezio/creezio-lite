@@ -10,3 +10,4 @@ async function route(request:Request){return dispatchRequest(request,{app:appDef
 export const POST=route;
 export const GET=route;
 export const DELETE=route;
+export const OPTIONS=route;
