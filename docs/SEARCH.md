@@ -8,11 +8,15 @@ Sources : modules métier déclaratifs, titres/descriptions/statuts des tâches,
 
 Les écritures déclenchent la mise à jour de `lite_search_documents` puis de `lite_search_fts` dans la transaction D1. La suppression ou l’archivage retire la fiche de l’index. Le retour de succès d’une écriture confirme aussi cette mise à jour.
 
-Les données antérieures à l’installation de l’index sont reprises par lots de 50 éléments par source. `lite_search_progress` conserve l’avancement. Une recherche reprend automatiquement le travail ; la réponse indique `indexing:true` tant que la reprise n’est pas terminée. L’interface attend les lots, avec un message explicite si une nouvelle recherche est nécessaire. L’admin peut poursuivre via « Mettre l’index à jour ».
+Les données antérieures à l’installation de l’index sont reprises par lots de 50 éléments par source. Les lectures et écritures de ces lots sont regroupées, et seules les sources incomplètes sont parcourues. Une source terminée ne fait plus l’objet d’initialisations ou d’écritures répétées. `lite_search_progress` conserve l’avancement. Une recherche reprend automatiquement le travail ; la réponse indique `indexing:true` tant que la reprise n’est pas terminée. L’interface attend les lots, avec un message explicite si une nouvelle recherche est nécessaire. L’admin peut poursuivre via « Mettre l’index à jour ».
 
 Les migrations ne contiennent aucun jeu de données ni backfill massif. Les vues par source évitent les limites de requêtes composées du moteur hébergé.
 
 La palette retrouve également les noms des modules accessibles. Au-delà de 100 correspondances, « Voir les résultats » ouvre `/search` pour parcourir toutes les pages. L’API accepte `limit`, `offset` et `module`. La recherche des listes métier utilise les mêmes règles et le même index.
+
+## Temps de réponse
+
+Une recherche navigateur sur un index prêt effectue trois échanges D1 : contrôle de l’espace et du rôle ; lecture groupée des réglages et de l’avancement ; résultats et total. Les réglages et permissions ne sont pas mis en cache. La recherche d’une liste métier utilise le même nombre d’échanges. L’en-tête `Server-Timing` permet de distinguer le traitement applicatif du reste du trajet réseau.
 
 ## Administration
 

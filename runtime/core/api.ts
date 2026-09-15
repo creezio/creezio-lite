@@ -35,7 +35,7 @@ async function getRecord(db: D1Database, org: string, mod: string, id: string) {
 /** Identity MUST come from the trusted Sites dispatcher via getChatGPTUser().
  * This function deliberately never authenticates caller-provided headers itself. */
 export async function handleApi(request: Request, context: ApiContext, options: { beforeWrite?: BeforeWrite } = {}): Promise<Response> {
-  const requestId = uuid();
+  const requestId = uuid(),started=performance.now();
   try {
     const url = new URL(request.url);
     const path = url.pathname.replace(/^\/api\/v1\/?/, '').replace(/\/$/,'');
@@ -43,7 +43,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     if (path === 'health' && request.method === 'GET') {
       if (!context.env.DB) fail(503,'database_unavailable','Base de données indisponible.');
       await context.env.DB.prepare('SELECT id FROM lite_orgs LIMIT 1').first();
-      return json({ok:true,kit:'lite',version:'0.3.0',database:'ready'});
+      return json({ok:true,kit:'lite',version:'0.3.1',database:'ready'});
     }
     const user = context.identity;
     if (!user?.userId || !user.email) fail(401,'authentication_required','Connectez-vous pour continuer.');
@@ -91,7 +91,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     }
 
     const org = await workspace(db,user,url.searchParams.get('workspace'));
-    const searchResponse=await searchRoute(request,db,context.app,org,user);if(searchResponse)return searchResponse;
+    const searchResponse=await searchRoute(request,db,context.app,org,user);if(searchResponse){searchResponse.headers.set('Server-Timing',`app;dur=${(performance.now()-started).toFixed(1)}`);return searchResponse;}
     const tokenResponse=await accessTokenRoute(request,context,org);if(tokenResponse)return tokenResponse;
     if (path === 'workspaces/current' && request.method === 'PATCH') {
       requireRole(org.role,['owner','admin']); const body=await readJson(request); const name=label(body.name);
@@ -171,11 +171,11 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         }
         const filterField=url.searchParams.get('field'),filterValue=url.searchParams.get('value');
         if(filterField){if(!mod.fields.some(f=>f.key===filterField) || filterValue===null || filterValue.length>300) fail(400,'invalid_filter','Filtre invalide.'); where+=' AND CAST(json_extract(data,?) AS TEXT)=?';terms.push('$.'+filterField,filterValue);}
-        const [items,count]=await Promise.all([
-          db.prepare(`SELECT id,module_id,data,version,created_at,updated_at FROM lite_records WHERE ${where} ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`).bind(...terms,limit,offset).all<Row>(),
-          db.prepare(`SELECT COUNT(*) AS total FROM lite_records WHERE ${where}`).bind(...terms).first<{total:number}>(),
+        const [items,count]=await db.batch([
+          db.prepare(`SELECT id,module_id,data,version,created_at,updated_at FROM lite_records WHERE ${where} ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`).bind(...terms,limit,offset),
+          db.prepare(`SELECT COUNT(*) AS total FROM lite_records WHERE ${where}`).bind(...terms),
         ]);
-        return json({items:items.results.map(unpack),total:count?.total??0,limit,offset,searchEngine:'d1-fts5',indexing});
+        return json({items:(items.results as Row[]).map(unpack),total:(count.results[0] as {total:number}|undefined)?.total??0,limit,offset,searchEngine:'d1-fts5',indexing});
       }
       if(request.method==='POST' && !id) {
         const body=await readJson(request),data=validateData(mod,body.data);
