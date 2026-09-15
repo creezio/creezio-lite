@@ -1,3 +1,4 @@
+import { testMailConnection } from './mail.ts';
 import type { ApiContext, Workspace } from './types.ts';
 import { ApiError, fail, requireRole } from './validation.ts';
 import { json, readJson, readBytes } from './http.ts';
@@ -7,7 +8,8 @@ export const integrationProviders = [
   {id:'hermes',label:'Hermes',secretPlaceholder:'Clé du serveur Hermes'},
   {id:'anthropic',label:'Anthropic',secretPlaceholder:'sk-ant-…'},
   {id:'notion',label:'Notion',secretPlaceholder:'ntn_…'},
-  {id:'resend',label:'Resend',secretPlaceholder:'re_…'},
+  {id:'resend',label:'Resend (mail)',secretPlaceholder:'re_…'},
+  {id:'cloudflare',label:'Cloudflare Email',secretPlaceholder:'Jeton API Cloudflare'},
   {id:'smtp',label:'SMTP',secretPlaceholder:'Mot de passe SMTP'},
   {id:'imap',label:'IMAP',secretPlaceholder:'Mot de passe IMAP'},
   {id:'custom',label:'Autre',secretPlaceholder:'Clé / secret'},
@@ -15,6 +17,7 @@ export const integrationProviders = [
 function integrationSlug(value:unknown){
   const slug=textField(value,'référence',80);if(!/^[a-z][a-z0-9_-]{0,79}$/.test(slug)||integrationProviders.some(p=>p.id!=='custom'&&p.id===slug))fail(400,'invalid_slug','Référence invalide ou réservée à un service natif.');return slug;
 }
+export const mailProviders=['smtp','imap','resend','cloudflare'];
 export type IntegrationRow={id:string;org_id:string;slug:string;provider:string;label:string;secret_box:string;meta_json:string;enabled:number;version:number;created_at:string;updated_at:string};
 const enc=new TextEncoder(),dec=new TextDecoder();
 const base64=(value:Uint8Array)=>btoa(String.fromCharCode(...value));
@@ -46,19 +49,40 @@ export function hermesUrl(value:unknown){
   if(url!.protocol!=='https:'||url!.username||url!.password||url!.search||url!.hash||!host.includes('.')||host.includes(':')||/^\d+(\.\d+){3}$/.test(host)||/(^|\.)(localhost|local|internal|test|invalid)$/.test(host)||host==='metadata.google.internal')fail(400,'invalid_endpoint','Indiquez le domaine HTTPS public de votre serveur Hermes, sans identifiants ni paramètres.');
   return url!.toString().replace(/\/$/,'').replace(/\/v1$/,'');
 }
+export function mailAddress(value:unknown){const address=textField(value,'adresse e-mail',254);if(!/^[^\s<>@,]+@[^\s<>@,]+\.[^\s<>@,]+$/.test(address))fail(400,'invalid_email','Adresse e-mail invalide.');return address;}
+export function mailHost(value:unknown){const host=textField(value,'serveur',253).toLowerCase();if(!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])$/.test(host)||!host.includes('.')||/(^|\.)(localhost|local|internal|test|invalid)$/.test(host)||/^\d+(\.\d+){3}$/.test(host))fail(400,'invalid_host','Indiquez le nom public du serveur de messagerie.');return host;}
 function metadata(provider:string,input:unknown){
   const v=input&&typeof input==='object'&&!Array.isArray(input)?input as Record<string,unknown>:{};
   const out:Record<string,unknown>={};
   if(provider==='hermes')out.baseUrl=hermesUrl(v.baseUrl);
-
   if(provider==='custom')out.headerName=textField(v.headerName??'Authorization','header',80);
-  if(provider==='smtp'||provider==='imap'){out.host=textField(v.host??'','hôte',250,true);out.user=textField(v.user??'','utilisateur',250,true);if(v.port!==undefined){if(!Number.isInteger(v.port)||Number(v.port)<1||Number(v.port)>65535)fail(400,'invalid_port','Port invalide.');out.port=v.port;}out.secure=v.secure!==false;}
+  if(['smtp','imap'].includes(provider)){
+    out.host=mailHost(v.host);out.user=textField(v.user,'identifiant',250);out.port=Number(v.port??(provider==='smtp'?465:993));
+    if(!Number.isInteger(out.port)||Number(out.port)<1||Number(out.port)>65535)fail(400,'invalid_port','Port invalide.');
+    out.security=v.security??(v.secure===false?'starttls':'tls');if(!['tls','starttls'].includes(String(out.security)))fail(400,'invalid_tls','Choisissez SSL/TLS ou STARTTLS.');out.secure=out.security==='tls';
+    if(v.gatewayUrl)out.gatewayUrl=hermesUrl(v.gatewayUrl);
+    if(provider==='imap')out.folder=textField(v.folder??'INBOX','dossier IMAP',200);
+  }
+  if(['smtp','resend','cloudflare'].includes(provider)){if(v.from)out.from=mailAddress(v.from);if(v.fromName){out.fromName=textField(v.fromName,'nom expéditeur',150);if(/[\r\n\0]/.test(out.fromName as string))fail(400,'invalid_sender','Nom d’expéditeur invalide.');}}
+  if(provider==='cloudflare'){const accountId=textField(v.accountId,'identifiant du compte Cloudflare',32);if(!/^[a-f0-9]{32}$/i.test(accountId))fail(400,'invalid_account','Identifiant du compte Cloudflare invalide.');out.accountId=accountId;}
   return out;
+}
+export async function resolveMailCredentials(c:ApiContext,row:IntegrationRow){
+  const value=await resolveIntegration(c,row);if(value.startsWith('mail:v1:')){try{return JSON.parse(value.slice(8)) as {password:string;gatewayToken:string};}catch{fail(409,'unreadable','Identifiants de messagerie illisibles.');}}
+  return {password:value,gatewayToken:''};
+}
+async function mailSecret(c:ApiContext,org:string,id:string,body:Record<string,unknown>,previous?:IntegrationRow){
+  const old=previous?await resolveMailCredentials(c,previous):{password:'',gatewayToken:''};
+  const password=body.secret===undefined?old.password:textField(body.secret,'mot de passe',8192);
+  if(!password)fail(400,'password_required','Mot de passe requis.');
+  const gatewayToken=body.gatewayToken===undefined?old.gatewayToken:textField(body.gatewayToken,'clé de la passerelle',8192,true);
+  return sealSecret(c,org,id,'mail:v1:'+JSON.stringify({password,gatewayToken}));
 }
 export async function publicIntegration(c:ApiContext,row:IntegrationRow){
   let readable=false;try{await resolveIntegration(c,row);readable=true;}catch{}
   const meta=JSON.parse(row.meta_json);delete meta.model;
-  return {id:row.id,slug:row.slug,reference:`integration://${row.slug}`,provider:row.provider,label:row.provider==='custom'?row.label:integrationProviders.find(p=>p.id===row.provider)?.label??row.label,secretHint:'••••••••',readable,meta,enabled:Boolean(row.enabled),version:row.version,createdAt:row.created_at,updatedAt:row.updated_at};
+  let gatewayConfigured=false;if(['smtp','imap'].includes(row.provider)&&readable)gatewayConfigured=Boolean((await resolveMailCredentials(c,row)).gatewayToken);
+  return {id:row.id,slug:row.slug,reference:`integration://${row.slug}`,provider:row.provider,label:row.provider==='custom'?row.label:integrationProviders.find(p=>p.id===row.provider)?.label??row.label,secretHint:'••••••••',readable,gatewayConfigured,meta,enabled:Boolean(row.enabled),version:row.version,createdAt:row.created_at,updatedAt:row.updated_at};
 }
 export async function integrationRows(c:ApiContext,org:Workspace,provider?:string){
   return (await c.env.DB.prepare(`SELECT * FROM lite_integrations WHERE org_id=?${provider?' AND provider=?':''} ORDER BY created_at,id`).bind(org.id,...(provider?[provider]:[])).all<IntegrationRow>()).results;
@@ -92,6 +116,7 @@ export async function integrationsRoute(request:Request,c:ApiContext,org:Workspa
   if(id){
     const row=await getIntegration(c,org,id);
     if(action==='test'&&request.method==='POST'){
+      if(mailProviders.includes(row.provider))return json(await testMailConnection(c,row));
       if(!['hermes','openai'].includes(row.provider))fail(400,'unsupported_test','Le test de connexion est disponible pour Hermes et OpenAI.');
       const response=await providerRequest(row,await resolveIntegration(c,row),row.provider==='hermes'?'/health':'/v1/models');
       if(!response.ok)upstreamFailure(response.status,row.provider);await response.body?.cancel();
@@ -106,7 +131,7 @@ export async function integrationsRoute(request:Request,c:ApiContext,org:Workspa
     if(!action&&request.method==='PATCH'){
       const body=await readJson(request);if(body.version!==row.version)fail(409,'conflict','L’intégration a changé. Actualisez avant de réessayer.');
       if(body.enabled!==undefined&&typeof body.enabled!=='boolean')fail(400,'invalid_enabled','Activation invalide.');
-      const box=body.secret!==undefined?await sealSecret(c,org.id,id,textField(body.secret,'clé',8192)):row.secret_box;
+      const box=['smtp','imap'].includes(row.provider)&&(body.secret!==undefined||body.gatewayToken!==undefined)?await mailSecret(c,org.id,id,body,row):body.secret!==undefined?await sealSecret(c,org.id,id,textField(body.secret,'clé',8192)):row.secret_box;
       const label=row.provider==='custom'?(body.label!==undefined?textField(body.label,'libellé',160):row.label):integrationProviders.find(p=>p.id===row.provider)!.label;
       const slug=row.provider==='custom'&&body.slug!==undefined&&body.slug!==row.slug?integrationSlug(body.slug):row.slug;
       if(slug!==row.slug&&await c.env.DB.prepare('SELECT id FROM lite_integrations WHERE org_id=? AND slug=?').bind(org.id,slug).first())fail(409,'slug_exists','Cette référence existe déjà.');
@@ -119,7 +144,7 @@ export async function integrationsRoute(request:Request,c:ApiContext,org:Workspa
     const body=await readJson(request),provider=textField(body.provider,'service');if(!integrationProviders.some(p=>p.id===provider))fail(400,'provider_unknown','Service inconnu.');
     const slug=provider==='custom'?integrationSlug(body.slug):provider;
     const label=provider==='custom'?textField(body.label,'libellé',160):integrationProviders.find(p=>p.id===provider)!.label,meta=JSON.stringify(metadata(provider,body.meta)),key=textField(body.secret,'clé',8192),id=crypto.randomUUID(),now=new Date().toISOString();
-    const result=await c.env.DB.prepare('INSERT INTO lite_integrations(id,org_id,slug,provider,label,secret_box,meta_json,enabled,version,created_at,updated_at) SELECT ?,?,?,?,?,?,?,1,1,?,? WHERE ?=\'custom\' OR NOT EXISTS(SELECT 1 FROM lite_integrations WHERE org_id=? AND provider=?) ON CONFLICT(org_id,slug) DO NOTHING').bind(id,org.id,slug,provider,label,await sealSecret(c,org.id,id,key),meta,now,now,provider,org.id,provider).run();
+    const result=await c.env.DB.prepare('INSERT INTO lite_integrations(id,org_id,slug,provider,label,secret_box,meta_json,enabled,version,created_at,updated_at) SELECT ?,?,?,?,?,?,?,1,1,?,? WHERE ?=\'custom\' OR NOT EXISTS(SELECT 1 FROM lite_integrations WHERE org_id=? AND provider=?) ON CONFLICT(org_id,slug) DO NOTHING').bind(id,org.id,slug,provider,label,(['smtp','imap'].includes(provider)?await mailSecret(c,org.id,id,body):await sealSecret(c,org.id,id,key)),meta,now,now,provider,org.id,provider).run();
     if(!result.meta.changes)fail(409,'slug_exists',provider==='custom'?'Cette référence existe déjà. Choisissez une autre référence.':'Ce service est déjà configuré. Modifiez la clé existante.');
     return json({integration:await publicIntegration(c,await getIntegration(c,org,id))},201);
   }

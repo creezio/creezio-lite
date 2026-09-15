@@ -58,6 +58,7 @@ type Integration = {
   label: string;
   secretHint: string;
   readable: boolean;
+  gatewayConfigured?: boolean;
   meta: Record<string, unknown>;
   enabled: boolean;
   version: number;
@@ -140,6 +141,11 @@ export function IntegrationsClient() {
   const [formSecret, setFormSecret] = useState("");
   const [formHeaderName, setFormHeaderName] = useState("");
   const [formBaseUrl, setFormBaseUrl] = useState("");
+  const [mailForm,setMailForm]=useState<Record<string,string>>({});
+  const [gatewayToken,setGatewayToken]=useState("");
+  const isMailbox=["smtp","imap"].includes(formProvider);
+  const isMail=["smtp","imap","resend","cloudflare"].includes(formProvider);
+  const setMailField=(key:string,value:string)=>setMailForm(v=>({...v,[key]:value}));
   const [saving, setSaving] = useState(false);
 
   const providerById = useMemo(
@@ -168,6 +174,7 @@ export function IntegrationsClient() {
 
   function openCreate() {
     setEditing(null);
+    setMailForm({});setGatewayToken("");
     setFormProvider("openai");
     setFormLabel("");
     setFormSlug("");
@@ -179,6 +186,7 @@ export function IntegrationsClient() {
 
   function openEdit(item: Integration) {
     setEditing(item);
+    setMailForm(Object.fromEntries(Object.entries(item.meta).map(([k,v])=>[k,String(v)])));setGatewayToken("");
     setFormProvider(item.provider);
     setFormLabel(item.label);
     setFormSlug(item.slug);
@@ -193,6 +201,9 @@ export function IntegrationsClient() {
   async function save() {
     setSaving(true);
     const meta = {
+      ...(isMailbox?{host:mailForm.host || "",user:mailForm.user || "",port:Number(mailForm.port || (formProvider==="smtp"?465:993)),security:mailForm.security || "tls",gatewayUrl:mailForm.gatewayUrl || "",...(formProvider==="imap"?{folder:mailForm.folder || "INBOX"}:{})}:{}),
+      ...(["smtp","resend","cloudflare"].includes(formProvider)?{from:mailForm.from || "",fromName:mailForm.fromName || ""}:{}),
+      ...(formProvider==="cloudflare"?{accountId:mailForm.accountId || ""}:{}),
       ...(formProvider === "custom" ? {headerName: formHeaderName.trim() || "Authorization"} : {}),
       ...(formProvider === "hermes" ? {baseUrl: formBaseUrl.trim()} : {}),
     };
@@ -204,6 +215,7 @@ export function IntegrationsClient() {
             body: JSON.stringify({
               ...(formProvider === "custom" ? {label:formLabel,slug:formSlug} : {}),
               version: editing.version,
+              ...(isMailbox && gatewayToken.trim()?{gatewayToken:gatewayToken.trim()}:{}),
               ...(formSecret.trim() ? { secret: formSecret } : {}),
               meta,
             }),
@@ -215,6 +227,7 @@ export function IntegrationsClient() {
             provider: formProvider,
             ...(formProvider === "custom" ? {label:formLabel,slug:formSlug} : {}),
             secret: formSecret,
+            ...(isMailbox && gatewayToken.trim()?{gatewayToken:gatewayToken.trim()}:{}),
             ...(Object.keys(meta).length ? { meta } : {}),
           }),
         });
@@ -227,7 +240,7 @@ export function IntegrationsClient() {
       editing ? "Intégration mise à jour" : "Intégration enregistrée",
     );
     setDialogOpen(false);
-    setFormSecret("");
+    setFormSecret("");setGatewayToken("");
     window.dispatchEvent(new Event("lite-integrations-changed"));
     void refresh();
   }
@@ -277,7 +290,7 @@ export function IntegrationsClient() {
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Connectez OpenAI ou votre serveur Hermes pour utiliser l’assistant.
-            Les clés des autres services restent disponibles par référence.
+            Connectez votre messagerie avec SMTP, IMAP, Cloudflare Email ou Resend pour utiliser Mail.
           </p>
         </div>
         <Button type="button" onClick={openCreate}>
@@ -297,8 +310,7 @@ export function IntegrationsClient() {
           <CardHeader>
             <CardTitle className="text-base">Aucune intégration</CardTitle>
             <CardDescription>
-              Ajoutez votre première clé (ex. OpenAI) — elle sera référencée
-              par <code>integration://openai</code> partout dans l'app.
+              Ajoutez une connexion à votre assistant, votre messagerie ou un autre service.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -318,7 +330,7 @@ export function IntegrationsClient() {
                       </Badge>
                       {!item.readable ? (
                         <Badge variant="danger">
-                          clé illisible — re-saisir
+                          identifiants illisibles — re-saisir
                         </Badge>
                       ) : null}
                       {!item.enabled ? <Badge variant="outline">Désactivée</Badge> : null}
@@ -328,11 +340,12 @@ export function IntegrationsClient() {
                         {item.reference}
                       </code>
                       <CopyReferenceButton reference={item.reference} />
-                      <span>· clé {item.secretHint}</span>
+                      <span>· {["smtp","imap"].includes(item.provider)?"mot de passe":"clé"} {item.secretHint}</span>
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    {["openai","hermes"].includes(item.provider) ? <Button type="button" variant="outline" size="sm" disabled={busy} onClick={()=>void testConnection(item)}><Cable className="h-4 w-4"/>Tester</Button> : null}
+                    {["openai","hermes","smtp","imap","resend","cloudflare"].includes(item.provider) ? <Button type="button" variant="outline" size="sm" disabled={busy} onClick={()=>void testConnection(item)}><Cable className="h-4 w-4"/>Tester</Button> : null}
+                    {["smtp","imap","resend","cloudflare"].includes(item.provider)?<a href="/mails" className="px-2 text-sm font-medium underline">Ouvrir Mail</a>:null}
                     <Button type="button" variant="ghost" size="icon" disabled={busy} onClick={()=>void toggle(item)} title={item.enabled?"Désactiver":"Activer"}><Power className="h-4 w-4"/></Button>
                     <Button
                       type="button"
@@ -340,7 +353,7 @@ export function IntegrationsClient() {
                       size="icon"
                       disabled={busy}
                       onClick={() => openEdit(item)}
-                      title={item.provider === "custom"?"Configurer l’intégration":"Modifier la clé"}
+                      title={["smtp","imap","custom"].includes(item.provider)?"Configurer la connexion":"Modifier la clé"}
                     >
                       <Pencil className="h-4 w-4" />
                     </Button>
@@ -366,8 +379,8 @@ export function IntegrationsClient() {
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={open=>{setDialogOpen(open);if(!open)setFormSecret("");}}>
-        <DialogContent className="sm:max-w-md">
+      <Dialog open={dialogOpen} onOpenChange={open=>{setDialogOpen(open);if(!open){setFormSecret("");setGatewayToken("");}}}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
               {editing
@@ -376,15 +389,15 @@ export function IntegrationsClient() {
             </DialogTitle>
             <DialogDescription>
               {editing
-                ? "Laissez le champ clé vide pour la conserver."
-                : "La clé est chiffrée et utilisée uniquement côté serveur."}
+                ? (isMailbox?"Laissez le mot de passe vide pour le conserver.":"Laissez le champ clé vide pour la conserver.")
+                : (isMailbox?"Connectez votre serveur de messagerie. Le mot de passe est chiffré.":"La clé est chiffrée et utilisée uniquement côté serveur.")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             {!editing ? (
               <div className="space-y-1.5">
                 <Label>Service</Label>
-                <Select value={formProvider} onValueChange={setFormProvider}>
+                <Select value={formProvider} onValueChange={value=>{setFormProvider(value);setMailForm({});setFormSecret("");setGatewayToken("");}}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -402,9 +415,15 @@ export function IntegrationsClient() {
               <div className="space-y-1.5"><Label htmlFor="integration-label">Libellé</Label><Input id="integration-label" value={formLabel} onChange={e=>setFormLabel(e.target.value)} placeholder="Mon service"/></div>
               <div className="space-y-1.5"><Label htmlFor="integration-reference">Référence (integration://…)</Label><Input id="integration-reference" value={formSlug} onChange={e=>setFormSlug(e.target.value)} placeholder="mon-service"/></div>
             </> : null}
+            {isMailbox ? <>
+              <div className="grid grid-cols-[1fr_110px] gap-3"><div className="space-y-1.5"><Label htmlFor="mail-host">Serveur {formProvider.toUpperCase()}</Label><Input id="mail-host" value={mailForm.host || ""} onChange={e=>setMailField("host",e.target.value)} placeholder={`${formProvider}.exemple.fr`}/></div><div className="space-y-1.5"><Label htmlFor="mail-port">Port</Label><Input id="mail-port" type="number" min={1} max={65535} value={mailForm.port || (formProvider==="smtp"?"465":"993")} onChange={e=>setMailField("port",e.target.value)}/></div></div>
+              <div className="space-y-1.5"><Label htmlFor="mail-user">Identifiant / adresse e-mail</Label><Input id="mail-user" autoComplete="off" value={mailForm.user || ""} onChange={e=>setMailField("user",e.target.value)} placeholder="vous@exemple.fr"/></div>
+              <div className="space-y-1.5"><Label>Chiffrement de la connexion</Label><Select value={mailForm.security || "tls"} onValueChange={v=>setMailField("security",v)}><SelectTrigger aria-label="Chiffrement de la connexion"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="tls">SSL / TLS</SelectItem><SelectItem value="starttls">STARTTLS</SelectItem></SelectContent></Select></div>
+            </> : null}
             <div className="space-y-1.5">
-              <Label>Clé / secret</Label>
+              <Label htmlFor="integration-secret">{isMailbox?"Mot de passe / mot de passe d’application":formProvider==="cloudflare"?"Jeton API Cloudflare":"Clé / secret"}</Label>
               <Input
+                id="integration-secret"
                 type="password"
                 value={formSecret}
                 onChange={(e) => setFormSecret(e.target.value)}
@@ -417,6 +436,17 @@ export function IntegrationsClient() {
                 autoComplete="off"
               />
             </div>
+            {["smtp","resend","cloudflare"].includes(formProvider)?<>
+              <div className="space-y-1.5"><Label htmlFor="mail-from">Adresse d’expédition</Label><Input id="mail-from" type="email" value={mailForm.from || ""} onChange={e=>setMailField("from",e.target.value)} placeholder="contact@votre-domaine.fr"/></div>
+              <div className="space-y-1.5"><Label htmlFor="mail-from-name">Nom de l’expéditeur</Label><Input id="mail-from-name" value={mailForm.fromName || ""} onChange={e=>setMailField("fromName",e.target.value)} placeholder="Votre équipe"/></div>
+            </>:null}
+            {formProvider==="cloudflare"?<div className="space-y-1.5"><Label htmlFor="cf-account">Identifiant du compte Cloudflare</Label><Input id="cf-account" value={mailForm.accountId || ""} onChange={e=>setMailField("accountId",e.target.value)} placeholder="Account ID"/><p className="text-xs text-muted-foreground">Utilisez un jeton autorisé pour Email Sending et une adresse de votre domaine validé. Mail sera disponible dès l’enregistrement ; la réception se configure dans Mail.</p></div>:null}
+            {isMailbox?<div className="space-y-3 rounded-lg border p-3">
+              <p className="text-sm">La version hébergée utilise une passerelle HTTPS pour joindre votre serveur {formProvider.toUpperCase()}.</p>
+              <div className="space-y-1.5"><Label htmlFor="mail-gateway">URL de votre passerelle mail</Label><Input id="mail-gateway" type="url" value={mailForm.gatewayUrl || ""} onChange={e=>setMailField("gatewayUrl",e.target.value)} placeholder="https://mail-gateway.votre-domaine.fr"/></div>
+              <div className="space-y-1.5"><Label htmlFor="mail-gateway-token">Clé de la passerelle</Label><Input id="mail-gateway-token" type="password" autoComplete="off" value={gatewayToken} onChange={e=>setGatewayToken(e.target.value)} placeholder={editing?.gatewayConfigured?"Clé conservée":"Clé fournie par votre passerelle"}/></div>
+              {formProvider==="imap"?<div className="space-y-1.5"><Label htmlFor="mail-folder">Dossier à synchroniser</Label><Input id="mail-folder" value={mailForm.folder || "INBOX"} onChange={e=>setMailField("folder",e.target.value)}/></div>:null}
+            </div>:null}
             {formProvider === "hermes" ? <div className="space-y-1.5"><Label htmlFor="integration-url">URL du serveur Hermes</Label><Input id="integration-url" type="url" value={formBaseUrl} onChange={e=>setFormBaseUrl(e.target.value)} placeholder="https://hermes.votre-domaine.fr"/><p className="text-xs text-muted-foreground">Adresse HTTPS publique de votre passerelle Hermes.</p></div> : null}
             {formProvider === "custom" ? (
               <div className="space-y-1.5">
@@ -441,6 +471,8 @@ export function IntegrationsClient() {
               type="button"
               disabled={
                 saving ||
+                (isMailbox && (!mailForm.host?.trim() || !mailForm.user?.trim())) ||
+                (formProvider === "cloudflare" && !mailForm.accountId?.trim()) ||
                 (formProvider === "custom" && (!formLabel.trim() || !formSlug.trim())) ||
                 (!editing && !formSecret.trim()) || (formProvider === "hermes" && !formBaseUrl.trim())
               }

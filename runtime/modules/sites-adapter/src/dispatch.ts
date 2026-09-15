@@ -1,5 +1,6 @@
 import type { ApiContext, BeforeWrite, Workspace } from '@lite/core';
 import { handleApi } from '@lite/core';
+import { mailRoute, mailInboundRoute } from '@lite/core/mail';
 import { integrationsRoute } from '@lite/core/integrations';
 import { assistantRoute } from '@lite/core/assistant';
 import { workspace } from '@lite/core/api';
@@ -25,9 +26,10 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
     return response;
   };
   try{
+    const inbound=await mailInboundRoute(request,context);if(inbound)return inbound;
     const credential=await resolveToken(request,context);
     const trusted=credential?{...context,identity:credential.identity}:context;
-    if(source==='api'&&trusted.identity){detail.query=Object.fromEntries(new URL(request.url).searchParams);if(!new URL(request.url).pathname.startsWith('/api/v1/assistant/')&&request.headers.get('content-type')?.startsWith('application/json'))detail.body=await readJson(request.clone()).catch(()=>undefined);}
+    if(source==='api'&&trusted.identity){detail.query=Object.fromEntries(new URL(request.url).searchParams);if(!/^\/api\/v1\/(assistant|email)(?:\/|$)/.test(new URL(request.url).pathname)&&request.headers.get('content-type')?.startsWith('application/json'))detail.body=await readJson(request.clone()).catch(()=>undefined);}
     const orgFor=async(req:Request)=>workspace(context.env.DB,trusted.identity!,credential?.access.workspaceId??new URL(req.url).searchParams.get('workspace')??workspaceCookie(req));
     const invoke=async(incoming:Request,fixedOrg?:Workspace):Promise<Response>=>{
       let current=incoming;let url=new URL(current.url);
@@ -44,6 +46,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       if(!op)fail(404,'not_found','Route introuvable.');
       if(credential)current=authorizeTokenRequest(current,credential.access,op);
       assertOperationAllowed(op,org);
+      if(op.moduleId==='mail')detail={tool:detail.tool,operation:op.id};
       url=new URL(current.url);url.searchParams.set('workspace',org.id);current=new Request(url,current);
       const scoped={...trusted,workspace:org,operations};
       if(path==='admin/endpoints')return json({generatedAt:new Date().toISOString(),source:'operation-registry',openapiUrl:'/api/v1/openapi.json',endpoints:operations.flatMap(o=>[o.path,...(o.aliases??[])].map(path=>({...o,path,documented:true,summary:o.description,tags:[o.moduleName]})))});
@@ -71,7 +74,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
         return dataTools(context.app,liveOrg.role,liveCall,true,{operations:liveOps,workspace:liveOrg,bindings:await toolBindings({...scoped,workspace:liveOrg},liveOrg,liveOps)});
       }});
       if(assistant)return assistant;
-      return await integrationsRoute(current,scoped,org)??await accessRoute(current,scoped,org,operations)??await mcpAdminRoute(current,scoped,org,operations)??await observabilityRoute(current,scoped,org)??await handleNativeApi(current,scoped)??await handleApi(current,scoped,options);
+      return await mailRoute(current,scoped,org)??await integrationsRoute(current,scoped,org)??await accessRoute(current,scoped,org,operations)??await mcpAdminRoute(current,scoped,org,operations)??await observabilityRoute(current,scoped,org)??await handleNativeApi(current,scoped)??await handleApi(current,scoped,options);
     };
     if(source==='mcp'){
       if(!trusted.identity)fail(401,'authentication_required','Authentification requise.');

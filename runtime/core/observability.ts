@@ -22,6 +22,7 @@ export async function persistRequestLog(request:Request,response:Response,c:ApiC
     const result=await response.clone().json().catch(()=>({})) as any;
     ok=ok&&!result.error&&!result.result?.isError;errorCode=result.error?.code??(result.result?.isError?'tool_error':undefined);
   }
+  if(path.startsWith('/api/v1/email')||/^lite_mail_/.test(String(detail.tool??'')))detail={tool:detail.tool};
   const diagnostic={...redactDiagnostic(detail) as Record<string,unknown>,ok,...(errorCode?{error:safeText(errorCode,100)}:{}),userId:c.identity!.userId};
   await c.env.DB.batch<Record<string,any>>([
     c.env.DB.prepare('INSERT INTO lite_request_logs(id,org_id,user_id,source,method,path,status,duration_ms,detail_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(crypto.randomUUID(),org.id,c.identity!.userId,source,request.method,safePath(path),response.status,Math.max(0,Math.round(performance.now()-started)),JSON.stringify(diagnostic),new Date().toISOString()),

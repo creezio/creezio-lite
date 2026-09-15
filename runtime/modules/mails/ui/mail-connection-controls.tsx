@@ -1,0 +1,17 @@
+"use client";
+import { useState } from 'react';
+import { Button, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Input, Label } from '@lite/shell-ui/ui/kit';
+import type { MailMeta } from './mail-types';
+export function MailConnectionControls({apiBase,meta,onChanged}:{apiBase:string;meta:MailMeta|null;onChanged:()=>void}){
+  const [open,setOpen]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[setup,setSetup]=useState<{url:string;token:string;domain:string}|null>(null);
+  async function sync(){setBusy(true);setError('');try{const r=await fetch(`${apiBase}/sync`,{method:'POST'}),j=await r.json();if(!r.ok)throw new Error(j.error?.message || 'Synchronisation impossible.');onChanged();}catch(e){setError(e instanceof Error?e.message:'Synchronisation impossible.');}finally{setBusy(false);}}
+  async function configure(){setBusy(true);setError('');try{const r=await fetch(`${apiBase}/receiving`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({integrationId:meta?.cloudflare[0]?.id})}),j=await r.json();if(!r.ok)throw new Error(j.error?.message || 'Configuration impossible.');setSetup(j);onChanged();}catch(e){setError(e instanceof Error?e.message:'Configuration impossible.');}finally{setBusy(false);}}
+  return <>
+    <div className="flex flex-wrap items-center gap-3 border-b px-4 py-2 text-sm"><span className="flex-1 text-muted-foreground">Messagerie de l’espace</span>{meta?.syncAvailable&&meta.canSync?<Button size="sm" variant="outline" disabled={busy} onClick={()=>void sync()}>{busy?'Synchronisation…':'Synchroniser IMAP'}</Button>:null}{meta?.canManage&&meta.cloudflare?.length?<Button size="sm" variant="outline" onClick={()=>setOpen(true)}>Réception Cloudflare</Button>:null}{meta?.canManage?<a className="font-medium underline" href="/admin/integrations">Connexions mail</a>:null}</div>
+    {error?<p role="alert" className="px-4 py-2 text-sm text-red-700">{error}</p>:null}
+    <Dialog open={open} onOpenChange={value=>{setOpen(value);if(!value)setSetup(null);}}><DialogContent><DialogHeader><DialogTitle>Réception Cloudflare</DialogTitle><DialogDescription>Reliez Email Routing à cette boîte avec le connecteur de réception Creezio Lite.</DialogDescription></DialogHeader>
+      {setup?<div className="space-y-3"><p className="text-sm">Domaine : {setup.domain}. Copiez ces valeurs dans les paramètres du connecteur Cloudflare.</p><Label htmlFor="mail-inbound-url">URL de réception (INBOUND_URL)</Label><Input id="mail-inbound-url" readOnly value={setup.url}/><Label htmlFor="mail-inbound-secret">Secret de réception (EMAIL_INBOUND_SECRET)</Label><Input id="mail-inbound-secret" readOnly type="password" value={setup.token}/><Button variant="outline" onClick={()=>void navigator.clipboard.writeText(setup.token)}>Copier le secret</Button><p className="text-sm text-muted-foreground">Ce secret ne sera plus affiché après fermeture.</p></div>:<><p className="text-sm">L’accès de réception autorise uniquement l’ajout de messages dans cet espace. {meta?.inboundConfigured?'Un nouvel accès remplacera celui utilisé par votre connecteur actuel.':''}</p><Button disabled={busy} onClick={()=>void configure()}>{meta?.inboundConfigured?'Renouveler l’accès de réception':'Créer l’accès de réception'}</Button></>}
+      <a className="text-sm underline" href="https://github.com/creezio/creezio-lite/tree/main/connectors/cloudflare-mail" target="_blank" rel="noreferrer">Installer le connecteur Cloudflare Email Routing</a>
+    </DialogContent></Dialog>
+  </>;
+}

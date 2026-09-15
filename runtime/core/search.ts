@@ -5,7 +5,7 @@ import { boundedInteger, fail, requireRole } from './validation.ts';
 import { json, readJson } from './http.ts';
 import { canReadModule } from './operations.ts';
 
-const sources = ['records','tasks','files','support','members','audit'];
+const sources = ['records','tasks','files','support','members','audit','mail'];
 type Override = {module_id:string;enabled:number;fields_json:string;version:number};
 export type SearchPolicy = RegisteredModule & {search:{enabled:boolean;fields:string[]};version:number};
 type SearchProgress = {source:string;cursor:string;complete:number};
