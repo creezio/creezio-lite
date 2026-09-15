@@ -1,6 +1,6 @@
-# Validation du profil Sites 0.2.0
+# Validation du profil Sites 0.2.1
 
-Vérifications du 15 septembre 2026 : **18 tests réussis, aucun échec ni test ignoré**. Ce rapport porte sur les adaptations effectivement branchées ; les tests réussis de 0.1 ne validaient ni la fidélité au kit ni le portage de ses packages.
+Vérifications du 15 septembre 2026 : **20 tests réussis, aucun échec ni test ignoré**. Ce rapport porte sur les adaptations effectivement branchées ; les tests réussis de 0.1 ne validaient ni la fidélité au kit ni le portage de ses packages.
 
 - Sources : empreintes des 1 740 fichiers du monorepo d’origine et inventaire explicite des patchs ; 36 manifests natifs conservés.
 - UI : import des composants originaux WorkspaceRoot, Sidebar, DataTable, thème, Tâches, Support, Navigation et visites. Le shell de remplacement de 0.1 est supprimé.
@@ -11,6 +11,10 @@ Vérifications du 15 septembre 2026 : **18 tests réussis, aucun échec ni test 
 - Typecheck et build Worker réussis pour le template, Réserve (catalogue), Atelier (services) et la mise à jour de l’application Atelier existante.
 - Smoke HTTP du Worker compilé : session native, création de tâche, CRUD métier, catalogue et refus anonyme vérifiés avec des identités de fixture ; la réponse HTML de connexion charge l’amorçage React. Ce contrôle ne prouve pas l’affichage après hydratation.
 - Les fichiers CSS construits contiennent les tokens originaux orange `#f0701d` et encre `#14182f` ; ce contrôle de provenance ne remplace pas une comparaison visuelle.
+
+## Régression onglets de 0.2.0
+
+Le test `workspace-isolation.test.mjs` a reproduit le défaut avant correction avec le vrai `Children`/`Slot` de Vinext : après passage Clients → Dossiers, la pane Clients affichait « Dossiers ». Il vérifie désormais les trois panes, leurs titres et saisies indépendantes, les bascules avant arrivée de la route, une cible froide, les retours répétés, le rafraîchissement de la page active, l’invalidation d’une pane fermée et les URL avec query. Le gel Next par défaut est vérifié séparément. Ce sont des tests de rendu React, pas des clics effectués dans un navigateur réel.
 
 ## Limites de cette preuve
 

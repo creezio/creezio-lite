@@ -1,5 +1,12 @@
 # Creezio Lite
 
+## 0.2.1 — isolation des onglets sur Sites
+
+- Corrige une régression de l’intégration 0.2.0 : les panes conservées lisaient le contexte global Vinext, changeaient de page ensemble et publiaient le mauvais titre.
+- Ajoute un pont de contexte par pane pour Sites. Le gel Next natif, la barre d’onglets, la navigation et le design Creezio sont conservés.
+- Test React utilisant les véritables Children/Slot de Vinext : reproduction avant correctif, puis indépendance des titres, pages, saisies, transitions optimistes, rafraîchissements et fermeture d’une pane.
+- Les applications existantes doivent aussi intégrer app/sites-pane-router.tsx et son provider dans BrandChrome ; voir docs/UPDATES.md.
+
 ## 0.2.0 — restauration du vrai kit
 
 - Restaure les 36 packages Creezio 0.26.0 et l’ensemble des sources du monorepo, sa factory, ses scripts et ses dépendances.

@@ -1,7 +1,7 @@
 {
   "name": "creezio-lite",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Fork de Creezio v0.26.0 avec profil web ChatGPT Sites",
   "workspaces": [
     "packages/support",

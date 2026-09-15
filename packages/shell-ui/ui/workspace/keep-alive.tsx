@@ -6,6 +6,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ComponentType,
   type ReactNode,
 } from "react";
 import { LayoutRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
@@ -27,6 +28,12 @@ type CacheEntry = {
 const PaneHrefContext = createContext<string | null>(null);
 /** true hors keep-alive ; false sur les panes inactives (évite d'écraser la toolbar). */
 const PaneActiveContext = createContext(true);
+
+/** Optional router bridge for non-Next hosts. Next keeps its native freeze below. */
+export const WorkspacePaneRouterContext = createContext<ComponentType<{
+  live: boolean;
+  children: ReactNode;
+}> | null>(null);
 
 export function usePaneHref(): string | null {
   return useContext(PaneHrefContext);
@@ -56,11 +63,13 @@ function PaneRouterFreeze({
   live: boolean;
   children: ReactNode;
 }) {
+  const HostRouter = useContext(WorkspacePaneRouterContext);
   const ctx = useContext(LayoutRouterContext);
   const frozenRef = useRef(ctx);
   if (live) {
     frozenRef.current = ctx;
   }
+  if (HostRouter) return <HostRouter live={live}>{children}</HostRouter>;
   return (
     <LayoutRouterContext.Provider value={live ? ctx : frozenRef.current}>
       {children}
