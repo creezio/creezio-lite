@@ -1,4 +1,0 @@
-{
-  "scripts": ["h10-explicit-desktop-deps.mjs"],
-  "since": "0.23.0"
-}

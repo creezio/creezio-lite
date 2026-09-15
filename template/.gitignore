@@ -46,5 +46,5 @@ next-env.d.ts
 /work/
 
 !.env.example
-/.creezio-backups/
+/.lite-backups/
 *.tsbuildinfo

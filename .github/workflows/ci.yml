@@ -1,4 +1,4 @@
-name: Creezio Lite
+name: Lite
 on:
   push:
     branches: [main]

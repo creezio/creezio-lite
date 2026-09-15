@@ -1,8 +1,0 @@
-{
-  "name": "@creezio/sites-adapter",
-  "version": "0.2.0",
-  "private": true,
-  "type": "module",
-  "exports": {".": {"types":"./src/index.ts","import":"./src/index.ts"},"./*":"./src/*.ts"},
-  "description": "Adaptateurs asynchrones D1 pour les modules Creezio natifs sur Sites"
-}

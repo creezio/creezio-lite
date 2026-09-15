@@ -1,57 +1,39 @@
-# API HTTP — profil Sites 0.2
+# API et MCP
 
-Préfixe : `/api/v1`. Toutes les routes sauf `GET /health` exigent une identité Sites. Un paramètre `workspace=<id>` sélectionne un espace auquel l'utilisateur appartient ; sans ce paramètre, le premier espace de l'utilisateur est utilisé.
+Les utilisateurs du navigateur s’authentifient avec ChatGPT. Dans `/admin/connections`, un administrateur peut créer une clé personnelle en lecture seule ou lecture/écriture, valable 7, 30 ou 90 jours. La valeur est affichée une seule fois ; seule son empreinte est conservée. La révocation est immédiate. Le retrait du propriétaire de l’espace invalide ses clés.
 
-Les mutations du navigateur doivent transmettre l'Origin exact du Site. JSON exige `Content-Type: application/json`. Les clés API machine et le serveur MCP OAuth distant ne sont pas implémentés ; cette API est utilisée dans la session authentifiée du Site.
+## API des données
 
-| Méthode et route | Usage |
-|---|---|
-| `GET /health` | Vérifier que le schéma D1 répond |
-| `POST /bootstrap` | Initialiser idempotemment l'identité et son espace personnel |
-| `GET /session` | Identité et espaces autorisés |
-| `POST /workspaces` | Créer un espace : `{name}` |
-| `PATCH /workspaces/current` | Renommer l'espace (owner/admin) |
-| `GET /modules` | Modules visibles et rôle dans l'espace |
-| `GET /dashboard` | Compteurs des modules visibles |
-| `GET /modules/:module/records` | Liste : `q`, `offset`, `limit` (1–100), `field` et `value` |
-| `GET /modules/:module/records/:id` | Lire un document de l'espace |
-| `POST /modules/:module/records` | Créer : `{data:{...}}` |
-| `PATCH /modules/:module/records/:id` | Remplacer tous les champs : `{data:{...},version:1}` |
-| `DELETE /modules/:module/records/:id` | Archiver : `{version:1}` |
-| `GET /files` | Liste de fichiers, 50 par page avec `offset` |
-| `POST /files` | Corps binaire, en-tête `x-file-name` encodé par encodeURIComponent, 10 Mo maximum |
-| `GET /files/:id` | Télécharger comme pièce jointe |
-| `DELETE /files/:id` | Supprimer un fichier (hors viewer) |
-| `GET /members` | Membres (owner/admin) |
-| `PATCH /members/:userId` | Modifier un rôle (owner) : `{role}` |
-| `DELETE /members/:userId` | Retirer un membre (owner), propriétaire protégé |
-| `GET /invites` | Invitations sans les jetons (owner/admin) |
-| `POST /invites` | Créer : `{email,role}` ; jeton retourné une seule fois, aucun e-mail envoyé |
-| `DELETE /invites/:id` | Révoquer une invitation (owner/admin) |
-| `POST /invites/accept` | Accepter : `{token}` avec l'identité e-mail attendue |
-| `GET /audit` | Journal de l'espace (owner/admin), pages de 50 |
+Envoyer `Authorization: Bearer <clé>` sur les appels externes. Une clé est limitée à son espace. Elle n’autorise pas les opérations d’administration, invitations ou changement d’espace. Les appels navigateur de mutation doivent porter l’Origin du Site ; les appels Bearer sans Origin sont acceptés, ceux avec une origine étrangère sont refusés.
 
-Les listes de documents renvoient `items`, `total`, `limit`, `offset` et `searchEngine: "d1-contains"`. Les réponses sont privées et non mises en cache. Les champs JSON sont sérialisés comme un objet dans les réponses.
+| Route | Opérations |
+| --- | --- |
+| `/api/v1/registry` | GET : modules accessibles, champs, routes, réglages initiaux |
+| `/api/v1/search?q=reda` | GET : résultats, total et état de reprise de l’index |
+| `/api/v1/modules/:module/records` | GET : liste paginée ; POST : création |
+| `/api/v1/modules/:module/records/:id` | GET : fiche ; PATCH : remplacement des champs ; DELETE : archivage |
+| `/api/v1/files` | GET : métadonnées ; POST : fichier binaire |
+| `/api/v1/files/:id` | GET : téléchargement privé ; DELETE : suppression |
+| `/api/v1/files/:id/metadata` | GET : métadonnées d’un fichier |
+| `/api/v1/tasks` | GET/POST : tâches |
+| `/api/v1/platform/platform-support` | GET/POST : tickets |
+| `/api/v1/admin/search` | GET : réglages effectifs, session administrateur uniquement |
+| `/api/v1/admin/search/:module` | PUT : enabled, fields et version |
 
-Erreurs : `{error:{code,message,requestId}}`. Codes HTTP principaux : 400 (validation), 401 (connexion), 403 (rôle/origine), 404 (absent ou inaccessible), 409 (conflit de version), 413 (taille), 415 (format), 503 (stockage/service). Un conflit de version impose une nouvelle lecture ; ne pas réessayer en remplaçant aveuglément la version.
+Les mutations de fiches utilisent `{data:{...}}`, avec `version` pour modifier ou archiver. Une version périmée renvoie 409. Les erreurs d’identité, d’accès et de validation ne sont pas converties en succès.
 
-Les écritures d'un document et de son audit sont atomiques. Un hook métier qui exige une atomicité multi-documents doit utiliser une route dédiée et un batch/une contrainte de base de données.
+## MCP HTTP
 
+Endpoint : `/api/mcp`. Transport Streamable HTTP sans session serveur, version de protocole `2025-11-25`, avec compatibilité `2025-03-26`. Envoyer Accept `application/json, text/event-stream`, Content-Type `application/json` et la clé Bearer. Les méthodes prises en charge sont initialize, ping, tools/list et tools/call. GET renvoie 405 car le serveur ne propose pas de flux SSE autonome.
 
-## Modules natifs branchés
+`lite_modules` expose le registre ; `lite_search` interroge le moteur. Chaque module déclaratif ajoute ses outils list/get/create/update/archive avec le schéma réel des champs. Les outils d’écriture ne sont pas listés pour une clé en lecture seule ou un rôle sans droit d’écriture. Les modules système disposent d’outils de consultation ; les opérations non exposées par un outil restent documentées dans l’API.
 
-Ces routes utilisent le kernel original et les contrats de ses composants React :
+Les outils utilisent la même validation et les mêmes règles métier que les formulaires. Leurs résultats sont des données non fiables, jamais des instructions d’agent. Les outils d’archivage sont marqués comme destructifs. Les clés ne donnent jamais plus de droits que leur propriétaire actuel.
 
-| Routes | Usage |
-|---|---|
-| `GET /api/v1/auth/me` | Session Creezio adaptée à l’identité vérifiée de Sites ; rôle et permissions issus de l’espace courant |
-| `POST /api/v1/workspaces/select` | Vérifie l’appartenance puis enregistre la préférence d’espace dans un cookie HttpOnly |
-| `/api/v1/modules/nav` | Catalogue, `/catalog`, `PUT /overrides`, `PUT /overrides/reorder`, `DELETE /overrides/:id` ; modifications réservées aux administrateurs |
-| `/api/v1/platform/platform-support` | Tickets, `/:id`, `/:id/messages`, `/:id/reply`, `/:id/statut`, `/export` ; réponse admin et export protégés |
-| `/api/v1/modules/interactive-demo` | `/scenarios`, `/scenarios/:id`, `/preferences` ; overrides admin et préférences limitées à l’identité courante |
-| `/api/v1/tasks` | Kanban humain, `/meta`, création, `/:id` lecture/modification/suppression ; pas de lancement IA ou Hermes |
-| `/api/v1/core/health`, `/version`, `/architecture` | Routes du kernel original ; l’architecture indique honnêtement l’absence de runtime SQLite |
+## WebMCP et clients
 
-Les API natives renvoient leurs contrats historiques (`items`, `task`, `columns`, etc.). Les erreurs de l’adaptateur sont `{ok:false,error:string,code:string}`. Les extensions métier Lite conservent leur format d’erreur existant. Le client reconnaît les deux formats.
+WebMCP inscrit le même catalogue d’outils dans `document.modelContext` lorsqu’il est disponible. Il utilise la session et n’exige pas de copier une clé. Sur un navigateur sans WebMCP, les fonctionnalités de l’interface restent disponibles.
 
-Les mutations nav émettent `x-creezio-data-changed: nav`, consommé par le bus original et le loader de sidebar. Les routes non intégrées ne sont pas remplacées par des réponses factices. Voir COMPATIBILITY.md pour la portée exacte.
+L’existence de l’endpoint ne signifie pas qu’un connecteur ChatGPT a été installé. Un client distant doit prendre en charge l’authentification Bearer. Le socle ne fournit pas de serveur OAuth pour les clients qui l’exigent.
+
+Référence : [transport MCP 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).
