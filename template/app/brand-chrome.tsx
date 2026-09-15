@@ -15,6 +15,8 @@ import {
   NavCatalogLoader, WorkspaceRoot, Toaster,
 } from "@creezio/shell-ui/ui";
 import brand from "@/brand.json";
+import { WorkspacePaneRouterContext } from "../creezio/packages/shell-ui/ui/workspace/keep-alive";
+import { SitesPaneRouter } from "./sites-pane-router";
 
 const available = new Set(["/dashboard", "/taches", "/support", "/documents", "/collaborateurs", "/parametres", "/admin/nav", "/admin/activity", ...brand.modules.map(m => `/${m.id}`)]);
 configureSidebar({
@@ -48,7 +50,9 @@ export function BrandChrome({children}:{children:ReactNode}) {
       <RequireSession>
         <NavCatalogLoader includePlugins={false} adminFromCatalog/>
         <SessionTools/>
-        <WorkspaceRoot hideAssistantOn={()=>true}>{children}</WorkspaceRoot>
+        <WorkspacePaneRouterContext.Provider value={SitesPaneRouter}>
+          <WorkspaceRoot hideAssistantOn={()=>true}>{children}</WorkspaceRoot>
+        </WorkspacePaneRouterContext.Provider>
       </RequireSession>
       <DemoInSession/>
       <InvitationDialog/>

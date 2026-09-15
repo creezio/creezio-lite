@@ -20,3 +20,7 @@ Après la première publication, ne pas modifier une version diffusée sans augm
 ## Passage de 0.1 à 0.2
 
 Ce changement remplace le shell et ajoute une migration D1. Il demande la mise à jour du template applicatif, des dépendances, des pages et de la configuration TypeScript/Vite, en préservant l’identité Sites, le brief métier, la migration 0000 et les données. Le simple `upgrade --apply` des sources est volontairement refusé par le contrôle de schéma. Effectuer cette migration sur une copie contrôlée, construire puis publier sur le même Site.
+
+## Passage de 0.2.0 à 0.2.1
+
+Le correctif d’onglets demande les deux côtés du pont : les sources `shell-ui` via `upgrade --apply`, **et** le fichier `template/app/sites-pane-router.tsx` à ajouter dans `app/`, puis le provider `WorkspacePaneRouterContext` autour de `WorkspaceRoot` dans `BrandChrome` (voir le template). Préserver tout le wiring métier existant. Un simple upgrade du runtime ne copie pas ces fichiers applicatifs et ne suffit donc pas à corriger le bug. Aucun changement de schéma ni effacement du stockage des onglets n’est nécessaire. Après compilation et publication, recharger l’app ; les titres des onglets déjà enregistrés sont actualisés lorsque leurs pages sont ouvertes.

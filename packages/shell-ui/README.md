@@ -361,3 +361,5 @@ Peer optional / interactions :
 ## Profil Creezio Lite / Sites
 
 Le profil Sites utilise les composants originaux. Ajouts optionnels : pagination/recherche distantes de DataTable, destination de logout et désactivation d’impersonation, catalogue admin et rafraîchissement nav via le bus data. Les défauts historiques sont préservés. Correctifs de typage React et import useCallback sans changement de design.
+
+Depuis Lite 0.2.1, `WorkspacePaneRouterContext` (export de `ui/workspace/keep-alive`) accepte un composant de gel de route propre à l’hôte. Sans provider, le comportement Next original reste identique. Le template Sites fournit `SitesPaneRouter` : il conserve les contextes Vinext par pane, empêchant les onglets inactifs de changer de contenu ou de titre. Le bridge reste dans l’application Sites ; aucune dépendance Vinext n’est ajoutée au package natif.

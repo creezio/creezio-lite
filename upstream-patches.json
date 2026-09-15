@@ -13,17 +13,17 @@
     },
     "CHANGELOG.md": {
       "originalSha256": "d0e6dbbb82155ca11a8db73e05ef632df1349b16a0a841d8bd75e374711db87b",
-      "sha256": "6ab0826b68c8a46439f592dd9b36675df6d72571f778fb1876d693dc4cc490f5",
+      "sha256": "cb16c8c88ca34d95a24c1d79ea49a45275c99d04b784219b8fcb97f0444026ba",
       "reason": "Historique du fork ajouté avant le changelog original."
     },
     "package-lock.json": {
       "originalSha256": "1447b0c50ad1ba0a20f5aa1ab8755fe55ccc36b96ff7edd86fdfc80f31ac8065",
-      "sha256": "88c2fad20e40ddf35f94a4471792f8fd8aa761aa7ae96b8a4b33d96fe6bd577c",
+      "sha256": "df3966c4f2ffc9763f8d11a4d053a99e3ef62a93a27626035dacb1439328ecea",
       "reason": "Métadonnées racine et liste explicite des workspaces alignées ; dépendances natives conservées."
     },
     "package.json": {
       "originalSha256": "613b3bb2ac6d46607490c1df1f4cc3bf69935fd968dc5faf9728ba56e05a49ea",
-      "sha256": "29191310baf39a6941c83553c419e3da8e1156b8b55816383a069bfcad63e004",
+      "sha256": "85250e18f86e906da2797a7683b38ab85dc27224c8b092512eb9dff293ba76ed",
       "reason": "Métadonnées du fork et commandes Sites ajoutées ; dépendances et commandes natives conservées."
     },
     "packages/api-kernel/README.md": {
@@ -98,7 +98,7 @@
     },
     "packages/shell-ui/README.md": {
       "originalSha256": "27b8bae070e8d17dbe6272a6d97759dd444d1cab8ab344c4d9652105c9b8c741",
-      "sha256": "15477c2afecfcbce7c4ff1e9419b1149fc9aa07906e187952395bb2e85590bc5",
+      "sha256": "d739cc83aada8d009ff2c1716e0b71ee2bd6401dc7360d4fd41563a52b65da85",
       "reason": "Section Sites ajoutée ; documentation originale conservée."
     },
     "packages/shell-ui/ui/data-table.tsx": {
@@ -155,6 +155,11 @@
       "originalSha256": "81034945ec65cbddacbb92457fe7f62b2f6394553ac95c257bf29fa75bd577bf",
       "sha256": "f794dd9dfcafd066aacfef79b272275838a046c39350207887312a05c8939f05",
       "reason": "Inventorie les scripts supplémentaires du profil Sites."
+    },
+    "packages/shell-ui/ui/workspace/keep-alive.tsx": {
+      "originalSha256": "0e40321ea327a343e465c6782539ce5711ff0ea81a3578608804ab3971b473fd",
+      "sha256": "b0ad30db1ed1a50a2a4c9de70cbba3c4a0ccecd39def4c5df684baf91874b95f",
+      "reason": "Point d’injection optionnel du gel de contexte hôte. Le template Sites fige les véritables contextes Vinext ; le gel Next natif reste le défaut. Aucun changement de géométrie, barre, état ou historique des onglets."
     }
   }
 }
