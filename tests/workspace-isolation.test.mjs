@@ -4,11 +4,11 @@ import assert from 'node:assert/strict';
 const { createElement: h, useState } = await import('react');
 const { create, act } = await import('react-test-renderer');
 const { Children, ChildrenContext, ElementsContext, Slot, BfcacheIdentityMapContext } = await import('vinext/shims/slot');
-const { KeepAliveOutlet, WorkspacePaneRouterContext, invalidateKeepAlive } = await import('../packages/shell-ui/ui/workspace/keep-alive.tsx');
+const { KeepAliveOutlet, WorkspacePaneRouterContext, invalidateKeepAlive } = await import('../runtime/modules/shell-ui/ui/workspace/keep-alive.tsx');
 const { LayoutRouterContext } = await import('vinext/shims/internal/app-router-context');
 const { SitesPaneRouter } = await import('../template/app/sites-pane-router.tsx');
-const { AppShell } = await import('../packages/shell-ui/ui/layout/app-shell.tsx');
-const { configureTabWorkspaceHost } = await import('../packages/shell-ui/ui/workspace/tab-workspace-host.ts');
+const { AppShell } = await import('../runtime/modules/shell-ui/ui/layout/app-shell.tsx');
+const { configureTabWorkspaceHost } = await import('../runtime/modules/shell-ui/ui/workspace/tab-workspace-host.ts');
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const titleByHref = new Map();
@@ -30,7 +30,7 @@ function Tree({ route, active = route, revision = '' }) {
         h(WorkspacePaneRouterContext.Provider, { value: SitesPaneRouter },
           h(KeepAliveOutlet, { routeKey: route, activeHref: active }, h(Children))))));
 }
-test('Switching Creezio panes retains each Vinext page, title and unsaved form', async () => {
+test('Switching Lite panes retains each Vinext page, title and unsaved form', async () => {
   const previousWindow = globalThis.window;
   globalThis.window = new EventTarget();
   let root;

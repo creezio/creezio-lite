@@ -1,0 +1,10 @@
+{
+  "name": "@lite/brand-config",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./manifests/*": "./src/manifests/*.ts"
+  }
+}

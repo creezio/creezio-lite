@@ -23,392 +23,257 @@
       }
     ],
     "paths": {
-      "@creezio/interactive-demo/ui/interactive-demo.css": [
-        "./creezio/packages/interactive-demo/ui/interactive-demo.css"
+      "@lite/shell-ui/ui/settings/desktop-fleet-telemetry-settings": [
+        "./runtime/modules/shell-ui/ui/settings/desktop-fleet-telemetry-settings.tsx"
       ],
-      "@creezio/onboarding/ui/onboarding/onboarding.css": [
-        "./creezio/packages/onboarding/ui/onboarding/onboarding.css"
+      "@lite/shell-ui/ui/settings/desktop-connection-settings": [
+        "./runtime/modules/shell-ui/ui/settings/desktop-connection-settings.tsx"
       ],
-      "@creezio/observability/fleet-collector/*": [
-        "./creezio/packages/observability/fleet-collector/*"
+      "@lite/shell-ui/ui/settings/desktop-background-settings": [
+        "./runtime/modules/shell-ui/ui/settings/desktop-background-settings.tsx"
       ],
-      "@creezio/electron-shell/browser-tabs": [
-        "./creezio/packages/electron-shell/src/host/browser-tabs/index.ts"
+      "@lite/shell-ui/ui/settings/ops-diagnostic-settings": [
+        "./runtime/modules/shell-ui/ui/settings/ops-diagnostic-settings.tsx"
       ],
-      "@creezio/platform-core/package.json": [
-        "./creezio/packages/platform-core/package.json"
+      "@lite/shell-ui/ui/settings/desktop-embed-env-panel": [
+        "./runtime/modules/shell-ui/ui/settings/desktop-embed-env-panel.tsx"
       ],
-      "@creezio/desktop-tooling/scripts/*": [
-        "./creezio/packages/desktop-tooling/scripts/*"
+      "@lite/shell-ui/ui/settings/desktop-hermes-settings": [
+        "./runtime/modules/shell-ui/ui/settings/desktop-hermes-settings.tsx"
       ],
-      "@creezio/fleet/update-status-store": [
-        "./creezio/packages/fleet/src/update-status-store.ts"
+      "@lite/shell-ui/ui/settings/search-reindex-settings": [
+        "./runtime/modules/shell-ui/ui/settings/search-reindex-settings.tsx"
       ],
-      "@creezio/fleet/registry-pull-proxy": [
-        "./creezio/packages/fleet/src/registry-pull-proxy.ts"
+      "@lite/shell-ui/ui/settings/desktop-update-settings": [
+        "./runtime/modules/shell-ui/ui/settings/desktop-update-settings.tsx"
       ],
-      "@creezio/brand-config/manifests/*": [
-        "./creezio/packages/brand-config/src/manifests/*.ts"
+      "@lite/shell-ui/ui/settings/agent-profile-settings": [
+        "./runtime/modules/shell-ui/ui/settings/agent-profile-settings.tsx"
       ],
-      "@creezio/shell-ui/ui/primitives/*": [
-        "./creezio/packages/shell-ui/ui/primitives/*.tsx"
+      "@lite/shell-ui/ui/settings/factory-reset-settings": [
+        "./runtime/modules/shell-ui/ui/settings/factory-reset-settings.tsx"
       ],
-      "@creezio/shell-ui/tailwind-preset": [
-        "./creezio/packages/shell-ui/ui/theme/tailwind-preset.cjs"
+      "@lite/shell-ui/ui/settings/desktop-n8n-settings": [
+        "./runtime/modules/shell-ui/ui/settings/desktop-n8n-settings.tsx"
       ],
-      "@creezio/fleet/server-admin-main": [
-        "./creezio/packages/fleet/src/bin/server-admin-main.ts"
+      "@lite/interactive-demo/ui/interactive-demo.css": [
+        "./runtime/modules/interactive-demo/ui/interactive-demo.css"
       ],
-      "@creezio/landing/ui/landing.css": [
-        "./creezio/packages/landing/ui/landing.css"
+      "@lite/shell-ui/ui/settings/locked-config-field": [
+        "./runtime/modules/shell-ui/ui/settings/locked-config-field.tsx"
       ],
-      "@creezio/shell-ui/ui/settings/*": [
-        "./creezio/packages/shell-ui/ui/settings/*.tsx"
+      "@lite/shell-ui/ui/settings/host-only-settings": [
+        "./runtime/modules/shell-ui/ui/settings/host-only-settings.tsx"
       ],
-      "@creezio/fleet/host-agent-main": [
-        "./creezio/packages/fleet/src/bin/host-agent-main.ts"
+      "@lite/shell-ui/ui/settings/server-mode-cards": [
+        "./runtime/modules/shell-ui/ui/settings/server-mode-cards.tsx"
       ],
-      "@creezio/shell-ui/ui/os-pages": [
-        "./creezio/packages/shell-ui/ui/os-pages/index.ts"
+      "@lite/shell-ui/ui/settings/api-keys-settings": [
+        "./runtime/modules/shell-ui/ui/settings/api-keys-settings.tsx"
       ],
-      "@creezio/fleet/instance-stack": [
-        "./creezio/packages/fleet/src/instance-stack.ts"
+      "@lite/shell-ui/ui/settings/account-settings": [
+        "./runtime/modules/shell-ui/ui/settings/account-settings.tsx"
       ],
-      "@creezio/tasks/ui/tasks-types": [
-        "./creezio/packages/tasks/ui/tasks-types.ts"
+      "@lite/shell-ui/ui/settings/desktop-llm-keys": [
+        "./runtime/modules/shell-ui/ui/settings/desktop-llm-keys.tsx"
       ],
-      "@creezio-lite/core/validation": [
-        "./creezio/core/validation.ts"
+      "@lite/shell-ui/ui/primitives/dropdown-menu": [
+        "./runtime/modules/shell-ui/ui/primitives/dropdown-menu.tsx"
       ],
-      "@creezio/interactive-demo/ui": [
-        "./creezio/packages/interactive-demo/ui/index.ts"
+      "@lite/shell-ui/ui/settings/desktop-tunnel": [
+        "./runtime/modules/shell-ui/ui/settings/desktop-tunnel.tsx"
       ],
-      "@creezio/fleet/agent-updates": [
-        "./creezio/packages/fleet/src/agent-updates.ts"
+      "@lite/shell-ui/ui/primitives/scroll-area": [
+        "./runtime/modules/shell-ui/ui/primitives/scroll-area.tsx"
       ],
-      "@creezio/interactive-demo/*": [
-        "./creezio/packages/interactive-demo/*"
+      "@lite/shell-ui/ui/primitives/breadcrumb": [
+        "./runtime/modules/shell-ui/ui/primitives/breadcrumb.tsx"
       ],
-      "@creezio/shell-ui/theme.css": [
-        "./creezio/packages/shell-ui/ui/theme/theme.css"
+      "@lite/brand-config/manifests/demobrand": [
+        "./runtime/modules/brand-config/src/manifests/demobrand.ts"
       ],
-      "@creezio/fleet/server-admin": [
-        "./creezio/packages/fleet/src/server-admin.ts"
+      "@lite/shell-ui/ui/primitives/separator": [
+        "./runtime/modules/shell-ui/ui/primitives/separator.tsx"
       ],
-      "@creezio/desktop-tooling/*": [
-        "./creezio/packages/desktop-tooling/*"
+      "@lite/shell-ui/ui/primitives/resizable": [
+        "./runtime/modules/shell-ui/ui/primitives/resizable.tsx"
       ],
-      "@creezio/access-control/ui": [
-        "./creezio/packages/access-control/ui/index.ts"
+      "@lite/shell-ui/ui/primitives/skeleton": [
+        "./runtime/modules/shell-ui/ui/primitives/skeleton.tsx"
       ],
-      "@creezio/os-ui/materialize": [
-        "./creezio/packages/os-ui/scripts/materialize.mjs"
+      "@lite/shell-ui/ui/primitives/textarea": [
+        "./runtime/modules/shell-ui/ui/primitives/textarea.tsx"
       ],
-      "@creezio/electron-shell/*": [
-        "./creezio/packages/electron-shell/*"
+      "@lite/shell-ui/ui/primitives/command": [
+        "./runtime/modules/shell-ui/ui/primitives/command.tsx"
       ],
-      "@creezio/interactive-demo": [
-        "./creezio/packages/interactive-demo/src/index.ts"
+      "@lite/shell-ui/ui/primitives/tooltip": [
+        "./runtime/modules/shell-ui/ui/primitives/tooltip.tsx"
       ],
-      "@creezio/access-control/*": [
-        "./creezio/packages/access-control/*"
+      "@lite/shell-ui/ui/primitives/button": [
+        "./runtime/modules/shell-ui/ui/primitives/button.tsx"
       ],
-      "@creezio/observability/ui": [
-        "./creezio/packages/observability/ui/index.ts"
+      "@lite/shell-ui/ui/primitives/avatar": [
+        "./runtime/modules/shell-ui/ui/primitives/avatar.tsx"
       ],
-      "@creezio/fleet/server-lib": [
-        "./creezio/packages/fleet/src/server-lib.ts"
+      "@lite/shell-ui/ui/primitives/sonner": [
+        "./runtime/modules/shell-ui/ui/primitives/sonner.tsx"
       ],
-      "@creezio/fleet/host-agent": [
-        "./creezio/packages/fleet/src/host-agent.ts"
+      "@lite/shell-ui/ui/primitives/dialog": [
+        "./runtime/modules/shell-ui/ui/primitives/dialog.tsx"
       ],
-      "@creezio/observability/*": [
-        "./creezio/packages/observability/*"
+      "@lite/shell-ui/ui/primitives/select": [
+        "./runtime/modules/shell-ui/ui/primitives/select.tsx"
       ],
-      "@creezio/platform-core/*": [
-        "./creezio/packages/platform-core/*"
+      "@lite/shell-ui/ui/primitives/input": [
+        "./runtime/modules/shell-ui/ui/primitives/input.tsx"
       ],
-      "@creezio/desktop-tooling": [
-        "./creezio/packages/desktop-tooling/src/index.ts"
+      "@lite/shell-ui/ui/primitives/label": [
+        "./runtime/modules/shell-ui/ui/primitives/label.tsx"
       ],
-      "@creezio/shell-ui/ui/kit": [
-        "./creezio/packages/shell-ui/ui/kit.ts"
+      "@lite/shell-ui/ui/primitives/badge": [
+        "./runtime/modules/shell-ui/ui/primitives/badge.tsx"
       ],
-      "@creezio/integrations/ui": [
-        "./creezio/packages/integrations/ui/index.ts"
+      "@lite/shell-ui/ui/primitives/chart": [
+        "./runtime/modules/shell-ui/ui/primitives/chart.tsx"
       ],
-      "@creezio/sites-adapter/*": [
-        "./creezio/packages/sites-adapter/src/*.ts"
+      "@lite/shell-ui/ui/primitives/sheet": [
+        "./runtime/modules/shell-ui/ui/primitives/sheet.tsx"
       ],
-      "@creezio-lite/core/types": [
-        "./creezio/core/types.ts"
+      "@lite/shell-ui/ui/primitives/tabs": [
+        "./runtime/modules/shell-ui/ui/primitives/tabs.tsx"
       ],
-      "@creezio-lite/core/index": [
-        "./creezio/core/index.ts"
+      "@lite/shell-ui/ui/primitives/card": [
+        "./runtime/modules/shell-ui/ui/primitives/card.tsx"
       ],
-      "@creezio/brand-config/*": [
-        "./creezio/packages/brand-config/*"
+      "@lite/platform-core/package.json": [
+        "./runtime/modules/platform-core/package.json"
       ],
-      "@creezio/electron-shell": [
-        "./creezio/packages/electron-shell/src/index.ts"
+      "@lite/brand-config/manifests/*": [
+        "./runtime/modules/brand-config/src/manifests/*.ts"
       ],
-      "@creezio/access-control": [
-        "./creezio/packages/access-control/src/index.ts"
+      "@lite/shell-ui/ui/primitives/*": [
+        "./runtime/modules/shell-ui/ui/primitives/*.tsx"
       ],
-      "@creezio/host-runtime/*": [
-        "./creezio/packages/host-runtime/*"
+      "@lite/shell-ui/tailwind-preset": [
+        "./runtime/modules/shell-ui/ui/theme/tailwind-preset.cjs"
       ],
-      "@creezio/browser-host/*": [
-        "./creezio/packages/browser-host/*"
+      "@lite/shell-ui/ui/settings/*": [
+        "./runtime/modules/shell-ui/ui/settings/*.tsx"
       ],
-      "@creezio/integrations/*": [
-        "./creezio/packages/integrations/*"
+      "@lite/sites-adapter/dispatch": [
+        "./runtime/modules/sites-adapter/src/dispatch.ts"
       ],
-      "@creezio/product-hub/ui": [
-        "./creezio/packages/product-hub/ui/index.ts"
+      "@lite/sites-adapter/context": [
+        "./runtime/modules/sites-adapter/src/context.ts"
       ],
-      "@creezio/fleet/protocol": [
-        "./creezio/packages/fleet/src/protocol.ts"
+      "@lite/sites-adapter/support": [
+        "./runtime/modules/sites-adapter/src/support.ts"
       ],
-      "@creezio-lite/core/http": [
-        "./creezio/core/http.ts"
+      "@lite/interactive-demo/ui": [
+        "./runtime/modules/interactive-demo/ui/index.ts"
       ],
-      "@creezio/propagation/*": [
-        "./creezio/packages/propagation/*"
+      "@lite/sites-adapter/tasks": [
+        "./runtime/modules/sites-adapter/src/tasks.ts"
       ],
-      "@creezio/automations/*": [
-        "./creezio/packages/automations/*"
+      "@lite/sites-adapter/index": [
+        "./runtime/modules/sites-adapter/src/index.ts"
       ],
-      "@creezio/observability": [
-        "./creezio/packages/observability/src/index.ts"
+      "@lite/shell-ui/theme.css": [
+        "./runtime/modules/shell-ui/ui/theme/theme.css"
       ],
-      "@creezio/platform-core": [
-        "./creezio/packages/platform-core/src/index.ts"
+      "@lite/core/access-tokens": [
+        "./runtime/core/access-tokens.ts"
       ],
-      "@creezio/product-hub/*": [
-        "./creezio/packages/product-hub/*"
+      "@lite/sites-adapter/demo": [
+        "./runtime/modules/sites-adapter/src/demo.ts"
       ],
-      "@creezio/app-runtime/*": [
-        "./creezio/packages/app-runtime/*"
+      "@lite/sites-adapter/nav": [
+        "./runtime/modules/sites-adapter/src/nav.ts"
       ],
-      "@creezio/mcp-facade/ui": [
-        "./creezio/packages/mcp-facade/ui/index.ts"
+      "@lite/observability/ui": [
+        "./runtime/modules/observability/ui/index.ts"
       ],
-      "@creezio/onboarding/ui": [
-        "./creezio/packages/onboarding/ui/index.ts"
+      "@lite/interactive-demo": [
+        "./runtime/modules/interactive-demo/src/index.ts"
       ],
-      "@creezio/sites-adapter": [
-        "./creezio/packages/sites-adapter/src/index.ts"
+      "@lite/shell-ui/ui/kit": [
+        "./runtime/modules/shell-ui/ui/kit.ts"
       ],
-      "@creezio-lite/core/api": [
-        "./creezio/core/api.ts"
+      "@lite/sites-adapter/*": [
+        "./runtime/modules/sites-adapter/src/*.ts"
       ],
-      "@creezio/mcp-facade/*": [
-        "./creezio/packages/mcp-facade/*"
+      "@lite/core/validation": [
+        "./runtime/core/validation.ts"
       ],
-      "@creezio/brand-config": [
-        "./creezio/packages/brand-config/src/index.ts"
+      "@lite/platform-core": [
+        "./runtime/modules/platform-core/src/index.ts"
       ],
-      "@creezio/onboarding/*": [
-        "./creezio/packages/onboarding/*"
+      "@lite/sites-adapter": [
+        "./runtime/modules/sites-adapter/src/index.ts"
       ],
-      "@creezio/brand-spec/*": [
-        "./creezio/packages/brand-spec/*"
+      "@lite/core/registry": [
+        "./runtime/core/registry.ts"
       ],
-      "@creezio/host-runtime": [
-        "./creezio/packages/host-runtime/src/index.ts"
+      "@lite/brand-config": [
+        "./runtime/modules/brand-config/src/index.ts"
       ],
-      "@creezio/browser-host": [
-        "./creezio/packages/browser-host/src/index.ts"
+      "@lite/assistant/ui": [
+        "./runtime/modules/assistant/ui/index.ts"
       ],
-      "@creezio/integrations": [
-        "./creezio/packages/integrations/src/index.ts"
+      "@lite/shell-ui/ui": [
+        "./runtime/modules/shell-ui/ui/index.ts"
       ],
-      "@creezio/api-kernel/*": [
-        "./creezio/packages/api-kernel/*"
+      "@lite/core/search": [
+        "./runtime/core/search.ts"
       ],
-      "@creezio/assistant/ui": [
-        "./creezio/packages/assistant/ui/index.ts"
+      "@lite/support/ui": [
+        "./runtime/modules/support/ui/index.ts"
       ],
-      "@creezio/fleet/docker": [
-        "./creezio/packages/fleet/src/docker.ts"
+      "@lite/os-ui/boot": [
+        "./runtime/modules/os-ui/src/boot.tsx"
       ],
-      "@creezio/propagation": [
-        "./creezio/packages/propagation/src/index.ts"
+      "@lite/api-kernel": [
+        "./runtime/modules/api-kernel/src/index.ts"
       ],
-      "@creezio/automations": [
-        "./creezio/packages/automations/src/index.ts"
+      "@lite/core/index": [
+        "./runtime/core/index.ts"
       ],
-      "@creezio/assistant/*": [
-        "./creezio/packages/assistant/*"
+      "@lite/core/tools": [
+        "./runtime/core/tools.ts"
       ],
-      "@creezio/product-hub": [
-        "./creezio/packages/product-hub/src/index.ts"
+      "@lite/core/types": [
+        "./runtime/core/types.ts"
       ],
-      "@creezio/app-runtime": [
-        "./creezio/packages/app-runtime/src/index.ts"
+      "@lite/core/http": [
+        "./runtime/core/http.ts"
       ],
-      "@creezio/database/ui": [
-        "./creezio/packages/database/ui/index.ts"
+      "@lite/shell-ui": [
+        "./runtime/modules/shell-ui/src/index.ts"
       ],
-      "@creezio/shell-ui/ui": [
-        "./creezio/packages/shell-ui/ui/index.ts"
+      "@lite/tasks/ui": [
+        "./runtime/modules/tasks/ui/index.ts"
       ],
-      "@creezio-lite/core/*": [
-        "./creezio/core/*.ts"
+      "@lite/core/mcp": [
+        "./runtime/core/mcp.ts"
       ],
-      "@creezio/mcp-facade": [
-        "./creezio/packages/mcp-facade/src/index.ts"
+      "@lite/core/api": [
+        "./runtime/core/api.ts"
       ],
-      "@creezio/onboarding": [
-        "./creezio/packages/onboarding/src/index.ts"
+      "@lite/support": [
+        "./runtime/modules/support/src/index.ts"
       ],
-      "@creezio/brand-spec": [
-        "./creezio/packages/brand-spec/src/index.ts"
+      "@lite/auth/ui": [
+        "./runtime/modules/auth/ui/index.ts"
       ],
-      "@creezio/database/*": [
-        "./creezio/packages/database/*"
+      "@lite/nav/ui": [
+        "./runtime/modules/nav/ui/index.ts"
       ],
-      "@creezio/shell-ui/*": [
-        "./creezio/packages/shell-ui/*"
+      "@lite/shell": [
+        "./runtime/modules/shell/src/index.ts"
       ],
-      "@creezio/api-kernel": [
-        "./creezio/packages/api-kernel/src/index.ts"
-      ],
-      "@creezio/support/ui": [
-        "./creezio/packages/support/ui/index.ts"
-      ],
-      "@creezio/landing/ui": [
-        "./creezio/packages/landing/ui/index.ts"
-      ],
-      "@creezio/os-ui/boot": [
-        "./creezio/packages/os-ui/src/boot.tsx"
-      ],
-      "@creezio/granola/ui": [
-        "./creezio/packages/granola/ui/index.ts"
-      ],
-      "@creezio/grokbot/ui": [
-        "./creezio/packages/grokbot/ui/index.ts"
-      ],
-      "@creezio/cockpit/ui": [
-        "./creezio/packages/cockpit/ui/index.ts"
-      ],
-      "@creezio/support/*": [
-        "./creezio/packages/support/*"
-      ],
-      "@creezio/assistant": [
-        "./creezio/packages/assistant/src/index.ts"
-      ],
-      "@creezio/landing/*": [
-        "./creezio/packages/landing/*"
-      ],
-      "@creezio/granola/*": [
-        "./creezio/packages/granola/*"
-      ],
-      "@creezio/grokbot/*": [
-        "./creezio/packages/grokbot/*"
-      ],
-      "@creezio/cockpit/*": [
-        "./creezio/packages/cockpit/*"
-      ],
-      "@creezio/factory/*": [
-        "./creezio/packages/factory/*"
-      ],
-      "@creezio-lite/core": [
-        "./creezio/core/index.ts"
-      ],
-      "@creezio/search/*": [
-        "./creezio/packages/search/*"
-      ],
-      "@creezio/database": [
-        "./creezio/packages/database/src/index.ts"
-      ],
-      "@creezio/shell-ui": [
-        "./creezio/packages/shell-ui/src/index.ts"
-      ],
-      "@creezio/mails/ui": [
-        "./creezio/packages/mails/ui/index.ts"
-      ],
-      "@creezio/admin/ui": [
-        "./creezio/packages/admin/ui/index.ts"
-      ],
-      "@creezio/tasks/ui": [
-        "./creezio/packages/tasks/ui/index.ts"
-      ],
-      "@creezio/support": [
-        "./creezio/packages/support/src/index.ts"
-      ],
-      "@creezio/mails/*": [
-        "./creezio/packages/mails/*"
-      ],
-      "@creezio/landing": [
-        "./creezio/packages/landing/src/index.ts"
-      ],
-      "@creezio/os-ui/*": [
-        "./creezio/packages/os-ui/*"
-      ],
-      "@creezio/granola": [
-        "./creezio/packages/granola/src/index.ts"
-      ],
-      "@creezio/shell/*": [
-        "./creezio/packages/shell/*"
-      ],
-      "@creezio/admin/*": [
-        "./creezio/packages/admin/*"
-      ],
-      "@creezio/tasks/*": [
-        "./creezio/packages/tasks/*"
-      ],
-      "@creezio/grokbot": [
-        "./creezio/packages/grokbot/src/index.ts"
-      ],
-      "@creezio/cockpit": [
-        "./creezio/packages/cockpit/src/index.ts"
-      ],
-      "@creezio/factory": [
-        "./creezio/packages/factory/src/index.ts"
-      ],
-      "@creezio/fleet/*": [
-        "./creezio/packages/fleet/*"
-      ],
-      "@creezio/auth/ui": [
-        "./creezio/packages/auth/ui/index.ts"
-      ],
-      "@creezio/auth/*": [
-        "./creezio/packages/auth/*"
-      ],
-      "@creezio/search": [
-        "./creezio/packages/search/src/index.ts"
-      ],
-      "@creezio/nav/ui": [
-        "./creezio/packages/nav/ui/index.ts"
-      ],
-      "@creezio/mails": [
-        "./creezio/packages/mails/src/index.ts"
-      ],
-      "@creezio/os-ui": [
-        "./creezio/packages/os-ui/src/index.ts"
-      ],
-      "@creezio/shell": [
-        "./creezio/packages/shell/src/index.ts"
-      ],
-      "@creezio/admin": [
-        "./creezio/packages/admin/src/index.ts"
-      ],
-      "@creezio/tasks": [
-        "./creezio/packages/tasks/src/index.ts"
-      ],
-      "@creezio/nav/*": [
-        "./creezio/packages/nav/*"
-      ],
-      "@creezio/fleet": [
-        "./creezio/packages/fleet/src/index.ts"
-      ],
-      "@creezio/auth": [
-        "./creezio/packages/auth/src/index.ts"
-      ],
-      "@creezio/nav": [
-        "./creezio/packages/nav/src/index.ts"
+      "@lite/core": [
+        "./runtime/core/index.ts"
       ],
       "@/*": [
         "./*"
@@ -430,7 +295,6 @@
   "exclude": [
     "node_modules",
     "examples",
-    "creezio/packages",
-    "creezio/ui/workspace.tsx"
+    "runtime/modules"
   ]
 }

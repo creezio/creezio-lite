@@ -1,6 +1,6 @@
 {
-  "name": "creezio-lite-template",
-  "version": "0.2.2",
+  "name": "lite-template",
+  "version": "0.3.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -14,9 +14,9 @@
     "db:generate": "drizzle-kit generate",
     "typecheck": "tsc --noEmit",
     "db:local": "node scripts/migrate-local.mjs",
-    "prebuild": "node scripts/prepare-creezio.mjs",
-    "pretypecheck": "node scripts/prepare-creezio.mjs",
-    "predev": "node scripts/prepare-creezio.mjs"
+    "prebuild": "node scripts/prepare-lite.mjs",
+    "pretypecheck": "node scripts/prepare-lite.mjs",
+    "predev": "node scripts/prepare-lite.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -54,8 +54,8 @@
     "@radix-ui/react-tabs": "1.1.13",
     "@radix-ui/react-tooltip": "1.2.8",
     "@tanstack/react-table": "8.21.3",
-    "creezio-resizable-panels": "npm:react-resizable-panels@3.0.6",
-    "creezio-recharts": "npm:recharts@2.15.4",
+    "lite-resizable-panels": "npm:react-resizable-panels@3.0.6",
+    "lite-recharts": "npm:recharts@2.15.4",
     "hono": "4.12.32"
   },
   "devDependencies": {

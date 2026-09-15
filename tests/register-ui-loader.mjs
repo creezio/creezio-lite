@@ -11,9 +11,9 @@ function source(path) { const stem=path.replace(/\/dist\//g,'/src/').replace(/\.
 registerHooks({
   resolve(spec, context, next) {
     if (spec === 'next/dist/shared/lib/app-router-context.shared-runtime') spec = 'vinext/shims/internal/app-router-context';
-    if (spec.startsWith('@creezio/')) {
-      const [name,...parts]=spec.slice(9).split('/');
-      const base=join(root,'packages',name), manifest=JSON.parse(readFileSync(join(base,'package.json'),'utf8'));
+    if (spec.startsWith('@lite/')) {
+      const [name,...parts]=spec.slice('@lite/'.length).split('/');
+      const base=join(root,'runtime/modules',name), manifest=JSON.parse(readFileSync(join(base,'package.json'),'utf8'));
       const entry=manifest.exports?.[parts.length?'./'+parts.join('/'):'.'];
       const file=source(resolve(base,typeof entry==='string'?entry:entry?.import??parts.join('/')));
       if(file)return next(pathToFileURL(file).href,context);

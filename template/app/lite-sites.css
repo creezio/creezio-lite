@@ -1,0 +1,9 @@
+/* Native Lite owns search geometry through transform: translateX(-50%).
+ * Tailwind 4 gives md:-translate-x-1/2 a separate `translate` property, so
+ * both offsets otherwise accumulate. Keep the original component and theme;
+ * neutralize only the extra utility on this palette, including on mobile.
+ * Ordinary Radix dialogs still need their Tailwind translate utilities.
+ */
+.lite-search-palette.lite-search-palette[role="dialog"] {
+  translate: none;
+}

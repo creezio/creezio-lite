@@ -1,13 +1,13 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSession } from '@creezio/auth/ui';
-import { AppShell } from '@creezio/shell-ui/ui';
-import { Button, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@creezio/shell-ui/ui/kit';
-import { createClient, useLoad } from '@/creezio/ui/client';
-import { ModuleView, State } from '@/creezio/ui/module-view';
-import { FilesView, TeamView, AuditView, SettingsView } from '@/creezio/ui/system-views';
-import { subscribeDataChanged } from '@creezio/shell-ui';
-import type { Workspace } from '@/creezio/core';
+import { useSession } from '@lite/auth/ui';
+import { AppShell } from '@lite/shell-ui/ui';
+import { Button, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@lite/shell-ui/ui/kit';
+import { createClient, useLoad } from '@/runtime/ui/client';
+import { ModuleView, State } from '@/runtime/ui/module-view';
+import { FilesView, TeamView, AuditView, SettingsView } from '@/runtime/ui/system-views';
+import { subscribeDataChanged } from '@lite/shell-ui';
+import type { Workspace } from '@/runtime/core';
 import { appDefinition } from './app-definition';
 const names:Record<string,string>={documents:'Documents',collaborateurs:'Collaborateurs',parametres:'Préférences',activity:'Activité'};
 export function WorkspaceContent({page}:{page:string}) {

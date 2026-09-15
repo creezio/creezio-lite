@@ -1,9 +1,0 @@
-# Creezio Lite
-
-Dépôt : https://github.com/creezio/creezio-lite
-Entrée ChatGPT Sites : START-HERE.md
-Contraintes et limites : docs/COMPATIBILITY.md
-Sources : les 36 packages du vrai kit Creezio 0.26.0, sa factory et ses dépendances sont restaurés.
-Profil Sites : template/ et packages/sites-adapter/ ; réutiliser WorkspaceRoot et les composants originaux.
-Ne pas reconstruire le design. Ne pas confondre package conservé et backend opérationnel. Hermes et n8n sont désactivés.
-Générer une application indépendante avec bin/creezio-lite.mjs, puis utiliser le workflow Sites disponible dans la conversation.

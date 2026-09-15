@@ -1,0 +1,121 @@
+import type { D1Database } from '@cloudflare/workers-types';
+import type { AppDefinition, Identity, Workspace } from './types.ts';
+import { moduleRegistry, recordHref, visibleModules, type RegisteredModule } from './registry.ts';
+import { boundedInteger, fail, requireRole } from './validation.ts';
+import { json, readJson } from './http.ts';
+
+const sources = ['records','tasks','files','support','members','audit'];
+type Override = {module_id:string;enabled:number;fields_json:string;version:number};
+export type SearchPolicy = RegisteredModule & {search:{enabled:boolean;fields:string[]};version:number};
+export async function searchPolicies(db:D1Database,app:AppDefinition,org:string):Promise<SearchPolicy[]> {
+  const stored=await db.prepare('SELECT module_id,enabled,fields_json,version FROM lite_search_settings WHERE org_id=?').bind(org).all<Override>();
+  return moduleRegistry(app).map(m=>{
+    const setting=stored.results.find(s=>s.module_id===m.id);
+    return {...m,version:setting?.version??0,search:setting?{enabled:Boolean(setting.enabled),fields:(JSON.parse(setting.fields_json) as string[]).filter(key=>m.fields.some(f=>f.key===key))}:m.search};
+  });
+}
+
+/** Bounded, resumable backfill. Writes and their index changes share a DB transaction. */
+export async function prepareSearchIndex(db:D1Database,org:string) {
+  for(const source of sources){
+    await db.prepare('INSERT OR IGNORE INTO lite_search_progress(org_id,source,cursor,complete) VALUES(?,?,?,0)').bind(org,source,'').run();
+    const state=await db.prepare('SELECT cursor,complete FROM lite_search_progress WHERE org_id=? AND source=?').bind(org,source).first<{cursor:string;complete:number}>();
+    if(state?.complete)continue;
+    const cursor=state?.cursor??'';
+    const rows=await db.prepare(`SELECT source_key FROM lite_search_source_${source} WHERE org_id=? AND source=? AND source_key>? ORDER BY source_key LIMIT 50`).bind(org,source,cursor).all<{source_key:string}>();
+    const last=rows.results.at(-1)?.source_key??cursor;
+    await db.batch([
+      db.prepare(`INSERT INTO lite_search_documents(org_id,module_id,record_id,data,updated_at)
+        SELECT org_id,module_id,record_id,data,updated_at FROM lite_search_source_${source}
+        WHERE org_id=? AND source=? AND source_key>? AND source_key<=?
+        ON CONFLICT(org_id,module_id,record_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at`).bind(org,source,cursor,last),
+      db.prepare('UPDATE lite_search_progress SET cursor=?,complete=? WHERE org_id=? AND source=? AND cursor=?').bind(last,rows.results.length<50?1:0,org,source,cursor),
+    ]);
+  }
+  const remaining=await db.prepare('SELECT COUNT(*) AS n FROM lite_search_progress WHERE org_id=? AND complete=0').bind(org).first<{n:number}>();
+  return Boolean(remaining?.n);
+}
+
+export function searchTerms(query:string):string[] {
+  if(query.length>120)fail(400,'query_too_long','Recherche limitée à 120 caractères.');
+  const terms=[...new Set(query.normalize('NFKC').match(/[\p{L}\p{N}]+/gu)??[])];
+  if(terms.length>8)fail(400,'too_many_terms','Utilisez au maximum huit mots.');
+  return terms;
+}
+
+export async function searchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:{limit?:number;offset?:number;moduleId?:string}={}) {
+  const terms=searchTerms(query),limit=options.limit??30,offset=options.offset??0;
+  const policies=(await searchPolicies(db,app,org.id)).filter(m=>m.readRoles.includes(org.role)&&m.search.enabled&&m.search.fields.length&&(!options.moduleId||options.moduleId===m.id));
+  const indexing=await prepareSearchIndex(db,org.id);
+  if(!terms.length||!policies.length)return {cte:'WITH ranked AS (SELECT id,0 AS score FROM lite_search_documents WHERE 0)',bindings:[],policies,indexing};
+  // Policy filtering happens inside the query, before counts, excerpts and pagination.
+  // One FTS row per field lets an administrator remove a field immediately.
+  const allowed=JSON.stringify(policies.flatMap(m=>m.search.fields.map(field=>({module:m.id,field,title:field===m.titleField?1:0}))));
+  const matches=`SELECT d.id,CAST(t.key AS INTEGER) AS term,CAST(json_extract(p.value,'$.title') AS INTEGER) AS title_match
+    FROM json_each(?) t CROSS JOIN lite_search_fts JOIN lite_search_documents d ON d.id=lite_search_fts.document_id
+    JOIN json_each(?) p ON json_extract(p.value,'$.module')=d.module_id AND json_extract(p.value,'$.field')=lite_search_fts.field_key
+    WHERE lite_search_fts MATCH t.value AND d.org_id=?`;
+  const bindings=[JSON.stringify(terms.map(t=>'"'+t.replaceAll('"','""')+'"*')),allowed,org.id];
+  const cte=`WITH matches AS (${matches}), ranked AS (SELECT id,SUM(title_match) AS score FROM matches GROUP BY id HAVING COUNT(DISTINCT term)=?)`;
+  return {cte,bindings:[...bindings,terms.length],policies,indexing};
+}
+
+export async function searchData(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:{limit?:number;offset?:number;moduleId?:string}={}) {
+  const {cte,bindings,policies,indexing}=await searchSelection(db,app,org,query,options);
+  const terms=searchTerms(query),limit=options.limit??30,offset=options.offset??0;
+  const [found,count]=await Promise.all([
+    db.prepare(`${cte} SELECT d.module_id,d.record_id,d.data,d.updated_at,r.score FROM ranked r JOIN lite_search_documents d ON d.id=r.id ORDER BY r.score DESC,d.updated_at DESC,d.id LIMIT ? OFFSET ?`).bind(...bindings,limit,offset).all<{module_id:string;record_id:string;data:string;updated_at:string;score:number}>(),
+    db.prepare(`${cte} SELECT COUNT(*) AS total FROM ranked`).bind(...bindings).first<{total:number}>(),
+  ]);
+  const plain=(value:unknown)=>typeof value==='boolean'?(value?'Oui':'Non'):value==null?'':String(value);
+  const normalize=(value:string)=>value.normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('fr');
+  const items=found.results.map(row=>{
+    const module=policies.find(m=>m.id===row.module_id)!,data=JSON.parse(row.data) as Record<string,unknown>;
+    const excerpts=module.search.fields.map(key=>({label:module.fields.find(f=>f.key===key)?.label??key,value:plain(data[key])}));
+    const matching=excerpts.filter(f=>terms.some(term=>normalize(f.value).includes(normalize(term))));
+    const snippet=(matching.length?matching:excerpts).filter(f=>f.value).slice(0,3).map(f=>`${f.label} : ${f.value}`).join(' · ').slice(0,420);
+    return {index:module.id,id:row.record_id,moduleName:module.name,title:plain(data[module.titleField])||module.name,description:snippet,href:recordHref(module,row.record_id,data),updatedAt:row.updated_at};
+  });
+  const pages=terms.length?policies.filter(m=>terms.every(t=>normalize(m.name).includes(normalize(t)))).map(m=>({index:'pages',id:m.id,title:m.name,description:'Ouvrir le module',href:m.href})):[];
+  return {items,pages,total:count?.total??0,indexing,engine:'d1-fts5'};
+}
+
+export async function searchRoute(request:Request,db:D1Database,app:AppDefinition,org:Workspace,user:Identity):Promise<Response|null> {
+  const url=new URL(request.url),path=url.pathname.replace(/^\/api\/v1\//,'').replace(/\/$/,'');
+  if(path==='registry'&&request.method==='GET')return json({modules:visibleModules(app,org.role),workspace:org});
+  if(path==='search'&&request.method==='GET'){
+    const limit=boundedInteger(url.searchParams.get('limit'),30,100);if(!limit)fail(400,'invalid_pagination','Limite positive attendue.');
+    return json(await searchData(db,app,org,url.searchParams.get('q')??'',{limit,offset:boundedInteger(url.searchParams.get('offset'),0,100000),moduleId:url.searchParams.get('module')??undefined}));
+  }
+  if(!path.startsWith('admin/search'))return null;
+  requireRole(org.role,['owner','admin']);
+  if(path==='admin/search'&&request.method==='GET'){
+    const policies=await searchPolicies(db,app,org.id);
+    const counts=await db.prepare('SELECT module_id,COUNT(*) AS count FROM lite_search_documents WHERE org_id=? GROUP BY module_id').bind(org.id).all<{module_id:string;count:number}>();
+    return json({modules:policies.map(m=>({...m,indexed:counts.results.find(c=>c.module_id===m.id)?.count??0})),engine:'d1-fts5'});
+  }
+  if(path==='admin/search/reindex'&&request.method==='POST'){
+    const body=await readJson(request);
+    if(body.reset===true)await db.batch([
+      db.prepare('DELETE FROM lite_search_documents WHERE org_id=?').bind(org.id),
+      db.prepare('DELETE FROM lite_search_progress WHERE org_id=?').bind(org.id),
+    ]);
+    return json({indexing:await prepareSearchIndex(db,org.id)});
+  }
+  const match=path.match(/^admin\/search\/([a-z][a-z0-9-]*)$/);
+  if(match&&request.method==='PUT'){
+    const module=moduleRegistry(app).find(m=>m.id===match[1]);if(!module)fail(404,'module_not_found','Module introuvable.');
+    const body=await readJson(request);
+    if(typeof body.enabled!=='boolean'||!Array.isArray(body.fields)||body.fields.some(f=>typeof f!=='string'||!module.fields.some(x=>x.key===f))||new Set(body.fields).size!==body.fields.length||!Number.isInteger(body.version)||Number(body.version)<0)fail(400,'invalid_search_settings','Réglages de recherche invalides.');
+    const result=await db.batch([
+      db.prepare(`INSERT INTO lite_search_settings(org_id,module_id,enabled,fields_json,version)
+        SELECT ?,?,?,?,1 WHERE ?=0 OR EXISTS(SELECT 1 FROM lite_search_settings WHERE org_id=? AND module_id=? AND version=?)
+        ON CONFLICT(org_id,module_id) DO UPDATE SET enabled=excluded.enabled,fields_json=excluded.fields_json,version=lite_search_settings.version+1
+        WHERE lite_search_settings.version=? AND ?>0`).bind(org.id,module.id,body.enabled?1:0,JSON.stringify(body.fields),body.version,org.id,module.id,body.version,body.version,body.version),
+      db.prepare('INSERT INTO lite_audit(id,org_id,user_id,action,resource_id,details,created_at) SELECT ?,?,?,?,?,?,? WHERE changes()=1').bind(crypto.randomUUID(),org.id,user.userId,'search.settings',module.id,'{}',new Date().toISOString()),
+    ]);
+    if(!result[0].meta.changes)fail(409,'version_conflict','Ces réglages ont changé. Rechargez la page.');
+    return json({ok:true,version:Number(body.version)+1});
+  }
+  fail(405,'method_not_allowed','Opération non prise en charge.');
+}

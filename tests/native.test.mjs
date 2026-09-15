@@ -6,9 +6,9 @@ import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { root,app,alice,bob,eve,migrationSql,client,boot } from './helpers.mjs';
 // Dynamic import runs after the test-only source resolver is registered.
-const {handleNativeApi}=await import('../packages/sites-adapter/src/index.ts');
+const {handleNativeApi}=await import('../runtime/modules/sites-adapter/src/index.ts');
 function native(db,user,cookie=''){return async(path,method='GET',body,headers={})=>{const response=await handleNativeApi(new Request(`https://test.example/api/v1/${path}`,{method,headers:{origin:'https://test.example',cookie,...(body?{'content-type':'application/json'}:{}),...headers},...(body?{body:JSON.stringify(body)}:{})}),{identity:user,env:{DB:db},app});assert.ok(response,'native endpoint must be dispatched');return {status:response.status,body:await response.json(),headers:response.headers};};}
-test('Native Creezio modules on real D1: session, permissions, kanban, support and preferences',async()=>{
+test('Native Lite modules on real D1: session, permissions, kanban, support and preferences',async()=>{
   const deps=createRequire(join(root,'template/package.json')),wrangler=createRequire(deps.resolve('wrangler/package.json'));
   const {Miniflare}=await import(pathToFileURL(wrangler.resolve('miniflare')).href);
   const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response("ok")}}',compatibilityDate:'2026-05-15',d1Databases:['DB'],cf:false});
@@ -35,6 +35,13 @@ test('Native Creezio modules on real D1: session, permissions, kanban, support a
     const support=await a('platform/platform-support','POST',{sujet:'Question',corps:'Premier message',auteur:'Usurpation'});assert.equal(support.status,201,JSON.stringify(support.body));const ticket=support.body.item.id;assert.equal(support.body.item.auteur,'Alice');
     assert.equal((await a(`platform/platform-support/${ticket}/reply`,'POST',{corps:'Réponse'})).status,200);
     const detail=await a(`platform/platform-support/${ticket}`);assert.equal(detail.body.messages.length,2);assert.equal(detail.body.item.statut,'repondu');assert.equal((await b(`platform/platform-support/${ticket}`)).status,404);
+    const searchable=client(db,alice);
+    assert.equal((await searchable('search?q=brief&module=tasks')).body.items[0].id,id);
+    const messageHit=(await searchable('search?q=premier&module=support')).body.items[0];assert.ok(messageHit);assert.equal(messageHit.href,`/support?ticket=${ticket}`);
+    assert.ok((await searchable('search?q=alice&module=members')).body.total>0);
+    assert.ok((await searchable('search?q=task&module=audit')).body.total>0);
+    await db.prepare('INSERT INTO lite_files(id,org_id,name,object_key,size,content_type,created_by,created_at) VALUES(?,?,?,?,?,?,?,?)').bind('sample-file',org,'Contrat Réda.pdf','fixture-object',15,'application/pdf',alice.userId,new Date().toISOString()).run();
+    assert.equal((await searchable('search?q=reda&module=files')).body.items[0].id,'sample-file');
     const scenarios=await a('modules/interactive-demo/scenarios');assert.equal(scenarios.status,200);assert.ok(scenarios.body.scenarios.length>0);
     const scenario=scenarios.body.scenarios[0];assert.equal((await a(`modules/interactive-demo/scenarios/${scenario.id}`,'PUT',{title:'Notre visite'})).status,200);
     assert.equal((await a('modules/interactive-demo/preferences','PUT',{user:'Alice',answers:{seen:true}})).status,200);

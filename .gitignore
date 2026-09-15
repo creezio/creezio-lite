@@ -1,52 +1,15 @@
-node_modules
+node_modules/
 dist/
-dist-cjs/
-# Copie build des codemods d'architecture (SoT scripts/codemods/) — publiée npm
-packages/factory/codemods/
-build/
 .next/
-out/
 *.tsbuildinfo
-.DS_Store
 .env
 .env.*
 !.env.example
 *.log
-.npm/
 coverage/
-var/
-
-apps/*/ui/node_modules/
-apps/*/ui/.next/
-
-# Binaires OS kit (ensure-kit-binaries — host-runtime/resources/bin).
-# Jamais versionnés (packaging client slim + image serveur les télécharge).
-packages/host-runtime/resources/bin/meili
-packages/host-runtime/resources/bin/meili.exe
-packages/host-runtime/resources/bin/meilisearch
-packages/host-runtime/resources/bin/meilisearch-linux
-packages/host-runtime/resources/bin/meilisearch-win.exe
-packages/host-runtime/resources/bin/cloudflared
-packages/host-runtime/resources/bin/cloudflared.exe
-
-
-.github-token
-.env
-.env.local
-
-# Résidus outillage (pack fake dirs de tests, dumps locaux)
-creezio-pack-fake-*/
-dumps/
-
-# Clés / config SSH locales (jamais versionnées)
-.ssh/
-
-# Generated Sites source and deployment artifacts
-template/creezio/
 .wrangler/
 .sites-runtime/
-.creezio-backups/
+.lite-backups/
 *.tar.gz
-# The Sites starter keeps source files in build/.
-!template/build/
-!template/build/**
+template/runtime/
+.DS_Store

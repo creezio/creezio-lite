@@ -1,0 +1,10 @@
+{
+  "name": "@lite/support",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ui": "./ui/index.ts"
+  }
+}

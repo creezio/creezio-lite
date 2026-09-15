@@ -1,5 +1,5 @@
 {
-  "id": "creezio-lite", "name": "Creezio Lite", "description": "Votre espace de travail pour les clients et les dossiers.",
+  "id": "lite", "name": "Lite", "description": "Votre espace de travail pour les clients et les dossiers.",
   "modules": [
     {"id":"clients","name":"Clients","singular":"Client","description":"Contacts et entreprises de votre espace.","icon":"users","titleField":"name","fields":[
       {"key":"name","label":"Nom du client","type":"text","required":true},

@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { handleApi, defineApp } from '../packages/core/src/index.ts';
+import { handleApi, defineApp } from '../runtime/core/index.ts';
 export const root=fileURLToPath(new URL('../',import.meta.url));
 export const app=defineApp(JSON.parse(await readFile(join(root,'template/brand.json'),'utf8')));
 export const alice={userId:'alice',email:'alice@example.test',displayName:'Alice'};

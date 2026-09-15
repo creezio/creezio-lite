@@ -1,6 +1,6 @@
 "use client";
-import { AppShell, KpiStrip } from '@creezio/shell-ui/ui';
-import { useLoad } from '@/creezio/ui/client';
+import { AppShell, KpiStrip } from '@lite/shell-ui/ui';
+import { useLoad } from '@/runtime/ui/client';
 import brand from '@/brand.json';
 export default function Dashboard(){
   const {data,error}=useLoad<{modules:{id:string;name:string;count:number}[]}>(()=>fetch('/api/v1/dashboard').then(async r=>{if(!r.ok)throw new Error('Chargement impossible');return r.json();}),[]);

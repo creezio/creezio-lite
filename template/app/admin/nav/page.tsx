@@ -1,4 +1,4 @@
 "use client";
-import { AppShell } from '@creezio/shell-ui/ui';
-import { NavAdminClient } from '@creezio/nav/ui';
+import { AppShell } from '@lite/shell-ui/ui';
+import { NavAdminClient } from '@lite/nav/ui';
 export default function Nav(){return <AppShell title="Navigation"><NavAdminClient/></AppShell>;}

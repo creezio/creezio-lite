@@ -44,3 +44,19 @@ export const supportMessages = sqliteTable('support_messages', {
 export const nativeTasks = sqliteTable('tasks', {
   id:text('id').primaryKey(),orgId:text('org_id').notNull().references(()=>organizations.id),title:text('title').notNull(),body:text('body').notNull().default(''),status:text('status').notNull().default('backlog'),position:integer('position').notNull().default(0),executorKind:text('executor_kind').notNull().default('human'),assigneeUserId:text('assignee_user_id').references(()=>users.id),parentTaskId:text('parent_task_id'),createdBy:text('created_by').notNull().references(()=>users.id),priority:integer('priority').notNull().default(0),hermesTaskId:text('hermes_task_id'),hermesStatus:text('hermes_status'),recurringSchedule:text('recurring_schedule'),source:text('source').notNull().default('ui'),result:text('result'),lastSyncedAt:text('last_synced_at'),createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull(),
 },t=>[index('idx_tasks_org_status').on(t.orgId,t.status,t.position),check('tasks_status',sql`${t.status} IN ('backlog','in_progress','blocked','done','cancelled')`),check('tasks_executor',sql`${t.executorKind} = 'human'`)]);
+
+export const searchDocuments = sqliteTable('lite_search_documents', {
+  id:integer('id').primaryKey({autoIncrement:true}),orgId:text('org_id').notNull().references(()=>organizations.id),
+  moduleId:text('module_id').notNull(),recordId:text('record_id').notNull(),data:text('data').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[uniqueIndex('idx_search_document_entity').on(t.orgId,t.moduleId,t.recordId),check('search_document_json',sql`json_valid(${t.data})`)]);
+export const searchSettings = sqliteTable('lite_search_settings', {
+  orgId:text('org_id').notNull().references(()=>organizations.id),moduleId:text('module_id').notNull(),enabled:integer('enabled').notNull().default(1),
+  fieldsJson:text('fields_json').notNull(),version:integer('version').notNull().default(1),
+},t=>[primaryKey({columns:[t.orgId,t.moduleId]}),check('search_fields_json',sql`json_valid(${t.fieldsJson})`)]);
+export const searchProgress = sqliteTable('lite_search_progress', {
+  orgId:text('org_id').notNull().references(()=>organizations.id),source:text('source').notNull(),cursor:text('cursor').notNull().default(''),complete:integer('complete').notNull().default(0),
+},t=>[primaryKey({columns:[t.orgId,t.source]})]);
+export const accessTokens = sqliteTable('lite_access_tokens', {
+  id:text('id').primaryKey(),orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull().references(()=>users.id),
+  name:text('name').notNull(),mode:text('mode').notNull(),tokenHash:text('token_hash').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),revokedAt:text('revoked_at'),
+},t=>[uniqueIndex('idx_access_token_hash').on(t.tokenHash),index('idx_access_token_owner').on(t.orgId,t.userId),check('access_token_mode',sql`${t.mode} IN ('read','write')`)]);

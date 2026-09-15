@@ -1,4 +1,0 @@
-{
-  "scripts": ["h11-purge-tf2-compat.mjs"],
-  "since": "0.23.0"
-}

@@ -1,0 +1,15 @@
+{
+  "name": "@lite/shell-ui",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ui": "./ui/index.ts",
+    "./ui/kit": "./ui/kit.ts",
+    "./ui/settings/*": "./ui/settings/*.tsx",
+    "./ui/primitives/*": "./ui/primitives/*.tsx",
+    "./theme.css": "./ui/theme/theme.css",
+    "./tailwind-preset": "./ui/theme/tailwind-preset.cjs"
+  }
+}

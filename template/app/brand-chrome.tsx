@@ -2,23 +2,25 @@
 
 import { InvitationDialog } from "./workspace-content";
 import { useEffect, useMemo, type ReactNode } from "react";
-import { emitDataChanged } from "@creezio/shell-ui";
-import { registerLiteTools, type ModelContext } from "@/creezio/ui/webmcp";
-import { createClient } from "@/creezio/ui/client";
+import { emitDataChanged } from "@lite/shell-ui";
+import { registerLiteTools, type ModelContext } from "@/runtime/ui/webmcp";
+import { createClient } from "@/runtime/ui/client";
 import { appDefinition } from "./app-definition";
-import { SessionProvider, RequireSession, useSession } from "@creezio/auth/ui";
-import { CreezioUiBoot } from "@creezio/os-ui/boot";
-import { InteractiveDemoRoot } from "@creezio/interactive-demo/ui";
+import { SessionProvider, RequireSession, useSession } from "@lite/auth/ui";
+import { LiteUiBoot } from "@lite/os-ui/boot";
+import { InteractiveDemoRoot } from "@lite/interactive-demo/ui";
 import {
   configureSidebar, configureDefaultNewTabHref, configureSidebarCollapsedKey,
   configureGlobalSearch, defaultOsAdminNavItems, getSidebarHost,
   NavCatalogLoader, WorkspaceRoot, Toaster,
-} from "@creezio/shell-ui/ui";
+} from "@lite/shell-ui/ui";
 import brand from "@/brand.json";
-import { WorkspacePaneRouterContext } from "../creezio/packages/shell-ui/ui/workspace/keep-alive";
+import { WorkspacePaneRouterContext } from "../runtime/modules/shell-ui/ui/workspace/keep-alive";
 import { SitesPaneRouter } from "./sites-pane-router";
+import { moduleRegistry } from "@/runtime/core/registry";
 
-const available = new Set(["/dashboard", "/taches", "/support", "/documents", "/collaborateurs", "/parametres", "/admin/nav", "/admin/activity", ...brand.modules.map(m => `/${m.id}`)]);
+const registeredModules=moduleRegistry(appDefinition);
+const available = new Set(["/dashboard", "/parametres", "/admin/nav", "/admin/activity", "/admin/search", "/admin/connections", "/search", ...registeredModules.map(m => m.href)]);
 configureSidebar({
   getNavItems: () => [],
   getAdminItems: () => defaultOsAdminNavItems({includePlugins:false}).filter(item => available.has(item.href)),
@@ -31,10 +33,20 @@ configureDefaultNewTabHref("/dashboard");
 configureSidebarCollapsedKey(`${brand.id}-sidebar-collapsed`);
 configureGlobalSearch({
   storageKey:`${brand.id}-search`,
-  placeholder:"Rechercher une page…",
-  search: async query => {
-    const q=query.trim().toLocaleLowerCase('fr');
-    return getSidebarHost().getNavItems().filter(n=>n.label.toLocaleLowerCase('fr').includes(q)).map(n=>({index:'pages',id:n.href,title:n.label,href:n.href}));
+  persistHistory:false,
+  placeholder:"Rechercher dans les données…",
+  indexLabels:{...Object.fromEntries(registeredModules.map(m=>[m.id,m.name])),pages:'Navigation',results:'Tous les résultats'},
+  search: async (query,signal) => {
+    for(let batch=0;batch<40;batch++){
+      const response=await fetch(`/api/v1/search?q=${encodeURIComponent(query)}&limit=100`,{signal,cache:'no-store'});
+      const result=await response.json();
+      if(!response.ok)throw new Error(result.error?.message??'Recherche indisponible.');
+      if(!result.indexing)return [
+        ...result.items,...(result.pages??[]),
+        ...(result.total>100?[{index:'results',id:'all',title:`Voir les ${result.total} résultats`,description:'Parcourir tous les résultats',href:`/search?q=${encodeURIComponent(query)}`}]:[]),
+      ].map((hit:any)=>({...hit,subtitle:hit.description}));
+    }
+    throw new Error('L’indexation des données existantes se poursuit. Relancez la recherche dans un instant.');
   },
 });
 
@@ -45,7 +57,7 @@ function DemoInSession() {
 
 /** The factory's original providers and WorkspaceRoot own the chrome. */
 export function BrandChrome({children}:{children:ReactNode}) {
-  return <CreezioUiBoot desktopApiGlobal={`${brand.id}Desktop`} productName={brand.name} publicHostSuffix="chatgpt.site" login={{tagline:brand.description}}>
+  return <LiteUiBoot desktopApiGlobal={`${brand.id}Desktop`} productName={brand.name} publicHostSuffix="chatgpt.site" login={{tagline:brand.description}}>
     <SessionProvider>
       <RequireSession>
         <NavCatalogLoader includePlugins={false} adminFromCatalog/>
@@ -58,13 +70,13 @@ export function BrandChrome({children}:{children:ReactNode}) {
       <InvitationDialog/>
       <Toaster/>
     </SessionProvider>
-  </CreezioUiBoot>;
+  </LiteUiBoot>;
 }
 
 function SessionTools(){
   const {me}=useSession(),api=useMemo(()=>createClient(''),[]);
   useEffect(()=>{if(!me)return;const context=(document as Document&{modelContext?:ModelContext}).modelContext;
-    if(context?.registerTool)return registerLiteTools(context,api,appDefinition.modules.filter(m=>me.permissions.includes(`module.${m.id}.read`)),()=>{for(const m of appDefinition.modules)emitDataChanged({resource:m.id,source:'webmcp'});});
+    if(context?.registerTool)return registerLiteTools(context,api,appDefinition.modules.filter(m=>me.permissions.includes(`module.${m.id}.read`)),()=>{for(const m of appDefinition.modules)emitDataChanged({resource:m.id,source:'webmcp'});},me.brandRole as import("@/runtime/core/types").Role);
   },[api,me]);
   return null;
 }
