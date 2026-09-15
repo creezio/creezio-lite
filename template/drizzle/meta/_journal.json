@@ -57,6 +57,13 @@
       "when": 1789479318242,
       "tag": "0007_mail_native",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789489358132,
+      "tag": "0008_assistant_ui_cursor",
+      "breakpoints": true
     }
   ]
 }

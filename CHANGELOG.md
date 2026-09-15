@@ -1,5 +1,12 @@
 # Versions de Lite
 
+## 0.7.0 — Curseur de l’assistant rétabli
+
+- Relie OpenAI et Hermes aux actions UI natives : repérage, clic visible, saisie et défilement dans l’application.
+- Conserve le curseur animé original et ses événements de clic ; le modèle attend le résultat du navigateur.
+- Migration additive 0008 : relais D1 privé, réservation unique, expiration, arrêt et refus des réponses rejouées.
+- Un résultat UI négatif apparaît en erreur ; les champs de secrets sont exclus et les saisies sont masquées dans les traces.
+
 ## 0.5.0 — Intégrations et assistant restaurés
 
 - Restaure le chat flottant et son panneau natif : historique privé dans D1, flux de réponse, arrêt, actions et traces.
