@@ -129,7 +129,6 @@ function getDesktopApi(): any {
 }
 
 const MODE_STORAGE_KEY = modeStorageKey();
-const HERMES_MODEL_FALLBACK_ID = "openai-api::gpt-5.3-codex";
 const REASONING_LABELS: Record<string, string> = {
   none: "Aucun",
   minimal: "Minimal",
@@ -188,23 +187,6 @@ type ClarificationDraft = Record<
   string,
   { value?: string; values?: string[]; other?: string }
 >;
-
-const FALLBACK_MODELS: ModelOptionUi[] = [
-  { id: "o4-mini", label: "o4-mini · Reasoning", tier: "reasoning" },
-  { id: "o3-mini", label: "o3-mini · Reasoning", tier: "reasoning" },
-  { id: "o3", label: "o3 · Reasoning", tier: "reasoning" },
-  { id: "gpt-4o", label: "gpt-4o · Standard", tier: "standard" },
-  { id: "gpt-4o-mini", label: "gpt-4o-mini · Rapide", tier: "fast" },
-];
-
-const FALLBACK_HERMES_MODELS: ModelOptionUi[] = [
-  {
-    id: HERMES_MODEL_FALLBACK_ID,
-    label: "GPT 5.3 Codex",
-    provider: "openai-api",
-    model: "gpt-5.3-codex",
-  },
-];
 
 type ConversationGroup = { label: string; items: Conversation[] };
 
@@ -413,6 +395,11 @@ export function AssistantWidget() {
   const [hermesModelOptions, setHermesModelOptions] = useState<ModelOptionUi[]>(
     [],
   );
+  const [modelCatalogues, setModelCatalogues] = useState<Record<string, {connections: {id:string;label:string}[];error:string;loading:boolean}>>({});
+  const [customModelOpen, setCustomModelOpen] = useState(false);
+  const [customModelId, setCustomModelId] = useState("");
+  const [customConnection, setCustomConnection] = useState("");
+  const [modelRefresh, setModelRefresh] = useState(0);
   const [chatDefaultModel, setChatDefaultModel] = useState("");
   const [hermesDefaultModel, setHermesDefaultModel] = useState(
     "",
@@ -581,8 +568,11 @@ export function AssistantWidget() {
   const displayMode: AssistantMode = activeConversation?.mode || preferredMode;
   const suggestions =
     displayMode === "work" ? SUGGESTIONS_WORK : SUGGESTIONS_CHAT;
-  const modelOptions =
-    displayMode === "work" ? hermesModelOptions : chatModelOptions;
+  const listedModelOptions = displayMode === "work" ? hermesModelOptions : chatModelOptions;
+  const modelOptions = activeModel && !listedModelOptions.some(m=>m.id===activeModel)
+    ? [...listedModelOptions, {id:activeModel,label:activeModel.slice(activeModel.indexOf("::")+2)}]
+    : listedModelOptions;
+  const modelCatalogue = modelCatalogues[displayMode];
   const defaultModel =
     displayMode === "work" ? hermesDefaultModel : chatDefaultModel;
 
@@ -654,63 +644,40 @@ export function AssistantWidget() {
   );
 
   useEffect(() => {
-    if (!hydrated || !open) return;
-    void (async () => {
-      try {
-        const res = await fetch("/api/v1/assistant/models");
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          models?: string[];
-          default?: string;
-          options?: ModelOptionUi[];
-        };
-        if (data.options?.length) {
-          setChatModelOptions(data.options);
-        } else if (data.models?.length) {
-          setChatModelOptions(data.models.map((id) => ({ id, label: id })));
-        }
-        if (data.default) {
-          setChatDefaultModel(data.default);
-          if (!activeIdRef.current && preferredModeRef.current === "chat") {
-            setActiveModel(data.default);
-          }
-        }
-      } catch {
-        /* keep fallbacks */
-      }
-    })();
-    void refreshConversations();
-  }, [hydrated, open, refreshConversations, configurationRevision, preferredMode]);
+    if (hydrated && open) void refreshConversations();
+  }, [hydrated, open, refreshConversations]);
 
-  // Work : modèles dynamiques Hermes (WebUI), jamais de liste en dur côté serveur.
+  // Each connection supplies its own catalogue; the selected model belongs to the conversation.
   useEffect(() => {
     if (!hydrated || !open) return;
-    if (preferredMode !== "work") return;
-    let cancelled = false;
+    const mode = displayMode;
+    const controller = new AbortController();
+    setModelCatalogues(previous=>({...previous,[mode]:{connections:previous[mode]?.connections || [],error:"",loading:true}}));
+    setCustomModelOpen(false);
     void (async () => {
       try {
-        const res = await fetch("/api/v1/assistant/hermes-models");
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          default?: string;
-          options?: ModelOptionUi[];
-        };
-        if (cancelled) return;
-        if (data.options?.length) {
-          setHermesModelOptions(data.options);
+        const res = await fetch(`/api/v1/assistant/${mode === "work"?"hermes-models":"models"}`,{signal:controller.signal});
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error?.message || "Impossible de charger les modèles.");
+        if (controller.signal.aborted) return;
+        const options = data.options || [], connections = data.connections || [];
+        if (mode === "work") {setHermesModelOptions(options);setHermesDefaultModel(data.default || "");}
+        else {setChatModelOptions(options);setChatDefaultModel(data.default || "");}
+        setModelCatalogues(previous=>({...previous,[mode]:{connections,error:(data.warnings || []).join(" "),loading:false}}));
+        setCustomConnection(connections.find(c=>activeModelRef.current.startsWith(c.id+"::"))?.id || connections[0]?.id || "");
+        if (!activeIdRef.current && !connections.some(c=>activeModelRef.current.startsWith(c.id+"::"))) {
+          activeModelRef.current = data.default || "";
+          setActiveModel(data.default || "");
         }
-        if (data.default) {
-          setHermesDefaultModel(data.default);
-          if (!activeIdRef.current) setActiveModel(data.default);
-        }
-      } catch {
-        /* keep fallbacks */
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        if (mode === "work") {setHermesModelOptions([]);setHermesDefaultModel("");}
+        else {setChatModelOptions([]);setChatDefaultModel("");}
+        setModelCatalogues(previous=>({...previous,[mode]:{connections:[],error:error instanceof Error?error.message:"Impossible de charger les modèles.",loading:false}}));
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [hydrated, open, preferredMode, configurationRevision]);
+    return ()=>controller.abort();
+  }, [hydrated, open, displayMode, configurationRevision, modelRefresh]);
 
   // Work : capacités et valeur reasoning viennent de Hermes `/api/reasoning`.
   useEffect(() => {
@@ -1003,7 +970,9 @@ export function AssistantWidget() {
     setPreferredMode(next);
     const current = conversations.find((c) => c.id === activeConversationId);
     if (current && current.mode && current.mode !== next) {
-      await createNew(next);
+      setActiveConversationId(null);
+      setMessages([]);
+      setActiveModel(next === "work" ? hermesDefaultModel : chatDefaultModel);
       return;
     }
     if (!activeConversationId) {
@@ -1037,7 +1006,9 @@ export function AssistantWidget() {
   }
 
   async function changeModel(next: string) {
+    activeModelRef.current = next;
     setActiveModel(next);
+    setCustomModelOpen(false);
     if (displayMode === "work" && capabilities.hermesReasoning) {
       try {
         await fetch("/api/v1/assistant/hermes-model", {
@@ -1631,12 +1602,8 @@ export function AssistantWidget() {
               {displayMode === "work" ? "Hermes" : "Modèle"}
             </span>
             <Select
-              value={
-                modelOptions.some((m) => m.id === activeModel)
-                  ? activeModel
-                  : defaultModel
-              }
-              onValueChange={(v) => void changeModel(v)}
+              value={activeModel || ""}
+              onValueChange={(v) => {if(v === "__custom_model__") {setCustomModelOpen(true);setCustomModelId("");} else void changeModel(v);}}
               disabled={busy}
             >
               <SelectTrigger
@@ -1648,7 +1615,7 @@ export function AssistantWidget() {
                 )}
                 aria-label={displayMode === "work" ? "Modèle Hermes" : "Modèle"}
               >
-                <SelectValue placeholder="Modèle" />
+                <SelectValue placeholder={modelCatalogue?.loading?"Chargement…":"Choisir un modèle"} />
               </SelectTrigger>
               <SelectContent>
                 {modelOptions.map((m) => (
@@ -1656,9 +1623,21 @@ export function AssistantWidget() {
                     {m.label || m.id}
                   </SelectItem>
                 ))}
+                {modelCatalogue?.connections.length ? <SelectItem value="__custom_model__" className="text-xs">Autre modèle…</SelectItem> : null}
               </SelectContent>
             </Select>
           </div>
+          <div className="flex items-start justify-between gap-2 text-[11px]">
+            {modelCatalogue?.error ? <p role="status" className="text-amber-700">{modelCatalogue.error}</p> : <span />}
+            <button type="button" className="shrink-0 text-slate-500 underline" disabled={busy || modelCatalogue?.loading} onClick={()=>setModelRefresh(v=>v+1)}>Actualiser les modèles</button>
+          </div>
+          {customModelOpen ? <div className="space-y-2 rounded-md border p-2">
+            {modelCatalogue?.connections.length > 1 ? <Select value={customConnection} onValueChange={setCustomConnection}><SelectTrigger aria-label="Connexion du modèle"><SelectValue/></SelectTrigger><SelectContent>{modelCatalogue.connections.map(c=><SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}</SelectContent></Select> : null}
+            <label htmlFor="assistant-custom-model" className="text-xs">Identifiant du modèle</label>
+            <Input id="assistant-custom-model" value={customModelId} onChange={e=>setCustomModelId(e.target.value)} placeholder="Identifiant fourni par votre service" className="h-8 text-xs" maxLength={250}/>
+            <p className="text-[11px] text-slate-500">Utilisez un modèle compatible avec le chat et accessible avec votre clé.</p>
+            <div className="flex justify-end gap-2"><Button size="sm" variant="ghost" onClick={()=>setCustomModelOpen(false)}>Annuler</Button><Button size="sm" disabled={busy || !customConnection || !customModelId.trim()} onClick={()=>void changeModel(`${customConnection}::${customModelId.trim()}`)}>Utiliser</Button></div>
+          </div> : null}
           {displayMode === "work" && reasoningSupported ? (
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1 text-[11px] text-slate-500">

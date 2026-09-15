@@ -13,15 +13,35 @@ const timestamp=()=>new Date().toISOString();
 export async function assistantProfiles(c:ApiContext,org:Workspace){
   const profiles:Profile[]=[];
   for(const row of await integrationRows(c,org))if(row.enabled&&['openai','hermes'].includes(row.provider)){
-    try{await resolveIntegration(c,row);const model=String(JSON.parse(row.meta_json).model);profiles.push({id:`${row.id}::${model}`,label:`${row.label} · ${model}`,model,provider:row.provider,row});}catch{}
+    try{await resolveIntegration(c,row);profiles.push({id:row.id,label:row.provider==='openai'?'OpenAI':'Hermes',model:'',provider:row.provider,row});}catch{}
   }
   return profiles;
 }
-function chooseProfile(profiles:Profile[],mode:unknown,model:unknown){
+function validModel(value:unknown):value is string{return typeof value==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9._:/@+\-]{0,249}$/.test(value);}
+function chooseProfile(profiles:Profile[],mode:unknown,selected:unknown){
   const provider=mode==='work'?'hermes':'openai',available=profiles.filter(p=>p.provider===provider);
-  const profile=available.find(p=>p.id===model)??available.find(p=>typeof model==='string'&&model.startsWith(p.row.id+'::'))??(!model?available[0]:undefined);
-  if(!profile)fail(409,'integration_required',`Configurez une intégration ${provider==='hermes'?'Hermes':'OpenAI'} active et choisissez son modèle dans le chat.`);
-  return profile;
+  if(!available.length)fail(409,'integration_required',`Configurez une intégration ${provider==='hermes'?'Hermes':'OpenAI'} active.`);
+  if(typeof selected!=='string'||!selected.includes('::'))fail(400,'model_required','Choisissez un modèle dans le chat.');
+  const cut=selected.indexOf('::'),connection=available.find(p=>p.row.id===selected.slice(0,cut)),model=selected.slice(cut+2);
+  if(!connection)fail(409,'integration_required','Cette connexion est indisponible. Choisissez une intégration active dans le chat.');
+  if(!validModel(model))fail(400,'invalid_model','Identifiant de modèle invalide.');
+  return {...connection,id:selected,model};
+}
+async function modelCatalogue(c:ApiContext,profiles:Profile[]){
+  const results=await Promise.all(profiles.map(async profile=>{
+    const {row}=profile;
+    try{
+      const response=await providerRequest(row,await resolveIntegration(c,row),'/v1/models');
+      if(!response.ok){await response.body?.cancel();upstreamFailure(response.status,profile.label);}
+      const data=await boundedProviderJson(response);
+      if(!Array.isArray(data.data))fail(502,'provider_response','La liste des modèles du fournisseur est invalide.');
+      // The provider remains the authority. Hide known non-chat families, allow exact manual IDs in the chat.
+      const models=[...new Set<string>(data.data.map((m:any)=>m?.id).filter((id:unknown)=>validModel(id)&&(row.provider!=='openai'||(/^(gpt-|chatgpt-|o[0-9]+(?:-|$)|ft:)/.test(id)&&!/(embedding|whisper|tts|transcrib|moderation|dall-e|image|realtime|audio|sora)/i.test(id)))))].sort();
+      return {options:models.map(model=>({id:`${row.id}::${model}`,label:profiles.length>1?`${model} · ${row.slug}`:model,model,provider:row.provider})),error:models.length?'':`${profile.label} ne fournit aucun modèle de chat. Vous pouvez saisir son identifiant ci-dessous.`};
+    }catch(e){return {options:[],error:safeError(e)};}
+  }));
+  const options=results.flatMap(r=>r.options);
+  return {options,models:options.map(o=>o.id),default:options[0]?.id??'',connections:profiles.map(p=>({id:p.row.id,label:profiles.length>1?`${p.label} · ${p.row.slug}`:p.label})),warnings:results.map(r=>r.error).filter(Boolean)};
 }
 async function conversation(c:ApiContext,org:Workspace,id:string){
   const row=await c.env.DB.prepare('SELECT * FROM lite_assistant_conversations WHERE org_id=? AND user_id=? AND id=?').bind(org.id,user(c),id).first<Conversation>();
@@ -145,7 +165,7 @@ export async function assistantRoute(request:Request,c:ApiContext,org:Workspace,
   if(path==='llm-status'||path==='models'||path==='hermes-models'){
     const profiles=await assistantProfiles(c,org),availableModes=[...(profiles.some(p=>p.provider==='openai')?['chat']:[]),...(profiles.some(p=>p.provider==='hermes')?['work']:[])];
     if(path==='llm-status')return json({assistantReady:profiles.length>0,byokRequired:true,availableModes,capabilities:{transcription:profiles.some(p=>p.provider==='openai'),pluginApprovals:false,hermesReasoning:false},canManageIntegrations:['owner','admin'].includes(org.role)});
-    const options=profiles.filter(p=>p.provider===(path==='models'?'openai':'hermes')).map(({row,...p})=>p);return json({options,models:options.map(o=>o.id),default:options[0]?.id??''});
+    return json(await modelCatalogue(c,profiles.filter(p=>p.provider===(path==='models'?'openai':'hermes'))));
   }
   if(path==='transcribe'&&request.method==='POST'){
     const profile=(await assistantProfiles(c,org)).find(p=>p.provider==='openai');if(!profile)fail(409,'integration_required','La dictée nécessite une intégration OpenAI active.');

@@ -140,7 +140,6 @@ export function IntegrationsClient() {
   const [formSecret, setFormSecret] = useState("");
   const [formHeaderName, setFormHeaderName] = useState("");
   const [formBaseUrl, setFormBaseUrl] = useState("");
-  const [formModel, setFormModel] = useState("");
   const [saving, setSaving] = useState(false);
 
   const providerById = useMemo(
@@ -175,7 +174,6 @@ export function IntegrationsClient() {
     setFormSecret("");
     setFormHeaderName("");
     setFormBaseUrl("");
-    setFormModel("");
     setDialogOpen(true);
   }
 
@@ -189,7 +187,6 @@ export function IntegrationsClient() {
       typeof item.meta.headerName === "string" ? item.meta.headerName : "",
     );
     setFormBaseUrl(String(item.meta.baseUrl || ""));
-    setFormModel(String(item.meta.model || ""));
     setDialogOpen(true);
   }
 
@@ -198,7 +195,6 @@ export function IntegrationsClient() {
     const meta = {
       ...(formProvider === "custom" ? {headerName: formHeaderName.trim() || "Authorization"} : {}),
       ...(formProvider === "hermes" ? {baseUrl: formBaseUrl.trim()} : {}),
-      ...(["hermes","openai"].includes(formProvider) ? {model:formModel.trim() || (formProvider === "hermes" ? "hermes-agent" : "gpt-4.1-mini")} : {}),
     };
     const r = editing
       ? await jsonFetch<{ integration: Integration }>(
@@ -206,7 +202,7 @@ export function IntegrationsClient() {
           {
             method: "PATCH",
             body: JSON.stringify({
-              label: formLabel,
+              ...(formProvider === "custom" ? {label:formLabel,slug:formSlug} : {}),
               version: editing.version,
               ...(formSecret.trim() ? { secret: formSecret } : {}),
               meta,
@@ -217,9 +213,8 @@ export function IntegrationsClient() {
           method: "POST",
           body: JSON.stringify({
             provider: formProvider,
-            label: formLabel,
+            ...(formProvider === "custom" ? {label:formLabel,slug:formSlug} : {}),
             secret: formSecret,
-            ...(formSlug.trim() ? { slug: formSlug.trim() } : {}),
             ...(Object.keys(meta).length ? { meta } : {}),
           }),
         });
@@ -345,7 +340,7 @@ export function IntegrationsClient() {
                       size="icon"
                       disabled={busy}
                       onClick={() => openEdit(item)}
-                      title="Renommer / remplacer la clé"
+                      title={item.provider === "custom"?"Configurer l’intégration":"Modifier la clé"}
                     >
                       <Pencil className="h-4 w-4" />
                     </Button>
@@ -389,7 +384,7 @@ export function IntegrationsClient() {
             {!editing ? (
               <div className="space-y-1.5">
                 <Label>Service</Label>
-                <Select value={formProvider} onValueChange={value=>{setFormProvider(value);setFormModel("");}}>
+                <Select value={formProvider} onValueChange={setFormProvider}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -403,31 +398,10 @@ export function IntegrationsClient() {
                 </Select>
               </div>
             ) : null}
-            <div className="space-y-1.5">
-              <Label>Libellé</Label>
-              <Input
-                value={formLabel}
-                onChange={(e) => setFormLabel(e.target.value)}
-                placeholder="ex. OpenAI production"
-              />
-            </div>
-            {!editing ? (
-              <div className="space-y-1.5">
-                <Label>
-                  Référence{" "}
-                  <span className="font-normal text-muted-foreground">
-                    (integration://…)
-                  </span>
-                </Label>
-                <Input
-                  value={formSlug}
-                  onChange={(e) => setFormSlug(e.target.value)}
-                  placeholder={
-                    formProvider === "custom" ? "mon-service" : formProvider
-                  }
-                />
-              </div>
-            ) : null}
+            {formProvider === "custom" ? <>
+              <div className="space-y-1.5"><Label htmlFor="integration-label">Libellé</Label><Input id="integration-label" value={formLabel} onChange={e=>setFormLabel(e.target.value)} placeholder="Mon service"/></div>
+              <div className="space-y-1.5"><Label htmlFor="integration-reference">Référence (integration://…)</Label><Input id="integration-reference" value={formSlug} onChange={e=>setFormSlug(e.target.value)} placeholder="mon-service"/></div>
+            </> : null}
             <div className="space-y-1.5">
               <Label>Clé / secret</Label>
               <Input
@@ -444,7 +418,6 @@ export function IntegrationsClient() {
               />
             </div>
             {formProvider === "hermes" ? <div className="space-y-1.5"><Label htmlFor="integration-url">URL du serveur Hermes</Label><Input id="integration-url" type="url" value={formBaseUrl} onChange={e=>setFormBaseUrl(e.target.value)} placeholder="https://hermes.votre-domaine.fr"/><p className="text-xs text-muted-foreground">Adresse HTTPS publique de votre passerelle Hermes.</p></div> : null}
-            {["hermes","openai"].includes(formProvider) ? <div className="space-y-1.5"><Label htmlFor="integration-model">Modèle</Label><Input id="integration-model" value={formModel} onChange={e=>setFormModel(e.target.value)} placeholder={formProvider === "hermes" ? "hermes-agent" : "gpt-4.1-mini"}/></div> : null}
             {formProvider === "custom" ? (
               <div className="space-y-1.5">
                 <Label>Header HTTP</Label>
@@ -468,7 +441,7 @@ export function IntegrationsClient() {
               type="button"
               disabled={
                 saving ||
-                !formLabel.trim() ||
+                (formProvider === "custom" && (!formLabel.trim() || !formSlug.trim())) ||
                 (!editing && !formSecret.trim()) || (formProvider === "hermes" && !formBaseUrl.trim())
               }
               onClick={() => void save()}
