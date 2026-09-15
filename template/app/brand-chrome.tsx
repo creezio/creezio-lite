@@ -1,4 +1,5 @@
 "use client";
+import {usePathname} from "next/navigation";
 
 import { SessionUsageAnalyticsProvider } from "@/runtime/modules/observability/ui/session-usage-analytics-provider";
 import { InvitationDialog } from "./workspace-content";
@@ -58,6 +59,8 @@ function DemoInSession() {
 
 /** The factory's original providers and WorkspaceRoot own the chrome. */
 export function BrandChrome({children}:{children:ReactNode}) {
+  const pathname=usePathname();
+  if(pathname==='/oauth/consent')return <>{children}</>;
   return <LiteUiBoot desktopApiGlobal={`${brand.id}Desktop`} productName={brand.name} publicHostSuffix="chatgpt.site" login={{tagline:brand.description}}>
     <SessionProvider>
       <RequireSession>

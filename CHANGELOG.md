@@ -1,5 +1,12 @@
 # Versions de Lite
 
+## 0.8.0 — OAuth MCP
+
+- Raccorde OAuth 2.1 au MCP existant : découverte publique, inscription des clients, PKCE S256, consentement via le compte Sites, renouvellement et révocation.
+- Chaque connexion reste liée à un utilisateur, un espace et aux droits actuels ; les codes sont à usage unique et les jetons sont hachés dans D1.
+- L’administration MCP affiche les connexions OAuth avec leur révocation ; les clés personnelles, le chat, Mail et le curseur natif sont conservés.
+- Migration additive 0009 et nouvelles routes OAuth, sans nouveau secret d’environnement ni fournisseur d’identité.
+
 ## 0.7.0 — Curseur de l’assistant rétabli
 
 - Relie OpenAI et Hermes aux actions UI natives : repérage, clic visible, saisie et défilement dans l’application.

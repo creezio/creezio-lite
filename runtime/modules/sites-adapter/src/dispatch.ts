@@ -5,6 +5,7 @@ import { integrationsRoute } from '@lite/core/integrations';
 import { assistantRoute } from '@lite/core/assistant';
 import { workspace } from '@lite/core/api';
 import { resolveToken, authorizeTokenRequest } from '@lite/core/access-tokens';
+import { resolveOAuthToken, mcpAuthHeaders, mcpOptions } from '@lite/core/mcp-oauth';
 import { handleMcp } from '@lite/core/mcp';
 import { dataTools } from '@lite/core/tools';
 import { toolBindings, mcpAdminRoute } from '@lite/core/mcp-admin';
@@ -21,13 +22,15 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
   const source=new URL(request.url).pathname==='/api/mcp'?'mcp':'api';
   let detail:Record<string,unknown>={};
   const finish=async(response:Response)=>{
+    if(source==='mcp')mcpAuthHeaders(request,response);
     if(logContext&&logOrg){const task=persistRequestLog(request,response,logContext,logOrg,source,started,detail).catch(()=>console.error('Request log persistence failed'));
       if(context.defer)context.defer(task);else await task;}
     return response;
   };
   try{
+    if(source==='mcp'&&request.method==='OPTIONS')return mcpOptions();
     const inbound=await mailInboundRoute(request,context);if(inbound)return inbound;
-    const credential=await resolveToken(request,context);
+    const credential=await resolveOAuthToken(request,context)??await resolveToken(request,context);
     const trusted=credential?{...context,identity:credential.identity}:context;
     if(source==='api'&&trusted.identity){detail.query=Object.fromEntries(new URL(request.url).searchParams);if(!/^\/api\/v1\/(assistant|email)(?:\/|$)/.test(new URL(request.url).pathname)&&request.headers.get('content-type')?.startsWith('application/json'))detail.body=await readJson(request.clone()).catch(()=>undefined);}
     const orgFor=async(req:Request)=>workspace(context.env.DB,trusted.identity!,credential?.access.workspaceId??new URL(req.url).searchParams.get('workspace')??workspaceCookie(req));
@@ -79,6 +82,8 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
     if(source==='mcp'){
       if(!trusted.identity)fail(401,'authentication_required','Authentification requise.');
       if(!credential)checkOrigin(request);
+      const requestedWorkspace=new URL(request.url).searchParams.get('workspace');
+      if(credential&&requestedWorkspace&&requestedWorkspace!==credential.access.workspaceId)fail(403,'token_workspace','Cette connexion appartient à un autre espace.');
       const org=await orgFor(request);logOrg=org;logContext=trusted;
       const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app),scoped={...trusted,workspace:org,operations};
       if(request.method==='POST'){const b=await readJson(request.clone()).catch(()=>({})) as any;detail={jsonrpcMethod:b.method,tool:b.params?.name,args:b.params?.arguments};}
