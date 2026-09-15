@@ -46,5 +46,5 @@ next-env.d.ts
 /work/
 
 !.env.example
-/.lite-backups/
+/.*-backups/
 *.tsbuildinfo
