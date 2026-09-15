@@ -21,7 +21,7 @@ import { SitesPaneRouter } from "./sites-pane-router";
 import { moduleRegistry } from "@/runtime/core/registry";
 
 const registeredModules=moduleRegistry(appDefinition);
-const available = new Set(["/dashboard", "/parametres", "/admin/nav", "/admin/activity", "/admin/analytics", "/admin/api", "/admin/mcp", "/admin/access", "/admin/search", "/admin/connections", "/search", ...registeredModules.map(m => m.href)]);
+const available = new Set(["/dashboard", "/parametres", "/admin/nav", "/admin/activity", "/admin/analytics", "/admin/integrations", "/admin/api", "/admin/mcp", "/admin/access", "/admin/search", "/admin/connections", "/search", ...registeredModules.map(m => m.href)]);
 configureSidebar({
   getNavItems: () => [],
   getAdminItems: () => defaultOsAdminNavItems({includePlugins:false}).filter(item => available.has(item.href)),
@@ -65,7 +65,7 @@ export function BrandChrome({children}:{children:ReactNode}) {
         <SessionTools/>
         <SessionUsageAnalyticsProvider><></></SessionUsageAnalyticsProvider>
         <WorkspacePaneRouterContext.Provider value={SitesPaneRouter}>
-          <WorkspaceRoot hideAssistantOn={()=>true}>{children}</WorkspaceRoot>
+          <WorkspaceRoot>{children}</WorkspaceRoot>
         </WorkspacePaneRouterContext.Provider>
       </RequireSession>
       <DemoInSession/>

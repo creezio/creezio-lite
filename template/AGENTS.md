@@ -10,3 +10,5 @@
 8. Conserver pnpm et le lockfile. Les imports `@lite/*` sont des sources locales, sans registre privé à installer.
 9. Tester les parcours métier, la recherche, les accès refusés, le typecheck et le build avant publication. Vérifier le statut final de déploiement.
 10. Le dépôt du kit est indiqué par `lite.lock.json.sourceRepository`. Suivre son guide de mise à jour ; ne pas copier une app dans le dépôt du kit.
+
+11. Avant publication d’une nouvelle application, configurer `LITE_INTEGRATION_SECRET` comme secret d’environnement Sites généré cryptographiquement (32 octets minimum), uniquement s’il est absent. Ne jamais l’afficher, l’enregistrer dans Git ou le remplacer pendant une mise à jour. L’administrateur saisit ensuite les clés OpenAI/Hermes dans Intégrations. Le chat natif doit rester visible même avant cette configuration.

@@ -85,3 +85,18 @@ export const usageEvents = sqliteTable('lite_usage_events', {
   id:integer('id').primaryKey({autoIncrement:true}),orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull(),username:text('username').notNull(),userKind:text('user_kind').notNull(),userRole:text('user_role').notNull(),
   eventType:text('event_type').notNull(),category:text('category').notNull(),label:text('label').notNull(),path:text('path'),sessionId:text('session_id'),durationMs:integer('duration_ms').notNull().default(0),createdAt:text('created_at').notNull(),
 },t=>[index('idx_usage_org_created').on(t.orgId,t.createdAt,t.id),index('idx_usage_org_user_created').on(t.orgId,t.userId,t.createdAt)]);
+
+export const integrations = sqliteTable('lite_integrations', {
+  id:text('id').primaryKey(),orgId:text('org_id').notNull().references(()=>organizations.id),slug:text('slug').notNull(),provider:text('provider').notNull(),label:text('label').notNull(),
+  secretBox:text('secret_box').notNull(),metaJson:text('meta_json').notNull(),enabled:integer('enabled').notNull().default(1),version:integer('version').notNull().default(1),createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[uniqueIndex('idx_integrations_org_slug').on(t.orgId,t.slug),check('integration_json',sql`json_valid(${t.metaJson})`),check('integration_enabled',sql`${t.enabled} IN (0,1)`)]);
+export const assistantConversations = sqliteTable('lite_assistant_conversations', {
+  id:text('id').primaryKey(),orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull().references(()=>users.id),title:text('title').notNull(),mode:text('mode').notNull(),model:text('model').notNull(),
+  version:integer('version').notNull().default(1),activeRun:text('active_run'),lockedUntil:text('locked_until'),createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[index('idx_assistant_conversations_user').on(t.orgId,t.userId,t.updatedAt),check('assistant_mode',sql`${t.mode} IN ('chat','work')`)]);
+export const assistantMessages = sqliteTable('lite_assistant_messages', {
+  sequence:integer('sequence').primaryKey({autoIncrement:true}),id:text('id').notNull(),conversationId:text('conversation_id').notNull().references(()=>assistantConversations.id,{onDelete:'cascade'}),orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull().references(()=>users.id),role:text('role').notNull(),content:text('content').notNull(),createdAt:text('created_at').notNull(),
+},t=>[index('idx_assistant_messages_thread').on(t.conversationId,t.sequence),check('assistant_message_role',sql`${t.role} IN ('user','assistant')`)]);
+export const assistantRuns = sqliteTable('lite_assistant_runs', {
+  id:text('id').primaryKey(),conversationId:text('conversation_id').notNull().references(()=>assistantConversations.id,{onDelete:'cascade'}),orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull().references(()=>users.id),traceJson:text('trace_json').notNull(),createdAt:text('created_at').notNull(),
+},t=>[index('idx_assistant_runs_thread').on(t.conversationId,t.createdAt),check('assistant_trace_json',sql`json_valid(${t.traceJson})`)]);

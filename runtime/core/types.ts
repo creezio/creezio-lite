@@ -15,6 +15,6 @@ export type Module = {
 export type AppDefinition = { id: string; name: string; description: string; modules: Module[] };
 export type RecordData = { id: string; module_id: string; data: Record<string, unknown>; version: number; created_at: string; updated_at: string };
 export type Workspace = { id: string; name: string; role: Role; operationPolicies?: import('./operations.ts').OperationPolicy[] };
-export type LiteEnvironment = { DB: D1Database; BUCKET?: R2Bucket };
+export type LiteEnvironment = { DB: D1Database; BUCKET?: R2Bucket; LITE_INTEGRATION_SECRET?: string };
 export type ApiContext = { app: AppDefinition; env: LiteEnvironment; identity: Identity | null; workspace?:Workspace; operations?:import('./operations.ts').Operation[]; defer?:(promise:Promise<unknown>)=>void };
 export type BeforeWrite = (input: { module: Module; data: Record<string, unknown>; previous: Record<string, unknown> | null; workspace: Workspace; identity: Identity }) => Promise<void> | void;

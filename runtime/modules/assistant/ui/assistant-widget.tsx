@@ -88,6 +88,7 @@ type Conversation = {
   id: string;
   title: string;
   model: string;
+  version: number;
   mode?: AssistantMode;
   created_at: string;
   updated_at: string;
@@ -97,14 +98,14 @@ type Conversation = {
 const SUGGESTIONS_CHAT = [
   "Que puis-je faire avec l'assistant ?",
   "Où suis-je dans l'application ?",
-  "Liste les tables disponibles",
+  "Liste les tâches en cours",
   "Résume les données clés du CRM",
 ];
 
 const SUGGESTIONS_WORK = [
   "Crée une tâche de suivi pour demain matin",
   "Explore le schéma et prépare un rapport",
-  "Lance une mission longue via Hermes Work",
+  "Aide-moi à organiser mon travail",
 ];
 
 
@@ -408,26 +409,31 @@ export function AssistantWidget() {
   const [loadingThread, setLoadingThread] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [chatModelOptions, setChatModelOptions] =
-    useState<ModelOptionUi[]>(FALLBACK_MODELS);
+    useState<ModelOptionUi[]>([]);
   const [hermesModelOptions, setHermesModelOptions] = useState<ModelOptionUi[]>(
-    FALLBACK_HERMES_MODELS,
+    [],
   );
-  const [chatDefaultModel, setChatDefaultModel] = useState("o4-mini");
+  const [chatDefaultModel, setChatDefaultModel] = useState("");
   const [hermesDefaultModel, setHermesDefaultModel] = useState(
-    HERMES_MODEL_FALLBACK_ID,
+    "",
   );
   const [reasoningOptions, setReasoningOptions] = useState<string[]>([]);
   const [activeReasoning, setActiveReasoning] = useState("medium");
   const [reasoningSupported, setReasoningSupported] = useState(false);
-  const [activeModel, setActiveModel] = useState("o4-mini");
+  const [activeModel, setActiveModel] = useState("");
   const [preferredMode, setPreferredMode] = useState<AssistantMode>("chat");
   const [traceRefreshKey, setTraceRefreshKey] = useState(0);
   const [voiceHint, setVoiceHint] = useState<string | null>(null);
+  const [availableModes,setAvailableModes]=useState<string[]>([]);
+  const [capabilities,setCapabilities]=useState({transcription:false,pluginApprovals:false,hermesReasoning:false});
+  const [canManageIntegrations,setCanManageIntegrations]=useState(false);
+  const [configurationRevision,setConfigurationRevision]=useState(0);
+  const [statusError,setStatusError]=useState("");
   const [llmGate, setLlmGate] = useState<{
     ready: boolean;
     byokRequired: boolean;
     loading: boolean;
-  }>({ ready: true, byokRequired: false, loading: true });
+  }>({ ready: false, byokRequired: true, loading: true });
   const [pluginApprovals, setPluginApprovals] = useState<PluginApprovalUi[]>([]);
   const [approvingProjectId, setApprovingProjectId] = useState<string | null>(null);
   const [pluginClarifications, setPluginClarifications] = useState<
@@ -452,7 +458,7 @@ export function AssistantWidget() {
   const sendRef = useRef<(text: string) => Promise<void>>(async () => {});
   // Desktop BYOK et serveur headless : sans LLM prêt, bloquer l'envoi
   // (évite un optimistic update suivi d'un 503/401 puis wipe du fil).
-  const chatBlocked = !llmGate.loading && !llmGate.ready;
+  const chatBlocked = llmGate.loading || !llmGate.ready || !availableModes.includes(preferredMode);
 
   useEffect(() => {
     try {
@@ -463,42 +469,25 @@ export function AssistantWidget() {
     }
   }, []);
 
-  // BYOK : statut réel du process serveur (pas seulement la clé stockée en UI).
+  // Sites: refresh the configured integrations when the panel or settings change.
   useEffect(() => {
-    let cancelled = false;
-    const refresh = async () => {
+    let cancelled=false;
+    const refresh=async()=>{
       try {
-        const res = await fetch("/api/v1/assistant/llm-status");
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          assistantReady?: boolean;
-          byokRequired?: boolean;
-        };
-        if (cancelled) return;
-        setLlmGate({
-          ready: Boolean(data.assistantReady),
-          byokRequired: Boolean(data.byokRequired),
-          loading: false,
-        });
-      } catch {
-        if (!cancelled) setLlmGate((g) => ({ ...g, loading: false }));
-      }
+        const res=await fetch("/api/v1/assistant/llm-status",{cache:"no-store"});
+        const data=await res.json();
+        if(!res.ok)throw new Error(data.error?.message || "Assistant indisponible.");
+        if(cancelled)return;
+        const modes=data.availableModes || [];
+        setAvailableModes(modes);setCapabilities(data.capabilities);setCanManageIntegrations(Boolean(data.canManageIntegrations));setStatusError("");
+        setLlmGate({ready:Boolean(data.assistantReady),byokRequired:true,loading:false});
+        if(!activeIdRef.current && modes.length && !modes.includes(preferredModeRef.current))setPreferredMode(modes[0]);
+      }catch(e){if(!cancelled){setStatusError(e.message);setLlmGate({ready:false,byokRequired:true,loading:false});}}
     };
-    void refresh();
-    const api = getDesktopApi();
-    const unsub = api?.onLlmStatusChanged?.((s: { assistantReady?: boolean; reason?: string; restarting?: boolean }) => {
-      setLlmGate({
-        ready: Boolean(s.assistantReady),
-        byokRequired: true,
-        loading: Boolean(s.restarting),
-      });
-      if (!s.restarting) void refresh();
-    });
-    return () => {
-      cancelled = true;
-      unsub?.();
-    };
-  }, []);
+    const changed=()=>{setConfigurationRevision(v=>v+1);void refresh();};
+    void refresh();window.addEventListener("focus",changed);window.addEventListener("lite-integrations-changed",changed);
+    return ()=>{cancelled=true;window.removeEventListener("focus",changed);window.removeEventListener("lite-integrations-changed",changed);};
+  },[open]);
 
   useEffect(() => {
     preferredModeRef.current = preferredMode;
@@ -691,7 +680,7 @@ export function AssistantWidget() {
       }
     })();
     void refreshConversations();
-  }, [hydrated, open, refreshConversations]);
+  }, [hydrated, open, refreshConversations, configurationRevision, preferredMode]);
 
   // Work : modèles dynamiques Hermes (WebUI), jamais de liste en dur côté serveur.
   useEffect(() => {
@@ -721,11 +710,11 @@ export function AssistantWidget() {
     return () => {
       cancelled = true;
     };
-  }, [hydrated, open, preferredMode]);
+  }, [hydrated, open, preferredMode, configurationRevision]);
 
   // Work : capacités et valeur reasoning viennent de Hermes `/api/reasoning`.
   useEffect(() => {
-    if (!hydrated || !open || displayMode !== "work") return;
+    if (!capabilities.hermesReasoning || !hydrated || !open || displayMode !== "work") return;
     let cancelled = false;
     const [provider, model] = activeModel.includes("::")
       ? activeModel.split("::", 2)
@@ -773,7 +762,7 @@ export function AssistantWidget() {
   // Work : interactions plugins en attente (validation PRD, cadrage, QA)
   // remontées par l'état DB — cartes dans le fil du chat.
   useEffect(() => {
-    if (!hydrated || !open || displayMode !== "work" || !activeConversationId) {
+    if (!capabilities.pluginApprovals || !hydrated || !open || displayMode !== "work" || !activeConversationId) {
       setPluginApprovals([]);
       setPluginClarifications([]);
       setPluginQa([]);
@@ -997,7 +986,7 @@ export function AssistantWidget() {
         mode,
       }),
     });
-    if (!res.ok) return;
+    if (!res.ok) {const data=await res.json();setVoiceHint(data.error?.message || "Création impossible.");return;}
     const data = (await res.json()) as { conversation?: Conversation };
     if (!data.conversation) return;
     setPreferredMode(data.conversation.mode || mode);
@@ -1035,7 +1024,7 @@ export function AssistantWidget() {
       const res = await fetch(`/api/v1/assistant/conversations/${id}`, {
         method: "DELETE",
       });
-      if (!res.ok) return;
+      if (!res.ok) {const data=await res.json();setVoiceHint(data.error?.message || "Suppression impossible.");return;}
       if (activeConversationId === id) {
         setActiveConversationId(null);
         setMessages([]);
@@ -1049,7 +1038,7 @@ export function AssistantWidget() {
 
   async function changeModel(next: string) {
     setActiveModel(next);
-    if (displayMode === "work") {
+    if (displayMode === "work" && capabilities.hermesReasoning) {
       try {
         await fetch("/api/v1/assistant/hermes-model", {
           method: "POST",
@@ -1065,11 +1054,11 @@ export function AssistantWidget() {
     const res = await fetch(`/api/v1/assistant/conversations/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: next }),
+      body: JSON.stringify({ model: next, version:conversations.find(c=>c.id===id)?.version }),
     });
     if (res.ok) {
       void refreshConversations();
-    }
+    } else {const data=await res.json();setVoiceHint(data.error?.message || "Modification impossible.");void loadConversation(id);}
   }
 
   async function changeReasoning(next: string) {
@@ -1219,7 +1208,7 @@ export function AssistantWidget() {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: history,
+          messages: [{role:"user",content:text}],
           stream: true,
           conversationId: activeIdRef.current,
           model: activeModelRef.current,
@@ -1236,10 +1225,10 @@ export function AssistantWidget() {
           throw new Error(
             err.error === "Non authentifié"
               ? "Session expirée ou absente — reconnectez-vous"
-              : err.error || "Non authentifié",
+              : (typeof err.error === "string" ? err.error : err.error?.message) || "Non authentifié",
           );
         }
-        throw new Error(err.error || `Erreur HTTP ${res.status}`);
+        throw new Error((typeof err.error === "string" ? err.error : err.error?.message) || `Erreur HTTP ${res.status}`);
       }
 
       const applyConversationId = (id: string) => {
@@ -1620,8 +1609,8 @@ export function AssistantWidget() {
                 <button
                   key={opt.id}
                   type="button"
-                  disabled={busy}
-                  title={opt.hint}
+                  disabled={busy || !availableModes.includes(opt.id)}
+                  title={availableModes.includes(opt.id)?opt.hint:`Configurez ${opt.id === "work"?"Hermes":"OpenAI"} dans Intégrations`}
                   onClick={() => void selectMode(opt.id)}
                   className={cn(
                     "flex-1 rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors",
@@ -1717,8 +1706,8 @@ export function AssistantWidget() {
                 <div className="space-y-3">
                   <p className="text-xs text-slate-600">
                     {displayMode === "work"
-                      ? "Hermes en direct : il exécute vos missions (API, SQL, automations, délégation des clics). Suivi sur /taches."
-                      : "Posez vos questions ou confiez une mission : Hermes la prend en charge (kanban /taches + « Voir comme IA »)."}
+                      ? "Échangez avec votre serveur Hermes et suivez ses réponses dans ce fil."
+                      : "Posez vos questions ou demandez une action sur les données de votre espace."}
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {suggestions.map((s) => (
@@ -2073,26 +2062,8 @@ export function AssistantWidget() {
           <div className="shrink-0 border-t border-slate-100 p-2.5">
             {chatBlocked ? (
               <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-950">
-                <p className="font-medium">Assistant bloqué — clé LLM manquante</p>
-                <p className="mt-0.5 text-amber-900/90">
-                  {llmGate.byokRequired ? (
-                    <>
-                      Configurez votre clé dans{" "}
-                      <Link href="/configuration" className="underline underline-offset-2">
-                        Configuration → Clés IA
-                      </Link>
-                      . Sans clé locale (BYOK), aucun appel LLM n&apos;est possible.
-                    </>
-                  ) : (
-                    <>
-                      Aucune clé LLM côté serveur (
-                      <code className="text-[10px]">OPENAI_API_KEY</code> /{" "}
-                      <code className="text-[10px]">ANTHROPIC_API_KEY</code>
-                      ). Le message ne peut pas être envoyé tant que l&apos;assistant
-                      n&apos;est pas prêt.
-                    </>
-                  )}
-                </p>
+                <p className="font-medium">{statusError || (llmGate.loading ? "Chargement de l’assistant…" : "Connectez votre assistant")}</p>
+                <p className="mt-0.5 text-amber-900/90">{canManageIntegrations ? <>Ajoutez une clé OpenAI ou votre serveur Hermes dans <Link href="/admin/integrations" className="underline underline-offset-2">Intégrations</Link>.</> : "Demandez à un administrateur d’activer une intégration OpenAI ou Hermes."}</p>
               </div>
             ) : null}
             {voiceHint ? (
@@ -2122,15 +2093,15 @@ export function AssistantWidget() {
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={
                   chatBlocked
-                    ? "Clé OpenAI requise…"
+                    ? "Connectez OpenAI ou Hermes…"
                     : voice.recording
                       ? "Parlez… recliquez le micro pour envoyer"
-                      : "Ex. combien de produits chez Agidra…"
+                      : "Écrivez votre message…"
                 }
                 disabled={chatBlocked || busy || voice.recording || voice.transcribing}
                 className="h-9 flex-1 text-xs"
               />
-              {voice.supported ? (
+              {voice.supported && capabilities.transcription ? (
                 <Button
                   type="button"
                   size="icon"
@@ -2186,7 +2157,7 @@ export function AssistantWidget() {
                     voice.transcribing
                   }
                 >
-                  <Send className="h-4 w-4" />
+                  <Send className="h-4 w-4" /><span className="sr-only">Envoyer</span>
                 </Button>
               )}
             </form>

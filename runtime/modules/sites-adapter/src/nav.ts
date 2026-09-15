@@ -16,11 +16,12 @@ export function nativeEntries(app: AppDefinition): NavCatalogEntry[] {
     extra('os.documents','/documents','Documents','FileText',24),
     extra('os.support','/support','Support','Circle',65),OS_ADMIN_NAV_ENTRY,
     extra('os.audit','/admin/activity','Journal d’activité','Activity',74,'admin'),
-    extra('os.analytics','/admin/analytics','Usage et activité','ChartNoAxesCombined',74.5,'admin'),
+    extra('os.analytics','/admin/analytics','Analytics','Activity',74.5,'admin'),
     extra('os.search','/admin/search','Recherche','Search',75,'admin'),
     extra('os.api','/admin/api','API','Braces',76,'admin'),
     extra('os.mcp','/admin/mcp','MCP','Plug',77,'admin'),
     extra('os.access','/admin/access','Groupes et accès','Shield',78,'admin'),
+    extra('os.integrations','/admin/integrations','Intégrations','KeyRound',78.5,'admin'),
     extra('os.connections','/admin/connections','Clés et connexions','KeyRound',79,'admin'),
     ...moduleRegistry(app).filter(m=>m.kind==='business').map((m,i):NavCatalogEntry=>({id:`module.${m.id}`,href:m.href,label:m.name,icon:'FileText',group:'brand',order:40+i,source:'module',available:true,defaultVisible:true,permission:`module.${m.id}.read`}))];
 }

@@ -17,7 +17,7 @@ export function defineApp(input: unknown): AppDefinition {
   if (!Array.isArray(app.modules) || app.modules.length < 1 || app.modules.length > 32) throw new Error('Déclarer entre 1 et 32 modules.');
   const ids = new Set<string>();
   for (const mod of app.modules) {
-    if (!idPattern.test(mod.id) || ids.has(mod.id) || ['overview','files','team','audit','members','search','registry','mcp','settings','dashboard','taches','support','documents','collaborateurs','parametres','admin','api','login','setup','onboarding','signin-with-chatgpt','signout-with-chatgpt','callback','nav','interactive-demo','tasks'].includes(mod.id)) throw new Error('Identifiant de module invalide, réservé ou dupliqué.');
+    if (!idPattern.test(mod.id) || ids.has(mod.id) || ['assistant','integrations','observability','overview','files','team','audit','members','search','registry','mcp','settings','dashboard','taches','support','documents','collaborateurs','parametres','admin','api','login','setup','onboarding','signin-with-chatgpt','signout-with-chatgpt','callback','nav','interactive-demo','tasks'].includes(mod.id)) throw new Error('Identifiant de module invalide, réservé ou dupliqué.');
     ids.add(mod.id);
     if (![mod.name, mod.singular, mod.description].every(v => typeof v === 'string') || !mod.name.trim() || !mod.singular.trim()) throw new Error('Libellés de module manquants.');
     if (!Array.isArray(mod.fields) || mod.fields.length < 1 || mod.fields.length > 30) throw new Error('Déclarer entre 1 et 30 champs par module.');
