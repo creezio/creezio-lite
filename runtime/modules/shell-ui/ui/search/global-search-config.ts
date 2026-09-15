@@ -10,7 +10,9 @@ export type GlobalSearchConfig = {
   placeholder?: string;
   indexLabels?: Record<string, string>;
   storageKey?: string;
-  /** Fetch hits for query - brand app decides Meili/fallback strategy. */
+  /** Disable browser persistence when results contain workspace data. */
+  persistHistory?: boolean;
+  /** Fetch authorized hits from the application search service. */
   search: (query: string, signal?: AbortSignal) => Promise<GlobalSearchHit[]>;
   /** Prefer catalogue soft-ctx when navigating to this href. */
   preferCatalogueHref?: (href: string) => boolean;

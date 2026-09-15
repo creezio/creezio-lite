@@ -16,7 +16,7 @@ La palette retrouve également les noms des modules accessibles. Au-delà de 100
 
 ## Administration
 
-`/admin/search` permet d’activer chaque module et de sélectionner ses champs. Un champ désactivé ne contribue plus aux correspondances ni aux extraits, immédiatement. Les changements sont versionnés pour refuser un écrasement concurrent. Les réglages sont propres à l’espace.
+`/admin/search` permet d’activer chaque module et de sélectionner ses champs. Un champ désactivé ne contribue plus aux correspondances ni aux extraits, immédiatement. Les changements sont versionnés pour refuser un écrasement concurrent. Les réglages sont propres à l’espace. Les recherches et résultats métier ne sont pas conservés dans l’historique du navigateur. Une erreur du service est affichée explicitement, distinctement d’une recherche sans correspondance.
 
 Le filtrage par espace, rôle et champ intervient dans la requête avant le comptage, la pagination et la production d’extraits. Une fiche reste soumise aux mêmes autorisations lorsqu’elle est ouverte depuis un résultat.
 

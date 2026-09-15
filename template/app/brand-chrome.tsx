@@ -33,6 +33,7 @@ configureDefaultNewTabHref("/dashboard");
 configureSidebarCollapsedKey(`${brand.id}-sidebar-collapsed`);
 configureGlobalSearch({
   storageKey:`${brand.id}-search`,
+  persistHistory:false,
   placeholder:"Rechercher dans les données…",
   indexLabels:{...Object.fromEntries(registeredModules.map(m=>[m.id,m.name])),pages:'Navigation',results:'Tous les résultats'},
   search: async (query,signal) => {

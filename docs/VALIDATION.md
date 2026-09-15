@@ -1,6 +1,6 @@
 # Validation de Lite 0.3
 
-Vérification locale du 15 septembre 2026 : 20 tests réussis, contrôle du kit réussi, typecheck et compilation du template réussis. Deux applications distinctes, Atelier et Réserve, ont été générées dans des dossiers vides puis installées avec le verrou de dépendances, typées et compilées.
+Vérification locale du 15 septembre 2026 : 21 tests réussis, contrôle du kit réussi, typecheck et compilation du template réussis. Deux applications distinctes, Atelier et Réserve, ont été générées dans des dossiers vides puis installées avec le verrou de dépendances, typées et compilées.
 
 Les tests exécutent les migrations et le SQL sur le moteur D1 local de Cloudflare (Miniflare/workerd), ainsi que le dispatcher réel de l’API et du MCP.
 
@@ -12,6 +12,7 @@ Parcours couverts :
 - Désactivation d’un module ou d’un champ, cohérence avec la recherche d’une liste, conflits de réglages, espaces séparés et droits de lecture.
 - Mise à jour et archivage d’une fiche reflétés dans l’index ; nouveau module inscrit dans la navigation, l’API, la recherche et le catalogue MCP.
 - Clés en lecture seule, écritures MCP, refus des origines étrangères, révocation, retrait d’un membre et absence de clés stockées en clair.
+- Aucun résultat ni historique de recherche métier conservé dans le navigateur entre sessions.
 - Onglets conservant chacun leur page, titre et saisie avec les véritables contextes de navigation du framework.
 - R2, invitations, validation des données, protection des rôles et erreurs de transaction.
 

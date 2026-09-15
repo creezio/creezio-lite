@@ -25,7 +25,7 @@ function storageKey(): string {
 }
 
 function read(): SearchHistory {
-  if (typeof window === "undefined") return { queries: [], recent: [] };
+  if (typeof window === "undefined" || getGlobalSearchConfig().persistHistory === false) return { queries: [], recent: [] };
   try {
     const raw = localStorage.getItem(storageKey());
     if (!raw) return { queries: [], recent: [] };
@@ -40,7 +40,7 @@ function read(): SearchHistory {
 }
 
 function write(history: SearchHistory) {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || getGlobalSearchConfig().persistHistory === false) return;
   try {
     localStorage.setItem(storageKey(), JSON.stringify(history));
   } catch {

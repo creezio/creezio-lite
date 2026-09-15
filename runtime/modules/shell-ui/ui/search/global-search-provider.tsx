@@ -214,6 +214,7 @@ function GlobalSearchModal({
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<GlobalSearchHit[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [filterIndex, setFilterIndex] = useState<string | null>(null);
   const [history, setHistory] = useState<SearchHistory>({ queries: [], recent: [] });
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -238,6 +239,7 @@ function GlobalSearchModal({
   useEffect(() => {
     if (open) {
       setHistory(loadSearchHistory());
+      setError("");
       setQ("");
       setHits([]);
       setFilterIndex(null);
@@ -248,12 +250,16 @@ function GlobalSearchModal({
   useEffect(() => {
     if (!open) return;
     const trimmed = q.trim();
+    setError("");
     if (trimmed.length < 2) {
       setHits([]);
       setLoading(false);
       return;
     }
     const controller = new AbortController();
+    setHits([]);
+    setSelectedKey(null);
+    setLoading(true);
     const t = window.setTimeout(async () => {
       setLoading(true);
       try {
@@ -262,15 +268,17 @@ function GlobalSearchModal({
           query: trimmed,
         });
         const next = await config.search(trimmed, controller.signal);
+        if (controller.signal.aborted) return;
         setHits(next);
         setFilterIndex(null);
         setSelectedKey(next[0] ? hitKey(next[0]) : null);
       } catch (e) {
-        if ((e as { name?: string })?.name === "AbortError") return;
+        if (controller.signal.aborted || (e as { name?: string })?.name === "AbortError") return;
+        setError(e instanceof Error ? e.message : "Recherche indisponible. Réessayez.");
         setHits([]);
         setSelectedKey(null);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }, 200);
     return () => {
@@ -423,7 +431,8 @@ function GlobalSearchModal({
                   </>
                 ) : null}
 
-                {!loading && !showHistory && !filteredHits.length ? (
+                {error && !showHistory ? <div role="alert" className="px-4 py-8 text-sm text-destructive">{error}</div> : null}
+                {!loading && !error && !showHistory && !filteredHits.length ? (
                   <CommandEmpty>Aucun résultat pour "{q.trim()}"</CommandEmpty>
                 ) : null}
 
