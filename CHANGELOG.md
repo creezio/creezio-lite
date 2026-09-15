@@ -1,5 +1,14 @@
 # Versions de Lite
 
+## 0.4.0
+
+- Restauration des composants Creezio de journal des requêtes, statistiques d’usage, catalogue API et administration MCP, raccordés à D1.
+- Catalogue unique des opérations réellement montées : routes natives et métier, alias, OpenAPI, outils MCP et matrice des accès.
+- Groupes personnalisés, membres et restrictions par API, avec concurrence optimiste, isolation des espaces et propriétaire protégé.
+- Activation/désactivation persistante des outils ; création d’outils nommés depuis une API ; exécution HTTP MCP et WebMCP soumise aux mêmes contrôles.
+- Journal des requêtes conservé par espace (1 000 entrées) et collecte d’usage avec identité contrôlée côté serveur.
+- Migration 0005 additive ; conservation des modules, de la recherche et du comportement des onglets.
+
 ## 0.3.1
 
 - Réduction des échanges D1 d’une recherche sur un index prêt : 17 vers 3, sans écriture. Les réglages restent lus à chaque requête.

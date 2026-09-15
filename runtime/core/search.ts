@@ -3,6 +3,7 @@ import type { AppDefinition, Identity, Workspace } from './types.ts';
 import { moduleRegistry, recordHref, visibleModules, type RegisteredModule } from './registry.ts';
 import { boundedInteger, fail, requireRole } from './validation.ts';
 import { json, readJson } from './http.ts';
+import { canReadModule } from './operations.ts';
 
 const sources = ['records','tasks','files','support','members','audit'];
 type Override = {module_id:string;enabled:number;fields_json:string;version:number};
@@ -64,7 +65,7 @@ export function searchTerms(query:string):string[] {
 export async function searchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:{limit?:number;offset?:number;moduleId?:string}={}) {
   const terms=searchTerms(query);
   const context=await searchContext(db,app,org.id);
-  const policies=context.policies.filter(m=>m.readRoles.includes(org.role)&&m.search.enabled&&m.search.fields.length&&(!options.moduleId||options.moduleId===m.id));
+  const policies=context.policies.filter(m=>m.readRoles.includes(org.role)&&canReadModule(org,m.id)&&m.search.enabled&&m.search.fields.length&&(!options.moduleId||options.moduleId===m.id));
   const indexing=context.indexing;
   if(!terms.length||!policies.length)return {cte:'WITH ranked AS (SELECT id,0 AS score FROM lite_search_documents WHERE 0)',bindings:[],policies,indexing};
   // Policy filtering happens inside the query, before counts, excerpts and pagination.
@@ -101,7 +102,7 @@ export async function searchData(db:D1Database,app:AppDefinition,org:Workspace,q
 
 export async function searchRoute(request:Request,db:D1Database,app:AppDefinition,org:Workspace,user:Identity):Promise<Response|null> {
   const url=new URL(request.url),path=url.pathname.replace(/^\/api\/v1\//,'').replace(/\/$/,'');
-  if(path==='registry'&&request.method==='GET')return json({modules:visibleModules(app,org.role),workspace:org});
+  if(path==='registry'&&request.method==='GET')return json({modules:visibleModules(app,org.role).filter(m=>canReadModule(org,m.id)),workspace:org});
   if(path==='search'&&request.method==='GET'){
     const limit=boundedInteger(url.searchParams.get('limit'),30,100);if(!limit)fail(400,'invalid_pagination','Limite positive attendue.');
     return json(await searchData(db,app,org,url.searchParams.get('q')??'',{limit,offset:boundedInteger(url.searchParams.get('offset'),0,100000),moduleId:url.searchParams.get('module')??undefined}));

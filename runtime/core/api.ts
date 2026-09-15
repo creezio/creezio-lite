@@ -5,6 +5,7 @@ import { checkOrigin, hash, inviteToken, json, readBytes, readJson } from './htt
 import { searchRoute, searchSelection } from './search.ts';
 import { businessModule } from './registry.ts';
 import { accessTokenRoute } from './access-tokens.ts';
+import { coreOperations, matchOperation, assertOperationAllowed, canReadModule } from './operations.ts';
 
 type Row = { id: string; module_id: string; data: string; version: number; created_at: string; updated_at: string };
 const unpack = (row: Row) => ({ ...row, data: JSON.parse(row.data) as Record<string, unknown> });
@@ -20,11 +21,12 @@ function audit(db: D1Database, org: string, user: string, action: string, resour
     .bind(uuid(), org, user, action, resource, JSON.stringify(details), timestamp());
 }
 export async function workspace(db: D1Database, user: Identity, id: string | null): Promise<Workspace> {
+  const selection=`SELECT o.id,o.name,m.role,COALESCE((SELECT json_group_array(json_object('operationId',p.operation_id,'effect',p.effect)) FROM lite_api_policies p WHERE p.org_id=o.id AND (p.group_id='role:'||m.role OR p.group_id IN (SELECT g.id FROM lite_access_groups g WHERE g.org_id=o.id AND EXISTS(SELECT 1 FROM json_each(g.members_json) j WHERE j.value=m.user_id)))),'[]') AS policies_json FROM lite_orgs o JOIN lite_members m ON m.org_id=o.id WHERE m.user_id=?`;
   const row = id
-    ? await db.prepare('SELECT o.id, o.name, m.role FROM lite_orgs o JOIN lite_members m ON m.org_id=o.id WHERE m.user_id=? AND o.id=?').bind(user.userId,id).first<Workspace>()
-    : await db.prepare('SELECT o.id, o.name, m.role FROM lite_orgs o JOIN lite_members m ON m.org_id=o.id WHERE m.user_id=? ORDER BY o.created_at, o.id LIMIT 1').bind(user.userId).first<Workspace>();
+    ? await db.prepare(selection+' AND o.id=?').bind(user.userId,id).first<Workspace&{policies_json:string}>()
+    : await db.prepare(selection+' ORDER BY o.created_at,o.id LIMIT 1').bind(user.userId).first<Workspace&{policies_json:string}>();
   if (!row) fail(id ? 404 : 409, id ? 'workspace_not_found' : 'setup_required', id ? 'Espace introuvable.' : 'Initialisez votre espace.');
-  return row;
+  return {id:row.id,name:row.name,role:row.role,operationPolicies:JSON.parse(row.policies_json)};
 }
 async function getRecord(db: D1Database, org: string, mod: string, id: string) {
   const row = await db.prepare('SELECT id,module_id,data,version,created_at,updated_at FROM lite_records WHERE id=? AND org_id=? AND module_id=? AND deleted_at IS NULL').bind(id,org,mod).first<Row>();
@@ -43,7 +45,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     if (path === 'health' && request.method === 'GET') {
       if (!context.env.DB) fail(503,'database_unavailable','Base de données indisponible.');
       await context.env.DB.prepare('SELECT id FROM lite_orgs LIMIT 1').first();
-      return json({ok:true,kit:'lite',version:'0.3.1',database:'ready'});
+      return json({ok:true,kit:'lite',version:'0.4.0',database:'ready'});
     }
     const user = context.identity;
     if (!user?.userId || !user.email) fail(401,'authentication_required','Connectez-vous pour continuer.');
@@ -90,7 +92,9 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       ]); return json({workspaceId:id},201);
     }
 
-    const org = await workspace(db,user,url.searchParams.get('workspace'));
+    const org = context.workspace??await workspace(db,user,url.searchParams.get('workspace'));
+    const declared=matchOperation(context.operations??coreOperations(context.app),request.method,url.pathname);
+    if(declared)assertOperationAllowed(declared,org);
     const searchResponse=await searchRoute(request,db,context.app,org,user);if(searchResponse){searchResponse.headers.set('Server-Timing',`app;dur=${(performance.now()-started).toFixed(1)}`);return searchResponse;}
     const tokenResponse=await accessTokenRoute(request,context,org);if(tokenResponse)return tokenResponse;
     if (path === 'workspaces/current' && request.method === 'PATCH') {
@@ -98,9 +102,9 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       await db.batch([db.prepare('UPDATE lite_orgs SET name=? WHERE id=?').bind(name,org.id),audit(db,org.id,user.userId,'workspace.rename',org.id)]);
       return json({...org,name});
     }
-    if (path === 'modules' && request.method === 'GET') return json({modules:context.app.modules.filter(m=>(m.readRoles??roles).includes(org.role)),workspace:org});
+    if (path === 'modules' && request.method === 'GET') return json({modules:context.app.modules.filter(m=>(m.readRoles??roles).includes(org.role)&&canReadModule(org,m.id)),workspace:org});
     if (path === 'dashboard' && request.method === 'GET') {
-      const visible=context.app.modules.filter(m=>(m.readRoles??roles).includes(org.role));
+      const visible=context.app.modules.filter(m=>(m.readRoles??roles).includes(org.role)&&canReadModule(org,m.id));
       const counts=await Promise.all(visible.map(async m=>({id:m.id,name:m.name,count:(await db.prepare('SELECT COUNT(*) AS n FROM lite_records WHERE org_id=? AND module_id=? AND deleted_at IS NULL').bind(org.id,m.id).first<{n:number}>())?.n??0})));
       return json({modules:counts,workspace:org});
     }

@@ -8,6 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "./primitives/card";
 import { Input } from "./primitives/input";
 
 type Endpoint = {
+  mcp?: boolean;
+  mcpReason?: string;
+  toolName?: string;
   method: string;
   path: string;
   documented: boolean;
@@ -47,7 +50,7 @@ export function ApiEndpointsClient() {
     try {
       const response = await fetch("/api/v1/admin/endpoints");
       const body = (await response.json()) as RegistryResponse;
-      if (!response.ok) throw new Error(body.error || "Chargement impossible");
+      if (!response.ok) throw new Error((typeof body.error === 'string' ? body.error : (body.error as any)?.message) || "Chargement impossible");
       setRegistry(body);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Chargement impossible");
@@ -88,10 +91,10 @@ export function ApiEndpointsClient() {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-3">
-        <Stat label="Routes runtime" value={registry?.endpoints.length || 0} />
+        <Stat label="Routes disponibles" value={registry?.endpoints.length || 0} />
         <Stat label="Documentées OpenAPI" value={documentedCount} />
         <Stat
-          label="Routes Hono seules"
+          label="Sans documentation"
           value={(registry?.endpoints.length || 0) - documentedCount}
         />
       </div>
@@ -101,10 +104,10 @@ export function ApiEndpointsClient() {
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
               <Braces className="h-4 w-4" />
-              Endpoints montés
+              Catalogue des API
             </CardTitle>
             <p className="mt-1 text-xs text-slate-500">
-              Registre Hono enrichi par{" "}
+              Documentation complète :{" "}
               <a
                 href={registry?.openapiUrl || "/api/v1/openapi.json"}
                 target="_blank"
@@ -191,7 +194,7 @@ export function ApiEndpointsClient() {
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-3 py-2 text-xs">
+                    <td className="px-3 py-2 text-xs"><p className="mb-1 text-slate-500">{endpoint.mcp ? `MCP : ${endpoint.toolName}` : endpoint.mcpReason || "HTTP"}</p>
                       {endpoint.documented ? (
                         <span className="text-emerald-700">OpenAPI</span>
                       ) : (

@@ -1,9 +1,10 @@
 "use client";
 
+import { SessionUsageAnalyticsProvider } from "@/runtime/modules/observability/ui/session-usage-analytics-provider";
 import { InvitationDialog } from "./workspace-content";
 import { useEffect, useMemo, type ReactNode } from "react";
 import { emitDataChanged } from "@lite/shell-ui";
-import { registerLiteTools, type ModelContext } from "@/runtime/ui/webmcp";
+import { registerServerTools, type ModelContext } from "@/runtime/ui/webmcp";
 import { createClient } from "@/runtime/ui/client";
 import { appDefinition } from "./app-definition";
 import { SessionProvider, RequireSession, useSession } from "@lite/auth/ui";
@@ -20,7 +21,7 @@ import { SitesPaneRouter } from "./sites-pane-router";
 import { moduleRegistry } from "@/runtime/core/registry";
 
 const registeredModules=moduleRegistry(appDefinition);
-const available = new Set(["/dashboard", "/parametres", "/admin/nav", "/admin/activity", "/admin/search", "/admin/connections", "/search", ...registeredModules.map(m => m.href)]);
+const available = new Set(["/dashboard", "/parametres", "/admin/nav", "/admin/activity", "/admin/analytics", "/admin/api", "/admin/mcp", "/admin/access", "/admin/search", "/admin/connections", "/search", ...registeredModules.map(m => m.href)]);
 configureSidebar({
   getNavItems: () => [],
   getAdminItems: () => defaultOsAdminNavItems({includePlugins:false}).filter(item => available.has(item.href)),
@@ -62,6 +63,7 @@ export function BrandChrome({children}:{children:ReactNode}) {
       <RequireSession>
         <NavCatalogLoader includePlugins={false} adminFromCatalog/>
         <SessionTools/>
+        <SessionUsageAnalyticsProvider><></></SessionUsageAnalyticsProvider>
         <WorkspacePaneRouterContext.Provider value={SitesPaneRouter}>
           <WorkspaceRoot hideAssistantOn={()=>true}>{children}</WorkspaceRoot>
         </WorkspacePaneRouterContext.Provider>
@@ -76,7 +78,7 @@ export function BrandChrome({children}:{children:ReactNode}) {
 function SessionTools(){
   const {me}=useSession(),api=useMemo(()=>createClient(''),[]);
   useEffect(()=>{if(!me)return;const context=(document as Document&{modelContext?:ModelContext}).modelContext;
-    if(context?.registerTool)return registerLiteTools(context,api,appDefinition.modules.filter(m=>me.permissions.includes(`module.${m.id}.read`)),()=>{for(const m of appDefinition.modules)emitDataChanged({resource:m.id,source:'webmcp'});},me.brandRole as import("@/runtime/core/types").Role);
+    if(context?.registerTool)return registerServerTools(context,api,()=>{for(const m of appDefinition.modules)emitDataChanged({resource:m.id,source:'webmcp'});});
   },[api,me]);
   return null;
 }

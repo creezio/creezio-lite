@@ -1,6 +1,7 @@
 import type { TaskCard, TaskAssignee } from '../../tasks/ui/tasks-types.ts';
 import { KANBAN_COLUMNS } from '../../tasks/ui/tasks-types.ts';
 import type { ApiMount } from '../../api-kernel/src/types.ts';
+import { objectSchema, idSchema } from '@lite/core/operations';
 import { fail } from '@lite/core/validation';
 import { audit, now, uid, textValue, write, type NativeContext } from './context';
 
@@ -14,8 +15,8 @@ export function tasksMount(c:NativeContext):ApiMount {
   const statuses=[...KANBAN_COLUMNS.map(c=>c.key),'cancelled'];
   return {dbLayer:'brand',operations:[
     {id:'list',method:'GET',path:'/',description:'Lire le kanban'}, {id:'meta',method:'GET',path:'/meta',description:'Lister les personnes assignables'},
-    {id:'create',method:'POST',path:'/',description:'Créer une tâche humaine'}, {id:'get',method:'GET',path:'/:id',description:'Lire une tâche'},
-    {id:'update',method:'PATCH',path:'/:id',description:'Modifier une tâche'}, {id:'delete',method:'DELETE',path:'/:id',description:'Supprimer une tâche'},
+    {id:'create',method:'POST',path:'/',description:'Créer une tâche humaine',inputSchema:objectSchema({title:{type:'string',minLength:1,maxLength:300},body:{type:'string',maxLength:20000},executor_kind:{enum:['human']},assignee_user_id:{type:'string',maxLength:160}},['title'])}, {id:'get',method:'GET',path:'/:id',description:'Lire une tâche'},
+    {id:'update',method:'PATCH',path:'/:id',description:'Modifier une tâche',inputSchema:objectSchema({title:{type:'string',maxLength:300},body:{type:'string',maxLength:20000},status:{enum:statuses},position:{type:'number',minimum:-1e9,maximum:1e9},priority:{type:'integer',minimum:0,maximum:5},assignee_user_id:{anyOf:[idSchema,{type:'null'}]}})}, {id:'delete',method:'DELETE',path:'/:id',description:'Supprimer une tâche'},
   ],handle:async({req,subPath})=>{
     const parts=subPath.split('/').filter(Boolean),id=parts[0],method=req.method;
     if(method!=='GET')write(c);

@@ -60,3 +60,28 @@ export const accessTokens = sqliteTable('lite_access_tokens', {
   id:text('id').primaryKey(),orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull().references(()=>users.id),
   name:text('name').notNull(),mode:text('mode').notNull(),tokenHash:text('token_hash').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),revokedAt:text('revoked_at'),
 },t=>[uniqueIndex('idx_access_token_hash').on(t.tokenHash),index('idx_access_token_owner').on(t.orgId,t.userId),check('access_token_mode',sql`${t.mode} IN ('read','write')`)]);
+
+export const accessGroups = sqliteTable('lite_access_groups', {
+  orgId:text('org_id').notNull().references(()=>organizations.id),id:text('id').notNull(),name:text('name').notNull(),
+  membersJson:text('members_json').notNull().default('[]'),version:integer('version').notNull().default(1),createdAt:text('created_at').notNull(),
+},t=>[primaryKey({columns:[t.orgId,t.id]}),check('access_group_members_json',sql`json_valid(${t.membersJson})`)]);
+export const apiPolicies = sqliteTable('lite_api_policies', {
+  orgId:text('org_id').notNull().references(()=>organizations.id),groupId:text('group_id').notNull(),operationId:text('operation_id').notNull(),effect:text('effect').notNull(),
+},t=>[primaryKey({columns:[t.orgId,t.groupId,t.operationId]}),check('api_policy_effect',sql`${t.effect} IN ('allow','deny')`)]);
+export const policyVersions = sqliteTable('lite_policy_versions', {
+  orgId:text('org_id').notNull().references(()=>organizations.id),groupId:text('group_id').notNull(),version:integer('version').notNull(),writeToken:text('write_token').notNull(),
+},t=>[primaryKey({columns:[t.orgId,t.groupId]})]);
+export const mcpPolicies = sqliteTable('lite_mcp_policies', {
+  orgId:text('org_id').notNull().references(()=>organizations.id),name:text('name').notNull(),enabled:integer('enabled').notNull(),version:integer('version').notNull(),
+},t=>[primaryKey({columns:[t.orgId,t.name]}),check('mcp_policy_enabled',sql`${t.enabled} IN (0,1)`)]);
+export const mcpTools = sqliteTable('lite_mcp_tools', {
+  orgId:text('org_id').notNull().references(()=>organizations.id),name:text('name').notNull(),operationId:text('operation_id').notNull(),description:text('description').notNull(),createdAt:text('created_at').notNull(),
+},t=>[primaryKey({columns:[t.orgId,t.name]})]);
+export const requestLogs = sqliteTable('lite_request_logs', {
+  id:text('id').primaryKey(),orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull(),source:text('source').notNull(),
+  method:text('method').notNull(),path:text('path').notNull(),status:integer('status').notNull(),durationMs:integer('duration_ms').notNull(),detailJson:text('detail_json').notNull(),createdAt:text('created_at').notNull(),
+},t=>[index('idx_request_logs_org_created').on(t.orgId,t.createdAt,t.id),check('request_log_json',sql`json_valid(${t.detailJson})`)]);
+export const usageEvents = sqliteTable('lite_usage_events', {
+  id:integer('id').primaryKey({autoIncrement:true}),orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull(),username:text('username').notNull(),userKind:text('user_kind').notNull(),userRole:text('user_role').notNull(),
+  eventType:text('event_type').notNull(),category:text('category').notNull(),label:text('label').notNull(),path:text('path'),sessionId:text('session_id'),durationMs:integer('duration_ms').notNull().default(0),createdAt:text('created_at').notNull(),
+},t=>[index('idx_usage_org_created').on(t.orgId,t.createdAt,t.id),index('idx_usage_org_user_created').on(t.orgId,t.userId,t.createdAt)]);

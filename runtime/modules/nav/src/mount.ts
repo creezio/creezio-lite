@@ -93,6 +93,7 @@ const OPERATIONS: ModuleOperation[] = [
   },
   {
     id: "upsert-override",
+    inputSchema: {type:'object',properties:{entryId:{type:'string',maxLength:160},hidden:{type:'boolean'},order:{type:'number'},label:{type:'string',maxLength:160},icon:{type:'string',maxLength:160},group:{type:'string'},permission:{type:'string',maxLength:160}},required:['entryId'],additionalProperties:false},
     method: "PUT",
     path: "/overrides",
     description: "Upsert partiel d'un override sidebar",
@@ -101,6 +102,7 @@ const OPERATIONS: ModuleOperation[] = [
   },
   {
     id: "reorder",
+    inputSchema: {type:'object',properties:{ids:{type:'array',items:{type:'string',maxLength:160},maxItems:100}},required:['ids'],additionalProperties:false},
     method: "PUT",
     path: "/overrides/reorder",
     description: "Réordonne les entrées (ids dans l'ordre voulu)",

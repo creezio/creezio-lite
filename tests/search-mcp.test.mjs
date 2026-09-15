@@ -20,8 +20,9 @@ test('D1 full text: existing Reda, automatic module registration, field policy, 
     const migrate=async names=>{for(const file of names)for(const sql of (await readFile(join(root,'template/drizzle',file),'utf8')).split('--> statement-breakpoint').map(s=>s.trim()).filter(Boolean))await db.prepare(sql).run();};
     await migrate(files.slice(0,2));
     const a=client(db,alice),b=client(db,bob),org=await boot(a);await boot(b);
-    const created=await a('modules/clients/records',{method:'POST',body:{data:{...clientData,name:'Réda',company:'Bureau',notes:'zebraprivate'}}});assert.equal(created.status,201);
-    const id=created.body.record.id;
+    // Seed a real pre-upgrade row before the search/admin migrations exist.
+    const id='legacy-record-001';
+    await db.prepare('INSERT INTO lite_records(id,org_id,module_id,data,search_text,version,created_by,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?,?)').bind(id,org,'clients',JSON.stringify({...clientData,name:'Réda',company:'Bureau',notes:'zebraprivate'}),'réda bureau zebraprivate',alice.userId,new Date().toISOString(),new Date().toISOString()).run();
     const beforeIndex=Array.from({length:51},(_,n)=>db.prepare('INSERT INTO lite_records(id,org_id,module_id,data,search_text,version,created_by,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?,?)').bind(`old-${String(n).padStart(3,'0')}`,org,'clients',JSON.stringify({...clientData,name:`Lot historique ${n}`}),`lot historique ${n}`,alice.userId,new Date().toISOString(),new Date().toISOString()));
     await db.batch(beforeIndex);
     await migrate(files.slice(2));
