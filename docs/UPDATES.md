@@ -50,3 +50,7 @@ Fusion explicite après un doctor sans conflit. Préserver le brief, les règles
 ## Correction 0.8.1
 
 Appliquer la mise à jour du runtime puis fusionner explicitement les métadonnées `referrer: 'same-origin'` de `app/oauth/consent/page.tsx`. L’upgrade du runtime seul ne modifie pas les pages applicatives. Reconstruire et publier sur le même Site. Les migrations, les identifiants clients OAuth et les secrets d’intégration restent inchangés.
+
+## Passage à 0.9.0
+
+Appliquer la mise à jour du runtime et la migration additive `0010_browser_relay.sql`. Fusionner explicitement `worker.ts` et le changement `main` dans `vite.config.ts` : les routes assistant sont servies directement par le Worker. Préserver les autres adaptations locales. Recharger les fenêtres après publication. Voir [l’audit et le fonctionnement du relais](BROWSER-RELAY.md).

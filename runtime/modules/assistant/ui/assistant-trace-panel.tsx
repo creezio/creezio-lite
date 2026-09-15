@@ -60,6 +60,7 @@ type TraceRun = {
 };
 
 type TracePayload = {
+  uiEvents?: {runId?:string;event:string;createdAt:string;detail:unknown}[];
   runs: TraceRun[];
   llmRounds: TraceLlmRound[];
   toolCalls: TraceToolCall[];
@@ -145,6 +146,7 @@ export function AssistantTracePanel({
       }
       const data = (await res.json()) as TracePayload;
       setTrace({
+        uiEvents:data.uiEvents||[],
         runs: data.runs || [],
         llmRounds: data.llmRounds || [],
         toolCalls: data.toolCalls || [],
@@ -262,6 +264,8 @@ export function AssistantTracePanel({
 
                 {rounds.length > 0 ? (
                   <div className="mt-1 space-y-0.5">
+                    <p className="font-medium text-slate-500">Pilotage navigateur</p>
+                    <pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify((trace.uiEvents||[]).filter(e=>e.runId===run.id),null,2)}</pre>
                     <p className="font-medium text-slate-500">LLM rounds</p>
                     {rounds.map((r) => (
                       <div key={r.id} className="text-slate-600">

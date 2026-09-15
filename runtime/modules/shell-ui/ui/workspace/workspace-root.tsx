@@ -9,6 +9,7 @@ import {
   AssistantWidget,
   UiDriver,
 } from "@lite/assistant/ui";
+import { BrowserSessionProvider, BrowserWindowGate } from "@lite/assistant/ui";
 import { DesktopBridge } from "../desktop/desktop-bridge";
 import { AuthWindowChrome } from "../desktop/auth-window-chrome";
 import { AiWorkspaceAgentHost } from "./ai-workspace-agent-host";
@@ -137,11 +138,11 @@ export function WorkspaceRoot({
   // marque local (createContext jumeau) ne suffit PAS — crash prod
   // « useAssistantUi must be used within AssistantProvider ».
   return (
-    <AssistantProvider>
+    <BrowserSessionProvider><AssistantProvider>
       <TabWorkspaceProvider>
-        {wrappedShell}
+        <BrowserWindowGate>{wrappedShell}</BrowserWindowGate>
         {defaultAfterShell}
       </TabWorkspaceProvider>
-    </AssistantProvider>
+    </AssistantProvider></BrowserSessionProvider>
   );
 }

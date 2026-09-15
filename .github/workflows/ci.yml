@@ -26,6 +26,8 @@ jobs:
       - run: pnpm --dir template run build
       - name: Verify the rendered OAuth consent and complete HTTP flow
         run: node scripts/verify-oauth-consent.mjs
+      - name: Verify phone-to-desktop relay without consuming SSE and native WebSockets
+        run: node scripts/verify-browser-relay.mjs
       - name: Generate two independent applications
         run: node scripts/validate-examples.mjs
       - name: Validate mail connectors without sending email

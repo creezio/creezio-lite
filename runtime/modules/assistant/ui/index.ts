@@ -32,3 +32,5 @@ export {
   useTabWorkspaceOptional as useAssistantTabWorkspaceOptional,
   type AssistantTabWorkspace,
 } from "./tab-workspace-shim";
+
+export {BrowserSessionProvider,BrowserWindowGate} from "./browser-session";
