@@ -7,7 +7,7 @@ const {dispatchUiAction}=await import('../runtime/core/assistant-ui.ts');
 
 function caller(db,identity,org){return (path,{method='POST',body,signal,origin='https://test.example'}={})=>{
   const url=new URL('/api/v1/'+path,'https://test.example');url.searchParams.set('workspace',org);
-  return dispatchRequest(new Request(url,{method,headers:{origin,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal}),{app,env:{DB:db,LITE_INTEGRATION_SECRET:'fixture-vault'},identity});
+  return dispatchRequest(new Request(url,{method,headers:{origin,'x-lite-window':'fixture-desktop-window','content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal}),{app,env:{DB:db,LITE_INTEGRATION_SECRET:'fixture-vault'},identity});
 };}
 const response=message=>Response.json({choices:[{message,finish_reason:message.tool_calls?'tool_calls':'stop'}]});
 const callTool=(name,args)=>response({tool_calls:[{id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]});
@@ -24,6 +24,7 @@ for(const provider of ['openai','hermes'])test(`${provider}: chat waits for brow
     const org=await boot(client(db,alice)),other=await boot(client(db,bob)),a=caller(db,alice,org),b=caller(db,bob,org),wrongSpace=caller(db,alice,other);
     db.raw.prepare('INSERT INTO lite_members(org_id,user_id,role) VALUES(?,?,?)').run(org,bob.userId,'admin');
     db.raw.prepare('INSERT INTO lite_members(org_id,user_id,role) VALUES(?,?,?)').run(other,alice.userId,'admin');
+    await a('assistant/browser/connect',{body:{windowId:'fixture-desktop-window',kind:'desktop'}});
     const integration=await (await a('platform/integrations',{body:{provider,secret:'fixture-key',...(provider==='hermes'?{meta:{baseUrl:'https://hermes.example'}}:{})}})).json();
     let rounds=0;
     globalThis.fetch=async(url,init)=>{
@@ -51,7 +52,7 @@ for(const provider of ['openai','hermes'])test(`${provider}: chat waits for brow
     });
     assert.equal(actions,2);assert.equal(rounds,3);assert.ok(events.some(e=>e.event==='done'));
     assert.deepEqual(events.filter(e=>e.event==='tool_result').map(e=>e.data.summary),['Éléments repérés','Clic effectué']);
-    assert.equal(db.raw.prepare('SELECT count(*) n FROM lite_assistant_ui_actions').get().n,0);
+    assert.equal(db.raw.prepare('SELECT count(*) n FROM lite_assistant_ui_actions').get().n,2);
     const tools=await (await a('mcp/tools',{method:'GET'})).json();assert.equal(tools.tools.some(t=>t.name.startsWith('ui_')||t.name.includes('assistant_ui')),false);
   }finally{globalThis.fetch=oldFetch;db.close();}
 });
@@ -60,6 +61,7 @@ test('browser failure is reported as failure; an ordinary API chat has no browse
   const db=await localDb(),oldFetch=globalThis.fetch;
   try{
     const org=await boot(client(db,alice)),a=caller(db,alice,org);
+    await a('assistant/browser/connect',{body:{windowId:'fixture-desktop-window',kind:'desktop'}});
     const integration=await (await a('platform/integrations',{body:{provider:'openai',secret:'fixture'}})).json();let rounds=0;
     globalThis.fetch=async(url,init)=>{const p=JSON.parse(init.body);rounds++;
       if(rounds===1)return callTool('ui_click',{ref:'stale'});
@@ -80,6 +82,7 @@ test('cancelled, expired and revoked browser actions cannot be claimed or acknow
   const db=await localDb();try{
     const orgId=await boot(client(db,alice)),org={id:orgId,name:'Fixture',role:'owner'},a=caller(db,alice,orgId),id=crypto.randomUUID(),run='fixture-run';
     db.raw.prepare('INSERT INTO lite_assistant_conversations(id,org_id,user_id,title,mode,model,active_run,locked_until,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,orgId,alice.userId,'Fixture','chat','fixture',run,new Date(Date.now()+60000).toISOString(),new Date().toISOString(),new Date().toISOString());
+    await a('assistant/browser/connect',{body:{windowId:'fixture-desktop-window',kind:'desktop'}});
     const controller=new AbortController();let emitted;const ready=new Promise(resolve=>{emitted=resolve;});
     const pending=dispatchUiAction({env:{DB:db},identity:alice},org,id,run,(event,data)=>emitted(data),'click',{ref:'t1-1'},controller.signal);
     const action=await ready;controller.abort();await assert.rejects(pending,{name:'AbortError'});

@@ -9,6 +9,7 @@
  * résultat au serveur : POST /api/v1/assistant/ui-actions/:id/result.
  */
 
+import {useBrowserSession} from "./browser-session";
 import { useEffect } from "react";
 import { getFakeCursor } from "./fake-cursor";
 import { resolveAidAttr } from "@lite/shell-ui/ui";
@@ -20,7 +21,10 @@ export const UI_ACTION_EVENT_LEGACY = "tf2-assistant-ui-action";
 type UiActionDetail = {
   actionId: string;
   expiresAt?: string;
+  remainingMs?: number;
+  windowId?: string;
   signal?: AbortSignal;
+  authorize?:()=>Promise<void>;
   type: "list_targets" | "click" | "type" | "scroll";
   params: Record<string, unknown>;
 };
@@ -375,7 +379,7 @@ async function handleListTargets(params: Record<string, unknown>) {
   return { ok: true, page: pageContext(), targets, truncated, ...(note ? { note } : {}) };
 }
 
-async function handleClick(params: Record<string, unknown>, signal?: AbortSignal) {
+async function handleClick(params: Record<string, unknown>, signal?: AbortSignal, authorize?:()=>Promise<void>) {
   const ref = typeof params.ref === "string" ? params.ref : undefined;
   const label = typeof params.label === "string" ? params.label : undefined;
   const { el, suggestions } = ref ? { el: resolveTarget(ref), suggestions: [] } : await resolveWithRepair(ref, label);
@@ -397,6 +401,8 @@ async function handleClick(params: Record<string, unknown>, signal?: AbortSignal
   await cursor.clickEffect();
   signal?.throwIfAborted();
   if (!isVisible(el)) return { ok: false, error: "La cible a changé pendant le déplacement." };
+  await authorize?.();
+  signal?.throwIfAborted();
   synthClick(el, x, y);
   cursor.hideSoon();
   // Laisser la navigation / le re-render RSC se produire.
@@ -416,7 +422,7 @@ async function handleClick(params: Record<string, unknown>, signal?: AbortSignal
   };
 }
 
-async function handleType(params: Record<string, unknown>, signal?: AbortSignal) {
+async function handleType(params: Record<string, unknown>, signal?: AbortSignal, authorize?:()=>Promise<void>) {
   const ref = typeof params.ref === "string" ? params.ref : undefined;
   const label = typeof params.label === "string" ? params.label : undefined;
   const text = typeof params.text === "string" ? params.text : "";
@@ -444,6 +450,8 @@ async function handleType(params: Record<string, unknown>, signal?: AbortSignal)
   await cursor.clickEffect();
   signal?.throwIfAborted();
   if (!isVisible(el) || el.readOnly) return { ok: false, error: "Ce champ n’est pas modifiable." };
+  await authorize?.();
+  signal?.throwIfAborted();
   synthClick(el, x, y);
   await sleep(120);
 
@@ -516,9 +524,9 @@ async function executeUiAction(detail: UiActionDetail): Promise<Record<string, u
       case "list_targets":
         return await handleListTargets(detail.params);
       case "click":
-        return await handleClick(detail.params, detail.signal);
+        return await handleClick(detail.params, detail.signal, detail.authorize);
       case "type":
-        return await handleType(detail.params, detail.signal);
+        return await handleType(detail.params, detail.signal, detail.authorize);
       case "scroll":
         return await handleScroll(detail.params, detail.signal);
       default:
@@ -546,42 +554,33 @@ export async function runUiNavigate(href: string, navigate: (href: string) => vo
 }
 
 export function UiDriver() {
-  useEffect(() => {
-    const lifetime = new AbortController();
-
-    async function onAction(e: Event) {
-      const detail = (e as CustomEvent<UiActionDetail>).detail;
-      if (!detail?.actionId || !detail.type || !detail.expiresAt) return;
-      const remaining = Date.parse(detail.expiresAt) - Date.now();
-      if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 30_000) return;
-      const signal = AbortSignal.any([lifetime.signal, ...(detail.signal ? [detail.signal] : []), AbortSignal.timeout(Math.ceil(remaining))]);
-      const endpoint = `/api/v1/assistant/ui-actions/${encodeURIComponent(detail.actionId)}`;
+  const session=useBrowserSession();
+  const id=session?.windowId,active=Boolean(session?.state.active&&!session.mobile);
+  useEffect(()=>{
+    if(!active||!id)return;
+    const lifetime=new AbortController(),seen=new Set<string>();
+    async function onAction(e:Event) {
+      const detail=(e as CustomEvent<UiActionDetail>).detail;
+      if(!detail?.actionId||detail.windowId!==id||!detail.type||seen.has(detail.actionId))return;
+      // Relative duration comes from the server; local clock skew cannot discard delivery.
+      const remaining=Math.min(30000,Number(detail.remainingMs));if(!Number.isFinite(remaining)||remaining<=0)return;
+      seen.add(detail.actionId);if(seen.size>500)seen.delete(seen.values().next().value!);
+      const signal=AbortSignal.any([lifetime.signal,AbortSignal.timeout(remaining)]),endpoint=`/api/v1/assistant/ui-actions/${encodeURIComponent(detail.actionId)}`;
+      const report=(event:string,extra:Record<string,unknown>={})=>session?.report(event,{actionId:detail.actionId,...extra});
       try {
-        // Claim once before moving: SSE duplicates and another tab cannot replay the action.
-        // Keep the current workspace cookie: switching spaces invalidates the claim.
-        const claim = await fetch(`${endpoint}/claim`, { method: "POST", signal });
-        if (!claim.ok) return;
+        await report('driver.received');
+        const claim=await fetch(`${endpoint}/claim`,{method:'POST',headers:{'x-lite-window':id!},signal});
+        if(!claim.ok){await report('driver.error',{code:'claim_refused',status:claim.status});return;}
+        const authorize=async()=>{const current=await fetch(`${endpoint}/check`,{method:'POST',headers:{'x-lite-window':id!},signal});if(!current.ok)throw new Error('La fenêtre ou la commande n’est plus active.');};
+        const result=await executeUiAction({...detail,signal,authorize});
+        await report(result.ok?'driver.executed':'driver.error',{code:result.ok?'executed':'execution_failed'});
         signal.throwIfAborted();
-        const result = await executeUiAction({ ...detail, signal });
-        signal.throwIfAborted();
-        await fetch(`${endpoint}/result`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(result), signal,
-        });
-      } catch {
-        getFakeCursor().hideSoon();
-        // No acknowledgement is fabricated: the server reports interruption/timeout.
-      }
+        const ack=await fetch(`${endpoint}/result`,{method:'POST',headers:{'content-type':'application/json','x-lite-window':id!},body:JSON.stringify(result),signal});
+        if(!ack.ok)await report('driver.ack_failed',{status:ack.status,code:'ack_refused'});
+      }catch(e){getFakeCursor().hideSoon();await report('driver.error',{code:e instanceof Error?e.name:'Error'});}
     }
-
-    window.addEventListener(UI_ACTION_EVENT, onAction);
-    window.addEventListener(UI_ACTION_EVENT_LEGACY, onAction);
-    return () => {
-      lifetime.abort();
-      window.removeEventListener(UI_ACTION_EVENT, onAction);
-      window.removeEventListener(UI_ACTION_EVENT_LEGACY, onAction);
-    };
-  }, []);
-
+    window.addEventListener(UI_ACTION_EVENT,onAction);
+    return()=>{lifetime.abort();getFakeCursor().hideSoon();window.removeEventListener(UI_ACTION_EVENT,onAction);};
+  },[id,active]);
   return null;
 }

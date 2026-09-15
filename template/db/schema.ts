@@ -122,6 +122,7 @@ export const mailSync=sqliteTable('lite_mail_sync',{
 export const assistantUiActions = sqliteTable('lite_assistant_ui_actions', {
   id:text('id').primaryKey(),conversationId:text('conversation_id').notNull().references(()=>assistantConversations.id,{onDelete:'cascade'}),
   orgId:text('org_id').notNull().references(()=>organizations.id),userId:text('user_id').notNull().references(()=>users.id),
+  targetWindowId:text('target_window_id'),actionType:text('action_type'),payloadJson:text('payload_json'),createdAt:text('created_at'),claimedAt:text('claimed_at'),completedAt:text('completed_at'),
   runId:text('run_id').notNull(),status:text('status').notNull(),resultJson:text('result_json'),expiresAt:text('expires_at').notNull(),
 },t=>[index('idx_assistant_ui_expiry').on(t.orgId,t.userId,t.expiresAt),check('assistant_ui_status',sql`${t.status} IN ('pending','claimed','completed')`)]);
 
@@ -142,3 +143,10 @@ export const oauthTokens=sqliteTable('lite_oauth_tokens',{
 export const oauthLimits=sqliteTable('lite_oauth_limits',{
  id:text('id').primaryKey(),count:integer('count').notNull(),expiresAt:text('expires_at').notNull(),
 },t=>[index('idx_oauth_limit_expiry').on(t.expiresAt)]);
+
+export const browserSessions=sqliteTable('lite_browser_sessions',{
+ orgId:text('org_id').notNull().references(()=>organizations.id,{onDelete:'cascade'}),userId:text('user_id').notNull().references(()=>users.id,{onDelete:'cascade'}),kind:text('kind').notNull(),windowId:text('window_id').notNull(),leaseUntil:text('lease_until').notNull(),path:text('path').notNull(),
+},t=>[primaryKey({columns:[t.orgId,t.userId,t.kind]}),check('browser_session_kind',sql`${t.kind} IN ('desktop','controller')`)]);
+export const browserEvents=sqliteTable('lite_browser_events',{
+ id:text('id').primaryKey(),orgId:text('org_id').notNull().references(()=>organizations.id,{onDelete:'cascade'}),userId:text('user_id').notNull().references(()=>users.id,{onDelete:'cascade'}),windowId:text('window_id'),actionId:text('action_id'),runId:text('run_id'),conversationId:text('conversation_id'),event:text('event').notNull(),detailJson:text('detail_json').notNull(),createdAt:text('created_at').notNull(),
+},t=>[index('idx_browser_events_owner_time').on(t.orgId,t.userId,t.createdAt),index('idx_browser_events_conversation').on(t.orgId,t.userId,t.conversationId,t.createdAt)]);

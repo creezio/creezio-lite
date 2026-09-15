@@ -1,5 +1,12 @@
 # Versions de Lite
 
+## 0.9.0 — Pilotage fiable et chat mobile
+
+- File de commandes D1 indépendante du SSE, connexion WebSocket et secours HTTP.
+- Une fenêtre de travail active par utilisateur et espace, reprise explicite et chat mobile plein écran pilotant l’ordinateur.
+- Traces persistantes du navigateur et sauvegarde progressive des tours IA.
+- Vérification du transport sur le Worker compilé et du curseur natif.
+
 ## 0.8.1 — Validation du consentement OAuth
 
 - Corrige la politique de référent de la seule page de consentement : les formulaires natifs transmettent l’origine du Site.

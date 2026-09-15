@@ -1,5 +1,6 @@
 // @ts-nocheck — desktop API loosely typed; marques fournissent Window.*Desktop
 "use client";
+import {useBrowserSession,BrowserConnectionStatus} from "./browser-session";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -369,13 +370,16 @@ async function readSse(
 }
 
 export function AssistantWidget() {
+  const browser=useBrowserSession();
+  const chatOnly=Boolean(browser?.mobile);
   const {
-    open,
+    open:storedOpen,
     setOpen,
     activeConversationId,
     setActiveConversationId,
     hydrated,
   } = useAssistantUi();
+  const open=storedOpen||chatOnly;
   const pathname = usePathname() || "/";
   const workspace = useTabWorkspaceOptional();
   const surfaceRef = useRef<{
@@ -1180,11 +1184,11 @@ export function AssistantWidget() {
       const res = await fetch("/api/v1/assistant/chat", {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(browser?.windowId?{"X-Lite-Window":browser.windowId}:{}) },
         body: JSON.stringify({
           messages: [{role:"user",content:text}],
           stream: true,
-          uiDriver: true,
+          uiDriver: Boolean(browser?.state.active),
           conversationId: activeIdRef.current,
           model: activeModelRef.current,
           mode: preferredModeRef.current,
@@ -1285,11 +1289,7 @@ export function AssistantWidget() {
               pending: false,
             });
           },
-          onUiAction: (action) => {
-            window.dispatchEvent(
-              new CustomEvent("lite-assistant-ui-action", { detail: { ...action, signal: ctrl.signal } }),
-            );
-          },
+
         });
         if (conversationId) applyConversationId(conversationId);
         setMessages((prev) =>
@@ -1370,9 +1370,9 @@ export function AssistantWidget() {
 
   sendRef.current = send;
 
-  if (!hydrated) return null;
+  if (!hydrated || (browser && (!browser.ready || !browser.state.active))) return null;
 
-  if (!open) {
+  if (!open && !chatOnly) {
     // Electron : FAB dessiné dans AssistantChromeOverlay (au-dessus des sites).
     // Navigateur : FAB React fixed overlay classique.
     if (getDesktopApi()?.setAssistantChrome) {
@@ -1405,7 +1405,7 @@ export function AssistantWidget() {
       <button
         type="button"
         data-lite-assistant-ui
-                className="fixed inset-0 z-40 bg-slate-900/40 md:hidden"
+                className={chatOnly?"hidden":"fixed inset-0 z-40 bg-slate-900/40 md:hidden"}
         aria-label="Fermer l'assistant"
         onClick={() => setOpen(false)}
       />
@@ -1414,7 +1414,7 @@ export function AssistantWidget() {
         data-lite-assistant-ui
                 className={cn(
           "fixed inset-y-0 right-0 z-50 flex h-[100dvh] flex-col border-l border-slate-200 bg-white shadow-xl shadow-slate-900/10",
-          "w-full md:w-[var(--assistant-panel-width)]",
+          chatOnly?"w-full":"w-full md:w-[var(--assistant-panel-width)]",
         )}
         style={
           {
@@ -1562,12 +1562,14 @@ export function AssistantWidget() {
             variant="ghost"
             className="h-8 w-8 shrink-0"
             title="Fermer"
+            hidden={chatOnly}
             onClick={() => setOpen(false)}
           >
             <X className="h-4 w-4" />
           </Button>
         </div>
 
+        <BrowserConnectionStatus/>
         <div className="flex shrink-0 flex-col gap-2 border-b border-slate-100 px-3 py-2">
           <div
             className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5"
