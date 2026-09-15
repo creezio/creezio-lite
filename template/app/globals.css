@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "../creezio/packages/shell-ui/ui/theme/theme.css";
 @import "../creezio/packages/interactive-demo/ui/interactive-demo.css";
+@import "./creezio-sites.css";
 @config "../creezio/packages/shell-ui/ui/theme/tailwind-preset.cjs";
 @source "../creezio/packages";
 @source "../creezio/ui";

@@ -13,17 +13,17 @@
     },
     "CHANGELOG.md": {
       "originalSha256": "d0e6dbbb82155ca11a8db73e05ef632df1349b16a0a841d8bd75e374711db87b",
-      "sha256": "cb16c8c88ca34d95a24c1d79ea49a45275c99d04b784219b8fcb97f0444026ba",
+      "sha256": "ff15e4b7d282c2ba368a9346639b950e23ce0247d37e4782d592f481e8e9fa90",
       "reason": "Historique du fork ajouté avant le changelog original."
     },
     "package-lock.json": {
       "originalSha256": "1447b0c50ad1ba0a20f5aa1ab8755fe55ccc36b96ff7edd86fdfc80f31ac8065",
-      "sha256": "df3966c4f2ffc9763f8d11a4d053a99e3ef62a93a27626035dacb1439328ecea",
+      "sha256": "d0f6e873564f36be3c3785990c2248759740a9e64c9493d8efaeeb33be3107a5",
       "reason": "Métadonnées racine et liste explicite des workspaces alignées ; dépendances natives conservées."
     },
     "package.json": {
       "originalSha256": "613b3bb2ac6d46607490c1df1f4cc3bf69935fd968dc5faf9728ba56e05a49ea",
-      "sha256": "85250e18f86e906da2797a7683b38ab85dc27224c8b092512eb9dff293ba76ed",
+      "sha256": "94f7e187023a4e45d9bf957c228c4b324904609127cecc4bc999a65a5849fddf",
       "reason": "Métadonnées du fork et commandes Sites ajoutées ; dépendances et commandes natives conservées."
     },
     "packages/api-kernel/README.md": {

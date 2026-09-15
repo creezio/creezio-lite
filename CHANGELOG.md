@@ -1,5 +1,12 @@
 # Creezio Lite
 
+## 0.2.2 — centrage de la recherche sur Sites
+
+- Corrige la double translation entre le thème Creezio et les utilitaires Tailwind 4 : la recherche était décalée hors du bord gauche.
+- Ajoute une règle de compatibilité ciblée dans `app/creezio-sites.css`. Le composant de recherche et le thème upstream restent inchangés ; les formulaires gardent leur propre centrage.
+- Ajoute une page de contrôle des composants natifs disponible uniquement en développement, pour vérifier les largeurs 390, 768, 1024 et 1227 pixels avec le vrai CSS applicatif.
+- Une application existante doit intégrer le fichier CSS et son import ; `upgrade --apply` ne copie pas les fichiers applicatifs. Voir `docs/UPDATES.md`.
+
 ## 0.2.1 — isolation des onglets sur Sites
 
 - Corrige une régression de l’intégration 0.2.0 : les panes conservées lisaient le contexte global Vinext, changeaient de page ensemble et publiaient le mauvais titre.

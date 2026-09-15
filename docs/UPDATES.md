@@ -24,3 +24,9 @@ Ce changement remplace le shell et ajoute une migration D1. Il demande la mise �
 ## Passage de 0.2.0 à 0.2.1
 
 Le correctif d’onglets demande les deux côtés du pont : les sources `shell-ui` via `upgrade --apply`, **et** le fichier `template/app/sites-pane-router.tsx` à ajouter dans `app/`, puis le provider `WorkspacePaneRouterContext` autour de `WorkspaceRoot` dans `BrandChrome` (voir le template). Préserver tout le wiring métier existant. Un simple upgrade du runtime ne copie pas ces fichiers applicatifs et ne suffit donc pas à corriger le bug. Aucun changement de schéma ni effacement du stockage des onglets n’est nécessaire. Après compilation et publication, recharger l’app ; les titres des onglets déjà enregistrés sont actualisés lorsque leurs pages sont ouvertes.
+
+## Passage de 0.2.1 à 0.2.2
+
+Après l’upgrade du runtime, copier `template/app/creezio-sites.css` dans `app/` et ajouter `@import "./creezio-sites.css";` après les imports des thèmes natifs dans `app/globals.css`. Fusionner cette ligne avec le CSS métier existant. La correction annule uniquement la propriété CSS `translate` supplémentaire de la palette de recherche ; elle conserve le `transform` du thème Creezio. Ne pas appliquer cette règle à tous les dialogues. Aucun changement de dépendance ou de schéma.
+
+Pour reproduire le contrôle visuel en développement, ajouter aussi `template/tests/ui-check*` dans `tests/`, `template/build/creezio-ui-preview.ts` dans `build/` et enregistrer `creezioUiPreview()` en premier dans les plugins Vite comme dans le template. Ouvrir `/__creezio-ui-check` sur le serveur de développement. Cette page utilise les composants natifs et les styles de l’app avec des données de test ; elle ne fait pas partie du build publié et ne valide pas l’authentification.

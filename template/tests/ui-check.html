@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vérification des composants Creezio</title></head>
+<body style="margin:0;background:#ececec;font:14px system-ui">
+<div style="padding:12px"><label>Largeur <select id="width"><option>1227</option><option>1024</option><option>768</option><option>390</option></select></label> · Composants natifs, données de test uniquement</div>
+<iframe title="Composants Creezio" src="/__creezio-ui-check/frame" style="display:block;width:1227px;height:817px;border:0"></iframe>
+<script>document.querySelector('select').onchange=e=>{document.querySelector('iframe').style.width=e.target.value+'px';};</script>
+</body></html>
