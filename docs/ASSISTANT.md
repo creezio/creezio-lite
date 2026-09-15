@@ -6,10 +6,15 @@ Le widget, le panneau, les conversations, l’affichage des actions et la page I
 
 Dans **Admin → Intégrations → Ajouter** :
 
-- OpenAI : saisir une clé, un libellé et le modèle autorisé par le compte (défaut `gpt-4.1-mini`). L’option apparaît dans le mode Chat.
-- Hermes : saisir l’URL HTTPS publique de la passerelle, sa clé serveur et le modèle (`hermes-agent` par défaut). L’option apparaît dans le mode Work.
+- OpenAI : saisir uniquement la clé. Le libellé et la référence `integration://openai` sont automatiques.
+- Hermes : saisir l’URL HTTPS publique de la passerelle et sa clé serveur. Le libellé et la référence `integration://hermes` sont automatiques.
+- Autre : choisir librement le libellé, la référence et le header HTTP, puis saisir la clé. Ces champs restent modifiables.
 
-Plusieurs intégrations sont possibles. Le sélecteur de modèle indique le libellé de l’intégration. Le bouton Tester vérifie l’authentification OpenAI via `/v1/models`, ou la santé Hermes via `/health` ; il ne garantit pas qu’un modèle ou tous les outils distants sont disponibles. La désactivation retire le profil du chat. Les autres fournisseurs restent des secrets référencés, consommables par un module serveur.
+Un service natif possède une clé par espace. Les intégrations déjà présentes conservent leurs identifiants, références et secrets ; les anciennes métadonnées de modèle sont ignorées. La désactivation retire la connexion du chat. Les autres fournisseurs restent des secrets référencés, consommables par un module serveur.
+
+Dans le **chat**, choisir le modèle à chaque conversation ou changer de modèle en cours de conversation. Le catalogue est demandé au service connecté via `/v1/models`, avec la clé côté serveur. Les familles OpenAI connues comme non conversationnelles sont filtrées ; la présence dans le catalogue ne garantit pas la compatibilité avec Chat Completions et les outils. « Autre modèle… » permet de saisir un identifiant exact, notamment si une passerelle Hermes ne publie pas de catalogue. Le serveur transmet le modèle choisi à chaque tour, sans modifier la clé ni imposer un modèle au niveau de l’intégration. Les erreurs de catalogue restent visibles, et un bouton permet de réessayer.
+
+Le bouton Tester vérifie l’authentification OpenAI via `/v1/models`, ou la santé Hermes via `/health` ; il ne garantit pas qu’un modèle ou tous les outils distants sont disponibles. Une passerelle Hermes doit respecter le champ `model` de Chat Completions pour permettre le changement effectif du LLM. Lite ne modifie pas les réglages globaux d’une WebUI Hermes distincte.
 
 ## Contrats et protections
 
@@ -23,4 +28,4 @@ Plusieurs intégrations sont possibles. Le sélecteur de modèle indique le libe
 
 Le raccordement n’installe pas de démon Hermes, de bureau distant, de moteur n8n ou de runner de plugins dans Sites. Les cartes d’approbation de plugins et les réglages globaux de reasoning Hermes restent conditionnés aux capacités du backend. Le chat et les tâches de suivi restent disponibles avec les capacités décrites ci-dessus.
 
-Documentation du protocole : [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [Function calling](https://developers.openai.com/api/docs/guides/function-calling).
+Documentation du protocole : [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [Modèles](https://developers.openai.com/api/reference/resources/models/methods/list), [Function calling](https://developers.openai.com/api/docs/guides/function-calling).

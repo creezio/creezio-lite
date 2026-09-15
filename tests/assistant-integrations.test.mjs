@@ -41,7 +41,7 @@ test('integrations: encrypted secrets, optimistic updates, roles, tenant isolati
 test('OpenAI chat: streams, executes the registered tools, retains trusted history and isolates conversations',async()=>{
   const db=await localDb(),oldFetch=globalThis.fetch;try{
     const org=await boot(client(db,alice)),other=await boot(client(db,bob)),a=caller(db,alice,org),b=caller(db,bob,other);
-    const integration=await create(a),model=(await a('assistant/models')).body.default;let requests=[];
+    const integration=await create(a),model=`${integration.id}::gpt-test-a`;let requests=[];
     globalThis.fetch=async(url,init)=>{assert.equal(url,'https://api.openai.com/v1/chat/completions');assert.equal(init.headers.Authorization,`Bearer ${secret}`);assert.equal(init.redirect,'error');const input=JSON.parse(init.body);requests.push(input);
       if(requests.length===1){assert.ok(input.tools.some(t=>t.function.name==='lite_tasks_create'));return tool('lite_tasks_create',{body:{title:'Suivi créé par le chat'}});}
       if(requests.length===2){assert.ok(input.messages.some(m=>m.role==='tool'&&m.content.includes('Suivi créé par le chat')));return answer('La tâche est créée.');}
@@ -61,7 +61,7 @@ test('OpenAI chat: streams, executes the registered tools, retains trusted histo
 
 test('Hermes chat: configured endpoint, bearer and isolated session; errors and disabled tools stay explicit',async()=>{
   const db=await localDb(),oldFetch=globalThis.fetch;try{
-    const org=await boot(client(db,alice)),a=caller(db,alice,org);await create(a,'hermes');const model=(await a('assistant/hermes-models')).body.default;
+    const org=await boot(client(db,alice)),a=caller(db,alice,org);const integration=await create(a,'hermes'),model=`${integration.id}::hermes-agent`;
     assert.deepEqual((await a('assistant/llm-status')).body.availableModes,['work']);let calls=0;
     await a('admin/mcp/policies/lite_tasks_create',{method:'PATCH',body:{enabled:false,version:0}});
     globalThis.fetch=async(url,init)=>{calls++;assert.equal(url,'https://hermes.example/v1/chat/completions');assert.equal(init.headers.Authorization,`Bearer ${secret}`);assert.ok(init.headers['x-hermes-session-id'].startsWith(`${org}:${alice.userId}:`));const body=JSON.parse(init.body);assert.equal(body.model,'hermes-agent');assert.equal(body.tools.some(t=>t.function.name==='lite_tasks_create'),false);if(calls===1)return tool('lite_tasks_create',{body:{title:'Interdit'}});assert.ok(body.messages.some(m=>m.role==='tool'&&m.content.includes('désactivé')));return answer('Cette action est interdite.');};
@@ -74,12 +74,62 @@ test('Hermes chat: configured endpoint, bearer and isolated session; errors and 
 
 test('assistant prevents simultaneous turns and cancellation releases the durable conversation lock',async()=>{
   const db=await localDb(),oldFetch=globalThis.fetch;try{
-    const org=await boot(client(db,alice)),a=caller(db,alice,org);await create(a);const model=(await a('assistant/models')).body.default;
+    const org=await boot(client(db,alice)),a=caller(db,alice,org);const integration=await create(a),model=`${integration.id}::gpt-test-a`;
     const id=(await a('assistant/conversations',{method:'POST',body:{model,mode:'chat'}})).body.conversation.id;
     let entered;const ready=new Promise(r=>entered=r);globalThis.fetch=async(_url,init)=>{entered();return new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true}));};
     const abort=new AbortController(),response=await a('assistant/chat',{method:'POST',body:messages('Bonjour',model,'chat',id),raw:true,signal:abort.signal});const pending=response.text();await ready;
     assert.equal((await a('assistant/chat',{method:'POST',body:messages('Doublon',model,'chat',id)})).status,409);
     abort.abort();await pending;assert.equal(db.raw.prepare('SELECT active_run FROM lite_assistant_conversations WHERE id=?').get(id).active_run,null);
     assert.match((await a(`assistant/conversations/${id}`)).body.messages.at(-1).content,/interrompue/);
+  }finally{globalThis.fetch=oldFetch;db.close();}
+});
+
+
+test('native services own their names and references; custom integrations remain editable',async()=>{
+  const db=await localDb();try{
+    const org=await boot(client(db,alice)),a=caller(db,alice,org);
+    const native=await create(a,'openai',{label:'Wrong name',slug:'wrong-reference',meta:{model:'locked-model'}});
+    const notion=await a('platform/integrations',{method:'POST',body:{provider:'notion',secret}});assert.equal(notion.status,201);assert.equal(notion.body.integration.reference,'integration://notion');assert.equal(notion.body.integration.label,'Notion');
+    assert.equal(native.label,'OpenAI');assert.equal(native.reference,'integration://openai');assert.deepEqual(native.meta,{});
+    assert.equal((await a('platform/integrations',{method:'POST',body:{provider:'openai',secret}})).status,409);
+    const edit=(await a(`platform/integrations/${native.id}`,{method:'PATCH',body:{version:1,label:'Other',slug:'other',meta:{model:'locked-again'}}})).body.integration;
+    assert.equal(edit.label,'OpenAI');assert.equal(edit.slug,'openai');assert.deepEqual(edit.meta,{});
+    const custom=await create(a,'custom',{label:'Mon API',slug:'my-api',meta:{headerName:'X-API-Key'}});
+    assert.equal(custom.meta.headerName,'X-API-Key');
+    const changed=await a(`platform/integrations/${custom.id}`,{method:'PATCH',body:{version:1,label:'Mon service',slug:'my-service',meta:{headerName:'X-Secret'}}});
+    assert.equal(changed.status,200);assert.equal(changed.body.integration.label,'Mon service');assert.equal(changed.body.integration.reference,'integration://my-service');assert.equal(changed.body.integration.meta.headerName,'X-Secret');
+    assert.equal((await a(`platform/integrations/${custom.id}`,{method:'PATCH',body:{version:2,slug:'openai'}})).status,400);
+    // Existing custom references used by modules remain stable during a native-key update.
+    db.raw.prepare('UPDATE lite_integrations SET slug=?,meta_json=? WHERE id=?').run('legacy-openai',JSON.stringify({model:'legacy-locked'}),native.id);
+    const legacy=(await a(`platform/integrations/${native.id}`,{method:'PATCH',body:{version:2,secret:'new-fixture-key'}})).body.integration;
+    assert.equal(legacy.reference,'integration://legacy-openai');assert.deepEqual(legacy.meta,{});
+  }finally{db.close();}
+});
+
+test('provider catalogues and per-turn model selection use one key without updating the integration',async()=>{
+  const db=await localDb(),oldFetch=globalThis.fetch;try{
+    const org=await boot(client(db,alice)),other=await boot(client(db,bob)),a=caller(db,alice,org),b=caller(db,bob,other);
+    const openai=await create(a),hermes=await create(a,'hermes'),foreign=await create(b);
+    db.raw.prepare('UPDATE lite_integrations SET meta_json=? WHERE id=?').run(JSON.stringify({model:'legacy-locked'}),openai.id);
+    globalThis.fetch=async(url,init)=>{
+      assert.ok(url.endsWith('/v1/models'));assert.equal(init.headers.Authorization,`Bearer ${secret}`);
+      return Response.json({data:url.includes('openai.com')?[{id:'gpt-test-b'},{id:'gpt-test-a'},{id:'gpt-test-a'},{id:'text-embedding-3-small'},{id:'davinci-002'}]:[{id:'vendor/model-one'},{id:'vendor/model-two'}]});
+    };
+    const catalogue=(await a('assistant/models')).body,work=(await a('assistant/hermes-models')).body;
+    assert.deepEqual(catalogue.models,[`${openai.id}::gpt-test-a`,`${openai.id}::gpt-test-b`]);assert.equal(catalogue.connections[0].id,openai.id);assert.equal(work.options.length,2);
+    const before=db.raw.prepare('SELECT * FROM lite_integrations WHERE id=?').get(openai.id),seen=[];
+    globalThis.fetch=async(url,init)=>{assert.ok(url.endsWith('/v1/chat/completions'));seen.push(JSON.parse(init.body).model);return answer('Réponse du modèle choisi.');};
+    const first=await (await a('assistant/chat',{method:'POST',raw:true,body:messages('Bonjour',catalogue.models[0])})).text();
+    const id=conversationId(first),thread=(await a(`assistant/conversations/${id}`)).body.conversation;
+    assert.equal((await a(`assistant/conversations/${id}`,{method:'PATCH',body:{version:thread.version,model:catalogue.models[1]}})).status,200);
+    await (await a('assistant/chat',{method:'POST',raw:true,body:messages('Continue',catalogue.models[1],'chat',id)})).text();
+    await (await a('assistant/chat',{method:'POST',raw:true,body:messages('Manuel',`${openai.id}::ft:custom-model`)})).text();
+    await (await a('assistant/chat',{method:'POST',raw:true,body:messages('Travail',work.models[1],'work')})).text();
+    assert.deepEqual(seen,['gpt-test-a','gpt-test-b','ft:custom-model','vendor/model-two']);
+    assert.deepEqual(db.raw.prepare('SELECT * FROM lite_integrations WHERE id=?').get(openai.id),before);
+    assert.equal((await a('assistant/conversations',{method:'POST',body:{model:`${foreign.id}::gpt-test-a`}})).status,409);
+    assert.equal((await a('assistant/conversations',{method:'POST',body:{model:`${openai.id}::bad model`}})).status,400);
+    globalThis.fetch=async()=>new Response('private upstream error '+secret,{status:401});
+    const failed=(await a('assistant/models')).body;assert.equal(failed.options.length,0);assert.match(failed.warnings[0],/refuse cette clé/);assert.equal(JSON.stringify(failed).includes(secret),false);assert.equal(failed.connections.length,1);
   }finally{globalThis.fetch=oldFetch;db.close();}
 });

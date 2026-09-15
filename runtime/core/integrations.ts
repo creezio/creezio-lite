@@ -12,6 +12,9 @@ export const integrationProviders = [
   {id:'imap',label:'IMAP',secretPlaceholder:'Mot de passe IMAP'},
   {id:'custom',label:'Autre',secretPlaceholder:'Clé / secret'},
 ];
+function integrationSlug(value:unknown){
+  const slug=textField(value,'référence',80);if(!/^[a-z][a-z0-9_-]{0,79}$/.test(slug)||integrationProviders.some(p=>p.id!=='custom'&&p.id===slug))fail(400,'invalid_slug','Référence invalide ou réservée à un service natif.');return slug;
+}
 export type IntegrationRow={id:string;org_id:string;slug:string;provider:string;label:string;secret_box:string;meta_json:string;enabled:number;version:number;created_at:string;updated_at:string};
 const enc=new TextEncoder(),dec=new TextDecoder();
 const base64=(value:Uint8Array)=>btoa(String.fromCharCode(...value));
@@ -47,14 +50,15 @@ function metadata(provider:string,input:unknown){
   const v=input&&typeof input==='object'&&!Array.isArray(input)?input as Record<string,unknown>:{};
   const out:Record<string,unknown>={};
   if(provider==='hermes')out.baseUrl=hermesUrl(v.baseUrl);
-  if(provider==='openai'||provider==='hermes')out.model=textField(v.model??(provider==='openai'?'gpt-4.1-mini':'hermes-agent'),'modèle',160);
+
   if(provider==='custom')out.headerName=textField(v.headerName??'Authorization','header',80);
   if(provider==='smtp'||provider==='imap'){out.host=textField(v.host??'','hôte',250,true);out.user=textField(v.user??'','utilisateur',250,true);if(v.port!==undefined){if(!Number.isInteger(v.port)||Number(v.port)<1||Number(v.port)>65535)fail(400,'invalid_port','Port invalide.');out.port=v.port;}out.secure=v.secure!==false;}
   return out;
 }
 export async function publicIntegration(c:ApiContext,row:IntegrationRow){
   let readable=false;try{await resolveIntegration(c,row);readable=true;}catch{}
-  return {id:row.id,slug:row.slug,reference:`integration://${row.slug}`,provider:row.provider,label:row.label,secretHint:'••••••••',readable,meta:JSON.parse(row.meta_json),enabled:Boolean(row.enabled),version:row.version,createdAt:row.created_at,updatedAt:row.updated_at};
+  const meta=JSON.parse(row.meta_json);delete meta.model;
+  return {id:row.id,slug:row.slug,reference:`integration://${row.slug}`,provider:row.provider,label:row.provider==='custom'?row.label:integrationProviders.find(p=>p.id===row.provider)?.label??row.label,secretHint:'••••••••',readable,meta,enabled:Boolean(row.enabled),version:row.version,createdAt:row.created_at,updatedAt:row.updated_at};
 }
 export async function integrationRows(c:ApiContext,org:Workspace,provider?:string){
   return (await c.env.DB.prepare(`SELECT * FROM lite_integrations WHERE org_id=?${provider?' AND provider=?':''} ORDER BY created_at,id`).bind(org.id,...(provider?[provider]:[])).all<IntegrationRow>()).results;
@@ -66,7 +70,7 @@ export async function getIntegration(c:ApiContext,org:Workspace,id:string){
 export function upstreamFailure(status:number,provider:string):never{
   if(status===401||status===403)fail(502,'provider_auth',`${provider} refuse cette clé. Vérifiez l’intégration et les accès de la clé.`);
   if(status===429)fail(429,'provider_quota',`${provider} a atteint une limite de quota ou de débit.`);
-  if(status===400||status===404)fail(502,'provider_model',`${provider} refuse ce modèle ou cette URL. Vérifiez les réglages de l’intégration.`);
+  if(status===400||status===404)fail(502,'provider_model',`${provider} refuse ce modèle ou cette URL. Choisissez un modèle disponible dans le chat et vérifiez l’URL du serveur.`);
   fail(502,'provider_unavailable',`${provider} ne répond pas correctement (HTTP ${status}).`);
 }
 export async function providerRequest(row:IntegrationRow,key:string,path:string,init:RequestInit={}){
@@ -103,18 +107,20 @@ export async function integrationsRoute(request:Request,c:ApiContext,org:Workspa
       const body=await readJson(request);if(body.version!==row.version)fail(409,'conflict','L’intégration a changé. Actualisez avant de réessayer.');
       if(body.enabled!==undefined&&typeof body.enabled!=='boolean')fail(400,'invalid_enabled','Activation invalide.');
       const box=body.secret!==undefined?await sealSecret(c,org.id,id,textField(body.secret,'clé',8192)):row.secret_box;
-      const label=body.label!==undefined?textField(body.label,'libellé',160):row.label;
-      const meta=body.meta!==undefined?JSON.stringify(metadata(row.provider,body.meta)):row.meta_json;
-      const result=await c.env.DB.prepare('UPDATE lite_integrations SET label=?,secret_box=?,meta_json=?,enabled=?,version=version+1,updated_at=? WHERE org_id=? AND id=? AND version=?').bind(label,box,meta,body.enabled===undefined?row.enabled:Number(body.enabled),new Date().toISOString(),org.id,id,row.version).run();
+      const label=row.provider==='custom'?(body.label!==undefined?textField(body.label,'libellé',160):row.label):integrationProviders.find(p=>p.id===row.provider)!.label;
+      const slug=row.provider==='custom'&&body.slug!==undefined&&body.slug!==row.slug?integrationSlug(body.slug):row.slug;
+      if(slug!==row.slug&&await c.env.DB.prepare('SELECT id FROM lite_integrations WHERE org_id=? AND slug=?').bind(org.id,slug).first())fail(409,'slug_exists','Cette référence existe déjà.');
+      const meta=JSON.stringify(metadata(row.provider,{...JSON.parse(row.meta_json),...(body.meta&&typeof body.meta==='object'?body.meta:{})}));
+      const result=await c.env.DB.prepare('UPDATE lite_integrations SET label=?,slug=?,secret_box=?,meta_json=?,enabled=?,version=version+1,updated_at=? WHERE org_id=? AND id=? AND version=? AND NOT EXISTS(SELECT 1 FROM lite_integrations WHERE org_id=? AND slug=? AND id<>?)').bind(label,slug,box,meta,body.enabled===undefined?row.enabled:Number(body.enabled),new Date().toISOString(),org.id,id,row.version,org.id,slug,id).run();
       if(!result.meta.changes)fail(409,'conflict','L’intégration a changé. Actualisez avant de réessayer.');
       return json({integration:await publicIntegration(c,await getIntegration(c,org,id))});
     }
   }else if(request.method==='POST'){
     const body=await readJson(request),provider=textField(body.provider,'service');if(!integrationProviders.some(p=>p.id===provider))fail(400,'provider_unknown','Service inconnu.');
-    const slug=textField(body.slug??provider,'référence',80);if(!/^[a-z][a-z0-9_-]{0,79}$/.test(slug))fail(400,'invalid_slug','Référence invalide.');
-    const label=textField(body.label,'libellé',160),meta=JSON.stringify(metadata(provider,body.meta)),key=textField(body.secret,'clé',8192),id=crypto.randomUUID(),now=new Date().toISOString();
-    const result=await c.env.DB.prepare('INSERT INTO lite_integrations(id,org_id,slug,provider,label,secret_box,meta_json,enabled,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,1,1,?,?) ON CONFLICT(org_id,slug) DO NOTHING').bind(id,org.id,slug,provider,label,await sealSecret(c,org.id,id,key),meta,now,now).run();
-    if(!result.meta.changes)fail(409,'slug_exists','Cette référence existe déjà. Choisissez une autre référence.');
+    const slug=provider==='custom'?integrationSlug(body.slug):provider;
+    const label=provider==='custom'?textField(body.label,'libellé',160):integrationProviders.find(p=>p.id===provider)!.label,meta=JSON.stringify(metadata(provider,body.meta)),key=textField(body.secret,'clé',8192),id=crypto.randomUUID(),now=new Date().toISOString();
+    const result=await c.env.DB.prepare('INSERT INTO lite_integrations(id,org_id,slug,provider,label,secret_box,meta_json,enabled,version,created_at,updated_at) SELECT ?,?,?,?,?,?,?,1,1,?,? WHERE ?=\'custom\' OR NOT EXISTS(SELECT 1 FROM lite_integrations WHERE org_id=? AND provider=?) ON CONFLICT(org_id,slug) DO NOTHING').bind(id,org.id,slug,provider,label,await sealSecret(c,org.id,id,key),meta,now,now,provider,org.id,provider).run();
+    if(!result.meta.changes)fail(409,'slug_exists',provider==='custom'?'Cette référence existe déjà. Choisissez une autre référence.':'Ce service est déjà configuré. Modifiez la clé existante.');
     return json({integration:await publicIntegration(c,await getIntegration(c,org,id))},201);
   }
   fail(404,'not_found','Route introuvable.');
