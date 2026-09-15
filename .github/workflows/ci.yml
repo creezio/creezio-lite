@@ -24,6 +24,8 @@ jobs:
       - run: npm run check
       - run: pnpm --dir template run typecheck
       - run: pnpm --dir template run build
+      - name: Verify the rendered OAuth consent and complete HTTP flow
+        run: node scripts/verify-oauth-consent.mjs
       - name: Generate two independent applications
         run: node scripts/validate-examples.mjs
       - name: Validate mail connectors without sending email

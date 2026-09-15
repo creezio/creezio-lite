@@ -1,4 +1,5 @@
 import {env} from 'cloudflare:workers';
+import type {Metadata} from 'next';
 import type {LiteEnvironment} from '@lite/core';
 import {prepareOAuthConsent} from '@lite/core/mcp-oauth';
 import {ApiError} from '@lite/core/validation';
@@ -6,6 +7,9 @@ import {OAuthConsentForm} from '@/runtime/ui/oauth-consent';
 import {appDefinition} from '@/app/app-definition';
 import {requireChatGPTUser} from '@/app/chatgpt-auth';
 export const dynamic='force-dynamic';
+// Native form POSTs under no-referrer send Origin: null. Keep the real Origin
+// for this same-origin decision while withholding Referer from external clients.
+export const metadata:Metadata={referrer:'same-origin'};
 export default async function Page({searchParams}:{searchParams:Promise<{request?:string}>}){
   const params=await searchParams;
   return <Consent requestId={typeof params.request==='string'?params.request:''}/>;

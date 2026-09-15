@@ -46,3 +46,7 @@ Fusion explicite requise pour le relais du curseur. Après un doctor sans confli
 ## Migration 0.7.0 vers 0.8.0
 
 Fusion explicite après un doctor sans conflit. Préserver le brief, les règles métier, les bindings, le `project_id`, l’authentification Sites, les dépendances et les migrations 0000 à 0008 à l’octet, avec leurs métadonnées. Ajouter 0009_mcp_oauth.sql, son snapshot, son entrée de journal et les tables OAuth de db/schema.ts. Fusionner le runtime, les routes app/.well-known/[...path], app/oauth/[action], la page app/oauth/consent, OPTIONS dans app/api/mcp, et l’exception de BrandChrome pour la page de consentement. Cette page utilise l’identité Sites et ses composants natifs sans charger les onglets de l’application pendant le retour OAuth. Régénérer le verrou après comparaison des sources. Aucun secret d’environnement nouveau ni modification des clés OpenAI/Hermes n’est nécessaire.
+
+## Correction 0.8.1
+
+Appliquer la mise à jour du runtime puis fusionner explicitement les métadonnées `referrer: 'same-origin'` de `app/oauth/consent/page.tsx`. L’upgrade du runtime seul ne modifie pas les pages applicatives. Reconstruire et publier sur le même Site. Les migrations, les identifiants clients OAuth et les secrets d’intégration restent inchangés.
