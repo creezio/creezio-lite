@@ -99,8 +99,16 @@ export function upstreamFailure(status:number,provider:string):never{
 }
 export async function providerRequest(row:IntegrationRow,key:string,path:string,init:RequestInit={}){
   const root=row.provider==='openai'?'https://api.openai.com':hermesUrl(JSON.parse(row.meta_json).baseUrl);
-  try{return await fetch(root+path,{...init,redirect:'error',signal:init.signal??AbortSignal.timeout(15000),headers:{...Object.fromEntries(new Headers(init.headers)),Authorization:`Bearer ${key}`}});}
-  catch(e){if(init.signal?.aborted)throw e;fail(502,'provider_unreachable',`${row.provider==='openai'?'OpenAI':'Hermes'} est injoignable. Vérifiez l’URL publique et la disponibilité du service.`);}
+  // workerd supports manual/follow, not redirect:error. Never forward a secret to a redirect target.
+  let response:Response;
+  try{response=await fetch(root+path,{...init,redirect:'manual',signal:init.signal??AbortSignal.timeout(15000),headers:{...Object.fromEntries(new Headers(init.headers)),Authorization:`Bearer ${key}`}});}
+  catch(e){
+    if(init.signal?.aborted)throw e;
+    if(e instanceof Error&&e.name==='TimeoutError')fail(504,'provider_timeout',`${row.provider==='openai'?'OpenAI':'Hermes'} n’a pas répondu dans le délai prévu. Réessayez.`);
+    fail(502,'provider_unreachable',row.provider==='openai'?'Connexion à OpenAI impossible depuis le serveur. Réessayez dans un instant.':'Hermes est injoignable. Vérifiez l’URL publique et la disponibilité du serveur.');
+  }
+  if(response.status>=300&&response.status<400){await response.body?.cancel();fail(502,'provider_redirect',row.provider==='openai'?'OpenAI a renvoyé une redirection inattendue. Réessayez dans un instant.':'Le serveur Hermes redirige la connexion. Renseignez son adresse HTTPS finale dans Intégrations.');}
+  return response;
 }
 export async function boundedProviderJson(response:Response){
   try{return JSON.parse(dec.decode(await readBytes(response as unknown as Request,2_000_000)));}

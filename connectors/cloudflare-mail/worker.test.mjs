@@ -8,7 +8,7 @@ test('Email Routing parses actual MIME attachments and refuses an unconfirmed re
   let calls=0,rejected='',received;const oldFetch=globalThis.fetch;
   const message=()=>({from:'supplier@example.net',to:'team@example.com',rawSize:Buffer.byteLength(mime),raw:new Blob([mime]).stream(),setReject(value){rejected=value;}});
   try{
-    globalThis.fetch=async(url,init)=>{calls++;assert.equal(String(url),env.INBOUND_URL);assert.equal(init.headers.Authorization,'Bearer fixture-secret');received=JSON.parse(init.body);return Response.json({ok:true,id:'fixture'});};
+    globalThis.fetch=async(url,init)=>{calls++;assert.equal(String(url),env.INBOUND_URL);assert.equal(init.redirect,'manual');assert.equal(init.headers.Authorization,'Bearer fixture-secret');received=JSON.parse(init.body);return Response.json({ok:true,id:'fixture'});};
     await worker.email(message(),env);assert.equal(calls,1);assert.equal(received.message_id,'<fixture@example.net>');assert.equal(received.subject,'Facture é');assert.match(received.text,/Bonjour/);assert.equal(received.attachments[0].filename,'facture.pdf');assert.equal(atob(received.attachments[0].content_base64),'pdf-fixture');
     await worker.email({...message(),to:'team@other.example.com'},env);assert.match(rejected,/Domaine/);assert.equal(calls,1);
     globalThis.fetch=async()=>new Response('',{status:503});await assert.rejects(worker.email(message(),env),/HTTP 503/);

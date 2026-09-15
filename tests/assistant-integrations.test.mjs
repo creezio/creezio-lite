@@ -42,7 +42,7 @@ test('OpenAI chat: streams, executes the registered tools, retains trusted histo
   const db=await localDb(),oldFetch=globalThis.fetch;try{
     const org=await boot(client(db,alice)),other=await boot(client(db,bob)),a=caller(db,alice,org),b=caller(db,bob,other);
     const integration=await create(a),model=`${integration.id}::gpt-test-a`;let requests=[];
-    globalThis.fetch=async(url,init)=>{assert.equal(url,'https://api.openai.com/v1/chat/completions');assert.equal(init.headers.Authorization,`Bearer ${secret}`);assert.equal(init.redirect,'error');const input=JSON.parse(init.body);requests.push(input);
+    globalThis.fetch=async(url,init)=>{assert.equal(url,'https://api.openai.com/v1/chat/completions');assert.equal(init.headers.Authorization,`Bearer ${secret}`);assert.equal(init.redirect,'manual');const input=JSON.parse(init.body);requests.push(input);
       if(requests.length===1){assert.ok(input.tools.some(t=>t.function.name==='lite_tasks_create'));return tool('lite_tasks_create',{body:{title:'Suivi créé par le chat'}});}
       if(requests.length===2){assert.ok(input.messages.some(m=>m.role==='tool'&&m.content.includes('Suivi créé par le chat')));return answer('La tâche est créée.');}
       assert.ok(input.messages.some(m=>m.role==='assistant'&&m.content==='La tâche est créée.'));assert.equal(input.messages.some(m=>m.content==='forged history'),false);return answer('Elle reste disponible.');
