@@ -34,3 +34,7 @@ Voir [ASSISTANT.md](ASSISTANT.md) pour les interfaces, validations et limites du
 Cette version rétablit le module Mail natif, les connexions SMTP/IMAP complètes et Cloudflare Email. Préserver le brief, les règles métier, les dépendances, l’authentification, les bindings et toutes les migrations 0000 à 0006 avec leurs métadonnées. Après un doctor sans conflit, fusionner explicitement les ajouts de `db/schema.ts`, `app/mails/page.tsx`, le runtime, `0007_mail_native.sql`, son snapshot et son entrée de journal. Régénérer ensuite le verrou depuis ces sources contrôlées. Les quatre nouvelles tables et l’index Mail sont additifs ; aucune donnée existante n’est supprimée. Ne pas remplacer le secret de chiffrement existant.
 
 Les anciennes connexions SMTP/IMAP restent conservées ; compléter leurs paramètres dans Intégrations. Configurer la passerelle HTTPS pour SMTP/IMAP, ou Email Sending et le Worker de réception pour Cloudflare. Voir [MAIL.md](MAIL.md). Aucun compte mail, domaine ou envoi réel n’est configuré par la migration.
+
+## Correction 0.6.1
+
+Remplacer le runtime par l’upgrade habituel, puis reconstruire l’application. Aucune migration ni modification des intégrations enregistrées n’est nécessaire. Les appels OpenAI, Hermes et Mail utilisent désormais le mode de redirection compatible avec workerd et refusent explicitement les redirections sans transmettre les identifiants à une autre adresse. Mettre aussi à jour le Worker de réception Cloudflare s’il est installé.
