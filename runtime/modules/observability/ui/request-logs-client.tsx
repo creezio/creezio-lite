@@ -83,7 +83,7 @@ export function RequestLogsClient() {
       const res = await fetch(`/api/v1/admin/request-logs?${params}`);
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error || `HTTP ${res.status}`);
+        throw new Error((typeof body.error === 'string' ? body.error : (body.error as any)?.message) || `HTTP ${res.status}`);
       }
       const data = (await res.json()) as ApiResponse;
       setLogs(data.logs || []);
@@ -107,7 +107,7 @@ export function RequestLogsClient() {
   }, [autoRefresh, load]);
 
   async function clearLogs() {
-    if (!window.confirm("Vider tous les logs en mémoire ?")) return;
+    if (!window.confirm("Vider le journal des requêtes de cet espace ?")) return;
     try {
       const res = await fetch("/api/v1/admin/request-logs", { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -190,8 +190,8 @@ export function RequestLogsClient() {
       </div>
 
       <div className="text-xs text-slate-500">
-        {total.toLocaleString("fr-FR")} entrée(s) affichable(s) — buffer{" "}
-        {capacity.toLocaleString("fr-FR")} (mémoire processus local)
+        {total.toLocaleString("fr-FR")} entrée(s) affichable(s) — conservation des{" "}
+        {capacity.toLocaleString("fr-FR")} dernières requêtes de cet espace
       </div>
 
       {error ? (

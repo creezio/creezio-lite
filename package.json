@@ -1,17 +1,22 @@
 {
-  "name":"lite",
-  "version":"0.3.1",
-  "private":true,
-  "type":"module",
-  "description":"Socle autonome de logiciels métier pour GPT Sites",
-  "engines":{"node":">=24"},
-  "repository":{"type":"git","url":"https://github.com/creezio/creezio-lite.git"},
-  "scripts":{
-    "create":"node bin/lite.mjs create",
-    "doctor":"node bin/lite.mjs doctor",
-    "sync:template":"node scripts/sync-template.mjs",
-    "test":"node scripts/test-kit.mjs",
-    "test:sites":"node scripts/test-kit.mjs",
-    "check":"node scripts/check-kit.mjs"
+  "name": "lite",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Socle autonome de logiciels métier pour GPT Sites",
+  "engines": {
+    "node": ">=24"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/creezio/creezio-lite.git"
+  },
+  "scripts": {
+    "create": "node bin/lite.mjs create",
+    "doctor": "node bin/lite.mjs doctor",
+    "sync:template": "node scripts/sync-template.mjs",
+    "test": "node scripts/test-kit.mjs",
+    "test:sites": "node scripts/test-kit.mjs",
+    "check": "node scripts/check-kit.mjs"
   }
 }

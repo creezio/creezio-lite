@@ -9,6 +9,8 @@ import { supportMount } from './support';
 import { demoMount } from './demo';
 import { tasksMount } from './tasks';
 import { type NativeContext } from './context';
+import { nativeMounts } from './catalog';
+import { canReadModule } from '@lite/core/operations';
 
 export function workspaceCookie(request:Request):string|null {
   const cookies=(request.headers.get('cookie')??'').split(';').map(s=>s.trim());
@@ -18,13 +20,13 @@ export function workspaceCookie(request:Request):string|null {
 }
 export async function handleNativeApi(request:Request,context:ApiContext):Promise<Response|null> {
   const url=new URL(request.url),path=url.pathname.slice('/api/v1/'.length).replace(/\/$/,'');
-  const isNative=/^(auth\/|users$|desktop\/heartbeat$|tasks(?:\/|$)|core(?:\/|$)|modules\/(?:nav|interactive-demo)(?:\/|$)|platform\/platform-support(?:\/|$)|workspaces\/select$)/.test(path);
+  const isNative=/^(auth\/|users$|desktop\/heartbeat$|tasks(?:\/|$)|core(?:\/|$)|modules\/(?![a-z][a-z0-9-]*\/records(?:\/|$))|platform\/platform-support(?:\/|$)|workspaces\/select$)/.test(path);
   if(!isNative)return null;
   try{
     const user=context.identity;if(!user)fail(401,'authentication_required','Connectez-vous pour continuer.');
     checkOrigin(request);const db=context.env.DB;if(!db)fail(503,'database_unavailable','Base de données indisponible.');
     let org:Workspace;
-    try {org=await getWorkspace(db,user,url.searchParams.get('workspace')??workspaceCookie(request));}catch(e){
+    try {org=context.workspace??await getWorkspace(db,user,url.searchParams.get('workspace')??workspaceCookie(request));}catch(e){
       if(!(e instanceof ApiError)||e.code!=='setup_required')throw e;
       // Bootstrap uses the already verified identity. No public synthetic login.
       const setup=await handleApi(new Request(new URL('/api/v1/bootstrap',url),{method:'POST',headers:{origin:url.origin}}),context);
@@ -37,11 +39,8 @@ export async function handleNativeApi(request:Request,context:ApiContext):Promis
     if(path==='workspaces/select'&&request.method==='POST'){const b=await readJson(request);const next=await getWorkspace(db,user,String(b.workspaceId??''));const r=json({workspace:next});r.headers.set('Set-Cookie',`lite_workspace=${next.id}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`);return r;}
     if(path==='users'&&request.method==='GET'){const rows=await db.prepare('SELECT u.id,u.name AS username,m.role FROM lite_members m JOIN lite_users u ON u.id=m.user_id WHERE m.org_id=?').bind(org.id).all();return json({ok:true,users:rows.results.map(r=>({...r,role:r.role==='owner'?'owner':'collaborator',kind:'human',enabled:true})),can_impersonate:false});}
     if(path.startsWith('auth/'))fail(422,'sites_identity','Cette opération utilise la connexion ChatGPT du Site.');
-    const kernel=createApiKernel({brandId:context.app.id,appVersion:'0.3.1',authorizeModuleAccess:({permission})=>({allow:permissions(c,context.app).includes(permission),reason:'permission_denied'})});
-    kernel.registerModuleApi('nav',navMount(c,context.app));
-    kernel.registerModuleApi('interactive-demo',demoMount(c,context.app.name));
-    kernel.registerModuleApi('tasks',tasksMount(c));
-    kernel.registerPlatformApi('platform-support',supportMount(c));
+    const kernel=createApiKernel({brandId:context.app.id,appVersion:'0.4.0',authorizeModuleAccess:({permission})=>({allow:permissions(c,context.app).includes(permission),reason:'permission_denied'})});
+    for(const entry of nativeMounts(c,context.app)){if(entry.space==='platform')kernel.registerPlatformApi(entry.id,entry.mount);else kernel.registerModuleApi(entry.id,entry.mount);}
     const route=path.startsWith('tasks')?`modules/${path}`:path;
     const body=['POST','PUT','PATCH'].includes(request.method)&&request.body?await readJson(request):undefined;
     const response=await kernel.handle({method:request.method,path:`/api/v1/${route}`,query:Object.fromEntries(url.searchParams),body,headers:Object.fromEntries(request.headers)});

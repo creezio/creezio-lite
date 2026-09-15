@@ -266,7 +266,7 @@ export function AnalyticsClient() {
       for (const r of [ov, tl, pg, ck, us, ev, prod]) {
         if (!r.ok) {
           const body = (await r.json().catch(() => ({}))) as { error?: string };
-          throw new Error(body.error || `HTTP ${r.status}`);
+          throw new Error((typeof body.error === 'string' ? body.error : (body.error as any)?.message) || `HTTP ${r.status}`);
         }
       }
       const ovj = (await ov.json()) as OverviewResponse;

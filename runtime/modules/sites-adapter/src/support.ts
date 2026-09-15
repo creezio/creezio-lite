@@ -1,4 +1,5 @@
-import { createSupportServerMount } from '@lite/support';
+import { objectSchema } from '@lite/core/operations';
+import { createSupportServerMount, SUPPORT_STATUTS } from '@lite/support';
 import type { ApiMount } from '../../api-kernel/src/types.ts';
 import { audit, admin, write, textValue, uid, type NativeContext } from './context';
 export function supportMount(c:NativeContext):ApiMount {
@@ -18,6 +19,6 @@ export function supportMount(c:NativeContext):ApiMount {
       db.prepare('UPDATE support_tickets SET statut=?,updated_at=? WHERE org_id=? AND id=?').bind(m.statut,m.ts,org,m.id),audit(c,'support.reply',m.id)]);},
     async setStatus(id,status,ts){write(c);await db.batch([db.prepare('UPDATE support_tickets SET statut=?,updated_at=? WHERE org_id=? AND id=?').bind(status,ts,org,id),audit(c,'support.status',id)]);},
   }});
-  return {...mount,operations:[{id:'list',method:'GET',path:'/',description:'Lister les tickets'},{id:'create',method:'POST',path:'/',description:'Créer un ticket'},{id:'detail',method:'GET',path:'/:id',description:'Lire un ticket'},{id:'message',method:'POST',path:'/:id/messages',description:'Ajouter un message'},{id:'reply',method:'POST',path:'/:id/reply',description:'Répondre comme administrateur',permission:'platform.access.manage'},{id:'status',method:'POST',path:'/:id/statut',description:'Modifier le statut'},{id:'export',method:'GET',path:'/export',description:'Exporter les tickets',permission:'platform.access.manage'}],
+  return {...mount,operations:[{id:'list',method:'GET',path:'/',description:'Lister les tickets'},{id:'create',method:'POST',path:'/',description:'Créer un ticket',inputSchema:objectSchema({sujet:{type:'string',minLength:1,maxLength:300},corps:{type:'string',maxLength:20000}},['sujet'])},{id:'detail',method:'GET',path:'/:id',description:'Lire un ticket'},{id:'message',method:'POST',path:'/:id/messages',description:'Ajouter un message',inputSchema:objectSchema({corps:{type:'string',minLength:1,maxLength:20000}},['corps'])},{id:'reply',method:'POST',path:'/:id/reply',description:'Répondre comme administrateur',inputSchema:objectSchema({corps:{type:'string',minLength:1,maxLength:20000}},['corps']),permission:'platform.access.manage'},{id:'status',method:'POST',path:'/:id/statut',description:'Modifier le statut',inputSchema:objectSchema({statut:{enum:SUPPORT_STATUTS}},['statut'])},{id:'export',method:'GET',path:'/export',description:'Exporter les tickets',permission:'platform.access.manage'}],
     handle:ctx=>{if(ctx.subPath==='export'||ctx.subPath.endsWith('/reply'))admin(c);if(ctx.req.method!=='GET')write(c);return mount.handle(ctx);}};
 }

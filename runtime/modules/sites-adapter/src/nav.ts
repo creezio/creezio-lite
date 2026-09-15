@@ -5,6 +5,7 @@ import { OS_ADMIN_NAV_ENTRY } from '../../nav/src/admin-entry.ts';
 import type { AppDefinition } from '@lite/core';
 import { moduleRegistry } from '@lite/core/registry';
 import { fail } from '@lite/core/validation';
+import { canReadModule } from '@lite/core/operations';
 import { admin, audit, now, type NativeContext } from './context';
 
 export function nativeEntries(app: AppDefinition): NavCatalogEntry[] {
@@ -14,14 +15,18 @@ export function nativeEntries(app: AppDefinition): NavCatalogEntry[] {
     ...defaultOsCatalogEntries().filter(e=>live.has(e.href)),
     extra('os.documents','/documents','Documents','FileText',24),
     extra('os.support','/support','Support','Circle',65),OS_ADMIN_NAV_ENTRY,
-    extra('os.audit','/admin/activity','Activité','Activity',74),
+    extra('os.audit','/admin/activity','Journal d’activité','Activity',74,'admin'),
+    extra('os.analytics','/admin/analytics','Usage et activité','ChartNoAxesCombined',74.5,'admin'),
     extra('os.search','/admin/search','Recherche','Search',75,'admin'),
-    extra('os.connections','/admin/connections','API et MCP','Plug',76,'admin'),
+    extra('os.api','/admin/api','API','Braces',76,'admin'),
+    extra('os.mcp','/admin/mcp','MCP','Plug',77,'admin'),
+    extra('os.access','/admin/access','Groupes et accès','Shield',78,'admin'),
+    extra('os.connections','/admin/connections','Clés et connexions','KeyRound',79,'admin'),
     ...moduleRegistry(app).filter(m=>m.kind==='business').map((m,i):NavCatalogEntry=>({id:`module.${m.id}`,href:m.href,label:m.name,icon:'FileText',group:'brand',order:40+i,source:'module',available:true,defaultVisible:true,permission:`module.${m.id}.read`}))];
 }
 export function permissions(c:NativeContext,app:AppDefinition):string[] {
   return [...(['owner','admin'].includes(c.workspace.role)?['platform.access.manage','platform.users.manage']:[]),
-    ...app.modules.filter(m=>(m.readRoles??['owner','admin','member','viewer']).includes(c.workspace.role)).map(m=>`module.${m.id}.read`)];
+    ...app.modules.filter(m=>(m.readRoles??['owner','admin','member','viewer']).includes(c.workspace.role)&&canReadModule(c.workspace,m.id)).map(m=>`module.${m.id}.read`)];
 }
 export function navMount(c: NativeContext, app: AppDefinition) {
   const org = c.workspace.id;
@@ -41,7 +46,7 @@ export function navMount(c: NativeContext, app: AppDefinition) {
     return {value,statement};
   }
   return createNavMount({
-    osEntries:()=>nativeEntries(app), features:{plugins:false,fleet:false},
+    osEntries:()=>nativeEntries(app).filter(e=>{const id=moduleRegistry(app).find(m=>m.href===e.href)?.id;return !id||canReadModule(c.workspace,id);}), features:{plugins:false,fleet:false},
     getSession:()=>({sub:c.user.userId,role:c.workspace.role==='owner'?'owner':'collaborator',permissions:permissions(c,app),impersonating:false}),
     persistence:{list,
       async upsert(patch,actor) {admin(c);const p=await prepare(patch,actor);await c.db.batch([p.statement,audit(c,'nav.update',patch.entryId)]);return (await list()).find(v=>v.entryId===patch.entryId)!;},

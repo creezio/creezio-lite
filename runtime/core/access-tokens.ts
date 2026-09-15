@@ -1,6 +1,7 @@
 import type { ApiContext, Identity, Workspace } from './types.ts';
 import { fail, requireRole } from './validation.ts';
 import { hash, inviteToken, json, readJson } from './http.ts';
+import type { Operation } from './operations.ts';
 
 export type TokenAccess = {id:string;workspaceId:string;mode:'read'|'write'};
 export async function resolveToken(request:Request,context:ApiContext):Promise<{identity:Identity;access:TokenAccess}|null>{
@@ -16,10 +17,10 @@ export async function resolveToken(request:Request,context:ApiContext):Promise<{
 }
 
 /** Machine credentials grant only the data API, never account/admin operations. */
-export function authorizeTokenRequest(request:Request,access:TokenAccess):Request {
+export function authorizeTokenRequest(request:Request,access:TokenAccess,operation?:Operation):Request {
   const url=new URL(request.url),path=url.pathname.replace(/^\/api\/v1\//,'');
   if(/^members(?:\/|$)/.test(path)&&!['GET','HEAD'].includes(request.method))fail(403,'token_scope','La gestion des accès nécessite une session administrateur.');
-  if(!/^(?:search|registry|modules|dashboard|members|audit)(?:\?.*)?$/.test(path)&&!/^(?:members|audit)\/[^/]+$/.test(path)&&!/^modules\/[a-z][a-z0-9-]*\/records(?:\/[^/]+)?$/.test(path)&&!/^files(?:\/[^/]+(?:\/metadata)?)?$/.test(path)&&!/^tasks(?:\/[^/]+)?$/.test(path)&&!/^platform\/platform-support(?:\/[^/]+(?:\/messages)?)?$/.test(path))fail(403,'token_scope','Cette clé ne donne pas accès à cette opération.');
+  if(!operation?.tokenAllowed)fail(403,'token_scope','Cette clé ne donne pas accès à cette opération.');
   if(access.mode==='read'&&!['GET','HEAD'].includes(request.method))fail(403,'read_only_token','Cette clé autorise uniquement la lecture.');
   if(url.searchParams.has('workspace')&&url.searchParams.get('workspace')!==access.workspaceId)fail(403,'token_workspace','Cette clé appartient à un autre espace.');
   url.searchParams.set('workspace',access.workspaceId);

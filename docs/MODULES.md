@@ -28,3 +28,11 @@ La recherche est active par défaut pour les champs. `searchable:false` sur un c
 Les règles métier supplémentaires vont dans `app/business-rules.ts`. Les mêmes règles sont exécutées pour l’interface, l’API et MCP. Des relations, transactions entre fiches ou traitements asynchrones exigent du code dédié ; un formulaire déclaratif ne les invente pas.
 
 Un module utilisant une table ou un service spécifique doit fournir son contrat de stockage, ses permissions, ses opérations et sa source d’indexation. Le branchement automatique sans code supplémentaire concerne les modules déclaratifs sur `lite_records`.
+
+## Catalogue API et groupes
+
+Le registre des opérations fournit automatiquement les routes documentées, OpenAPI, les outils MCP et les lignes de permissions. Les routes natives proviennent des mounts réellement enregistrés ; leurs alias renvoient à la même opération et aux mêmes droits. Déclarer le `inputSchema` dans chaque opération native pour documenter les paramètres.
+
+`/admin/api` présente toutes les routes servies ; `/admin/mcp` expose les outils, leur état, leurs paramètres et la création d’alias nommés ; `/admin/access` configure les groupes et restrictions. Chaque rôle conserve ses limites : les groupes les restreignent et un refus est prioritaire. Le propriétaire et les fonctions indispensables sont protégés. Les API, MCP HTTP, WebMCP et les résultats de recherche utilisent les droits actuels, y compris pour les clés déjà émises.
+
+Un outil désactivé disparaît des listes et est refusé à l’exécution. Les API binaires et les opérations de session ou d’administration des identités restent explicitement hors MCP. Les utilisateurs peuvent lire le motif dans le catalogue ; aucun endpoint absent n’est présenté comme fonctionnel.
