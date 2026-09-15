@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.8.1 — Validation du consentement OAuth
+
+- Corrige la politique de référent de la seule page de consentement : les formulaires natifs transmettent l’origine du Site.
+- Conserve les refus des origines absentes, nulles ou étrangères, le contrôle du nonce et les droits serveur.
+- Aucun changement des données, des secrets, des migrations ni des autres pages.
+
 ## 0.8.0 — OAuth MCP
 
 - Raccorde OAuth 2.1 au MCP existant : découverte publique, inscription des clients, PKCE S256, consentement via le compte Sites, renouvellement et révocation.
