@@ -83,6 +83,19 @@ export function coreOperations(app:AppDefinition):Operation[]{
   add('analytics.ingest','POST','analytics/events','observability','Activité','Enregistrer l’usage de la session',{...essential,roles,bodySchema:objectSchema({events:{type:'array',maxItems:100,items:{type:'object'}}},['events'])});
   for(const part of ['overview','timeline','pages','clicks','users','events','productivity'])add(`analytics.${part}`,'GET',`admin/analytics/${part}`,'observability','Activité',`Activité : ${part}`,{roles:admin,querySchema:objectSchema({...paging,period:{enum:['day','week','month','year']},from:stringSchema,to:stringSchema,kind:{enum:['all','human','ai']},userId:idSchema})});
   add('analytics.purge','DELETE','admin/analytics/events','observability','Activité','Purger les événements d’usage',{roles:admin});
+  const integrationAdmin={roles:admin,tokenAllowed:false,mcp:false,mcpReason:'La configuration de secrets est réservée à la session administrateur.'};
+  for(const [id,method,suffix,description] of [
+    ['list','GET','','Lister les intégrations sans les clés'],['catalog','GET','/catalog','Catalogue des services'],
+    ['get','GET','/:id','Lire les réglages sans la clé'],['create','POST','','Ajouter une intégration chiffrée'],
+    ['update','PATCH','/:id','Modifier une intégration'],['delete','DELETE','/:id','Supprimer une intégration'],['test','POST','/:id/test','Tester la connexion au fournisseur'],
+  ] as const)add(`integrations.${id}`,method,`platform/integrations${suffix}`,'integrations','Intégrations',description,{...integrationAdmin,...(['create','update'].includes(id)?{bodySchema:objectSchema({provider:stringSchema,label:stringSchema,slug:stringSchema,secret:{type:'string',maxLength:8192,writeOnly:true},meta:objectSchema({baseUrl:stringSchema,model:stringSchema,headerName:stringSchema}),enabled:{type:'boolean'},version:{type:'integer',minimum:1}},id==='create'?['provider','label','secret']:['version'])}:{}),...(id==='delete'?{querySchema:objectSchema({version:{type:'integer',minimum:1}},['version'])}:{})});
+  const personalAssistant={roles,tokenAllowed:false,mcp:false,mcpReason:'Conversation privée de la session ; exclue des outils pour éviter les appels récursifs.'};
+  for(const [id,method,path,description] of [
+    ['status','GET','llm-status','État des intégrations du chat'],['models','GET','models','Modèles OpenAI configurés'],['hermes.models','GET','hermes-models','Modèles Hermes configurés'],
+    ['conversations.list','GET','conversations','Lister ses conversations'],['conversations.create','POST','conversations','Créer une conversation'],
+    ['conversations.get','GET','conversations/:id','Lire sa conversation'],['conversations.update','PATCH','conversations/:id','Modifier sa conversation'],['conversations.delete','DELETE','conversations/:id','Supprimer sa conversation'],
+    ['trace','GET','conversations/:id/trace','Actions et diagnostics de sa conversation'],['chat','POST','chat','Dialoguer avec OpenAI ou Hermes'],['transcribe','POST','transcribe','Transcrire un message vocal'],
+  ] as const)add(`assistant.${id}`,method,`assistant/${path}`,'assistant','Assistant',description,{...personalAssistant,...(id==='transcribe'?{requestType:'file' as const}:method==='POST'||method==='PATCH'?{bodySchema:{type:'object',additionalProperties:true}}:{})});
   for(const module of app.modules){
     const data=objectSchema(Object.fromEntries(module.fields.map(f=>[f.key,fieldSchema(f)])),module.fields.filter(f=>f.required).map(f=>f.key));
     for(const [action,method,suffix] of [['list','GET',''],['get','GET','/:id'],['create','POST',''],['update','PATCH','/:id'],['archive','DELETE','/:id']] as const){

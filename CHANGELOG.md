@@ -1,5 +1,14 @@
 # Versions de Lite
 
+## 0.5.0 — Intégrations et assistant restaurés
+
+- Restaure le chat flottant et son panneau natif : historique privé dans D1, flux de réponse, arrêt, actions et traces.
+- Porte la page Intégrations d’origine : secrets AES-GCM, références, versions, activation et test ; profils OpenAI et Hermes configurables.
+- Relie le chat aux API OpenAI et Hermes avec les outils issus du registre MCP, droits et désactivations revérifiés pendant chaque tour.
+- Rétablit le nom Analytics dans le menu et la page. Ajoute la migration additive 0006 et la configuration serveur du coffre.
+- Corrige l’adaptateur de test SQLite pour exécuter les batches atomiquement comme D1, y compris pendant un flux de réponse.
+
+
 ## 0.4.0
 
 - Restauration des composants Creezio de journal des requêtes, statistiques d’usage, catalogue API et administration MCP, raccordés à D1.

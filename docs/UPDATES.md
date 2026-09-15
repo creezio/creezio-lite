@@ -20,3 +20,11 @@ Les cookies d’espace précédents sont reconnus puis contrôlés par les règl
 ## Migration 0.3.1 vers 0.4.0
 
 Fusion applicative explicite nécessaire : préserver le brief, les règles métier, les bindings, l’identité Sites et les migrations 0000 à 0004 à l’octet. Ajouter 0005_admin_operations.sql, son snapshot et l’entrée de journal. Intégrer les nouveaux fichiers du runtime, les pages admin, le provider d’usage et l’alias TypeScript `@lite/core/*`. Régénérer le verrou depuis ces sources après vérification. La migration ajoute les groupes, politiques, journal des requêtes et événements d’usage ; elle ne réécrit aucune donnée métier.
+
+## Migration 0.4.0 vers 0.5.0
+
+Préserver le brief, les règles métier, l’authentification, les bindings, le lockfile de dépendances et les migrations 0000 à 0005 à l’octet. Ajouter 0006_assistant_integrations.sql, son snapshot et l’entrée de journal. Fusionner le runtime, la page Intégrations, le libellé Analytics et BrandChrome (retirer le masquage permanent du chat). Vérifier le verrou avant la migration et le régénérer après cette fusion explicite.
+
+Configurer `LITE_INTEGRATION_SECRET` comme secret serveur Sites aléatoire (au moins 32 octets) uniquement s’il n’existe pas déjà. Ne jamais le changer lors d’une mise à jour : les clés d’intégration déjà chiffrées deviendraient illisibles. Les clés OpenAI et Hermes sont saisies par l’administrateur dans l’application, pas dans Git ni dans le navigateur après enregistrement.
+
+Voir [ASSISTANT.md](ASSISTANT.md) pour les interfaces, validations et limites du raccordement externe.

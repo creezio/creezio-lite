@@ -41,3 +41,9 @@ Les vérifications et le résultat de publication seront inscrits à la fin de c
 - Aucun parcours visuel connecté au compte de l’utilisateur n’a été exécuté dans un navigateur pendant cette reprise. Les composants restaurés sont ceux du dépôt d’origine ; ce point est distinct des tests serveur et de compilation.
 
 La publication du kit est soumise à la CI de sa PR. L’application conserve son Site et son audience.
+
+## Complément 0.5.0 — omissions du portage initial
+
+Le contrôle 0.4.0 était insuffisant : le composant Analytics existait mais son libellé avait été changé en « Usage et activité » ; la page Intégrations n’avait pas été portée ; `hideAssistantOn={()=>true}` masquait le chat. Ce complément rétablit le libellé, porte la page d’origine et reconnecte le widget d’origine à un backend Sites persistant.
+
+La vérification couvre désormais le chiffrement et l’isolation des intégrations, les conversations privées, le protocole OpenAI/Hermes simulé, les outils MCP, les refus, les erreurs et l’arrêt. Les tests du fournisseur utilisent des doubles HTTP ; ils ne prouvent pas la disponibilité d’un serveur Hermes utilisateur ni la validité de sa clé OpenAI. Le bouton Tester utilise les services réels une fois une intégration saisie. Le rendu dans la session utilisateur n’a pas été contrôlé au navigateur.

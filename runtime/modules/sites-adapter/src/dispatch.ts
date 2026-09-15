@@ -1,5 +1,7 @@
 import type { ApiContext, BeforeWrite, Workspace } from '@lite/core';
 import { handleApi } from '@lite/core';
+import { integrationsRoute } from '@lite/core/integrations';
+import { assistantRoute } from '@lite/core/assistant';
 import { workspace } from '@lite/core/api';
 import { resolveToken, authorizeTokenRequest } from '@lite/core/access-tokens';
 import { handleMcp } from '@lite/core/mcp';
@@ -25,7 +27,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
   try{
     const credential=await resolveToken(request,context);
     const trusted=credential?{...context,identity:credential.identity}:context;
-    if(source==='api'&&trusted.identity){detail.query=Object.fromEntries(new URL(request.url).searchParams);if(request.headers.get('content-type')?.startsWith('application/json'))detail.body=await readJson(request.clone()).catch(()=>undefined);}
+    if(source==='api'&&trusted.identity){detail.query=Object.fromEntries(new URL(request.url).searchParams);if(!new URL(request.url).pathname.startsWith('/api/v1/assistant/')&&request.headers.get('content-type')?.startsWith('application/json'))detail.body=await readJson(request.clone()).catch(()=>undefined);}
     const orgFor=async(req:Request)=>workspace(context.env.DB,trusted.identity!,credential?.access.workspaceId??new URL(req.url).searchParams.get('workspace')??workspaceCookie(req));
     const invoke=async(incoming:Request,fixedOrg?:Workspace):Promise<Response>=>{
       let current=incoming;let url=new URL(current.url);
@@ -57,7 +59,19 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
         const body=await readJson(current),tool=tools.find(t=>t.name===body.name);if(!tool)fail(403,'tool_forbidden','Outil désactivé ou inaccessible.');
         detail={tool:tool.name,args:body.arguments};return json(await tool.execute(body.arguments??{}));
       }
-      return await accessRoute(current,scoped,org,operations)??await mcpAdminRoute(current,scoped,org,operations)??await observabilityRoute(current,scoped,org)??await handleNativeApi(current,scoped)??await handleApi(current,scoped,options);
+      const assistant=await assistantRoute(current,scoped,org,{tools:async()=>{
+        // Re-read membership, group policies and MCP switches before each tool call.
+        const liveOrg=await orgFor(current),liveOps=operationCatalog({db:context.env.DB,user:trusted.identity!,workspace:liveOrg},context.app);
+        const assistantOp=liveOps.find(o=>o.id==='assistant.chat')!;assertOperationAllowed(assistantOp,liveOrg);
+        const liveCall=async(path:string,init:{method?:string;body?:string}={})=>{
+          const target=new URL('/api/v1/'+path,request.url);target.searchParams.set('workspace',org.id);
+          const response=await invoke(new Request(target,{method:init.method??'GET',headers:{origin:target.origin,...(init.body?{'content-type':'application/json'}:{})},body:init.body}));
+          const data=await response.json() as any;if(!response.ok)throw new ApiError(response.status,data.error?.code??'tool_error',data.error?.message??'Opération refusée.');return data;
+        };
+        return dataTools(context.app,liveOrg.role,liveCall,true,{operations:liveOps,workspace:liveOrg,bindings:await toolBindings({...scoped,workspace:liveOrg},liveOrg,liveOps)});
+      }});
+      if(assistant)return assistant;
+      return await integrationsRoute(current,scoped,org)??await accessRoute(current,scoped,org,operations)??await mcpAdminRoute(current,scoped,org,operations)??await observabilityRoute(current,scoped,org)??await handleNativeApi(current,scoped)??await handleApi(current,scoped,options);
     };
     if(source==='mcp'){
       if(!trusted.identity)fail(401,'authentication_required','Authentification requise.');
