@@ -152,30 +152,44 @@ export function createTransport(provider: AgentProviderId, options: ProviderClie
     const signal = input.signal;
     if (signal?.aborted) throw new ProviderFailure({ provider, code: 'provider_timeout', delivery: 'not_sent', reason: 'caller_abort' });
 
-    // Résolution vivante : un credential révoqué ou désactivé arrête l'appel avant tout réseau.
-    let credential: unknown;
-    try { credential = await resolveCredential(); }
-    catch { throw new ProviderFailure({ provider, code: 'credential_unavailable', delivery: 'not_sent', reason: 'credential_missing' }); }
-    if (!isValidCredential(provider, credential)) {
-      throw new ProviderFailure({ provider, code: 'credential_unavailable', delivery: 'not_sent', reason: credentialReason(provider, credential) });
-    }
-    if (signal?.aborted) throw new ProviderFailure({ provider, code: 'provider_timeout', delivery: 'not_sent', reason: 'caller_abort' });
-
+    // Le budget (délai + abort de l'appelant) couvre toute l'opération, résolution du credential incluse.
     const controller = new AbortController();
     let timedOut = false;
     const onAbort = () => controller.abort();
     signal?.addEventListener('abort', onAbort, { once: true });
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
-    const headers: Record<string, string> = { authorization: `Bearer ${credential.key}`, accept: 'application/json' };
-    let body: string | undefined;
-    if (input.body !== undefined) { headers['content-type'] = 'application/json'; body = JSON.stringify(input.body); }
-
     const interrupted = (delivery: DeliveryKnowledge) => new ProviderFailure({
       provider, code: timedOut ? 'provider_timeout' : signal?.aborted ? 'provider_timeout' : 'provider_unreachable',
       delivery, reason: timedOut ? 'timeout' : signal?.aborted ? 'caller_abort' : 'network',
     });
 
     try {
+      // Résolution vivante : un credential révoqué ou désactivé arrête l'appel avant tout réseau.
+      // Une résolution bloquée est abandonnée à l'expiration ou à l'annulation ; sa valeur tardive est ignorée.
+      let credential: unknown;
+      const abandoned = Symbol('abandoned');
+      const interruption = new Promise<typeof abandoned>(resolve => { controller.signal.addEventListener('abort', () => resolve(abandoned), { once: true }); });
+      let resolution: Promise<unknown>;
+      try { resolution = Promise.resolve(resolveCredential()); }
+      catch { throw new ProviderFailure({ provider, code: 'credential_unavailable', delivery: 'not_sent', reason: 'credential_missing' }); }
+      resolution.catch(() => undefined);
+      const outcome = await Promise.race([resolution.then(value => ({ value }), () => ({ failed: true as const })), interruption]);
+      if (outcome === abandoned || controller.signal.aborted) {
+        throw timedOut
+          ? new ProviderFailure({ provider, code: 'credential_unavailable', delivery: 'not_sent', reason: 'timeout' })
+          : new ProviderFailure({ provider, code: 'provider_timeout', delivery: 'not_sent', reason: 'caller_abort' });
+      }
+      if ('failed' in outcome) throw new ProviderFailure({ provider, code: 'credential_unavailable', delivery: 'not_sent', reason: 'credential_missing' });
+      credential = outcome.value;
+      if (!isValidCredential(provider, credential)) {
+        throw new ProviderFailure({ provider, code: 'credential_unavailable', delivery: 'not_sent', reason: credentialReason(provider, credential) });
+      }
+      const headers: Record<string, string> = { authorization: `Bearer ${credential.key}`, accept: 'application/json' };
+      let body: string | undefined;
+      if (input.body !== undefined) { headers['content-type'] = 'application/json'; body = JSON.stringify(input.body); }
+
+      // Budget épuisé pendant la validation : aucun fetch n'est invoqué.
+      if (controller.signal.aborted) throw interrupted('not_sent');
       let response: Response;
       try {
         // fetch serveur par défaut ; jamais de suivi de redirection pour ne pas transférer l'identifiant.
@@ -264,6 +278,7 @@ export function optionalInteger(check: Check, value: unknown, field: string, min
   if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) failCheck(check, field);
   return value;
 }
+// Une clé inconnue n'est jamais recopiée dans l'échec : seul le conteneur connu est nommé.
 export function rejectUnknownKeys(check: Check, value: Record<string, unknown>, allowed: readonly string[], field: string) {
-  for (const key of Object.keys(value)) if (!allowed.includes(key)) failCheck(check, `${field}.${key}`);
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) failCheck(check, field, 'unknown_field');
 }

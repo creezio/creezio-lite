@@ -24,7 +24,7 @@ test('workerd : racines fixes, auth, redirections, statuts d’erreur, délai, a
       const input=await request.json();
       let reads=0;
       const credential={provider:input.credentialProvider??input.provider,key:${JSON.stringify(KEY)},enabled:input.enabled??true};
-      const options={resolveCredential:async()=>{reads++;return credential;},...(input.timeoutMs?{timeoutMs:input.timeoutMs}:{}),...(input.maxResponseBytes?{maxResponseBytes:input.maxResponseBytes}:{})};
+      const options={resolveCredential:async()=>{reads++;if(input.credentialDelayMs)await new Promise(r=>setTimeout(r,input.credentialDelayMs));return credential;},...(input.timeoutMs?{timeoutMs:input.timeoutMs}:{}),...(input.maxResponseBytes?{maxResponseBytes:input.maxResponseBytes}:{})};
       const controller=new AbortController();
       if(input.abortAfterMs!==undefined)setTimeout(()=>controller.abort(),input.abortAfterMs);
       try{
@@ -80,7 +80,18 @@ test('workerd : racines fixes, auth, redirections, statuts d’erreur, délai, a
     const disabled=clean(await call({provider:'xai',enabled:false,method:'listModels'}));assert.equal(disabled.body.failure.code,'credential_unavailable');assert.equal(disabled.body.failure.reason,'credential_disabled');
     const invalid=clean(await call({provider:'cursor',method:'createAgent',args:[{agentId:'agent-1',prompt:{text:'x'},envVars:{A:'b'}}]}));
     assert.equal(invalid.body.failure.code,'invalid_request');assert.equal(invalid.body.failure.delivery,'not_sent');
+    const MARK='PRIVATE_FAKE_CLIENT_DATA@example.test';
+    const nested=clean(await call({provider:'cursor',method:'createAgent',args:[{agentId:AGENT,prompt:{text:'x',[MARK]:1}}]}));
+    assert.equal(nested.body.failure.reason,'unknown_field');assert.equal(nested.body.failure.field,'prompt');assert.equal(JSON.stringify(nested).includes(MARK),false);
     assert.equal(calls.length,before,'aucun appel réseau pour un credential ou un payload refusé');
+    const blockedStart=Date.now();
+    const blocked=clean(await call({provider:'cursor',method:'listModels',timeoutMs:1000,credentialDelayMs:2500}));
+    assert.ok(Date.now()-blockedStart<1400,'le délai couvre la résolution du credential');
+    assert.equal(blocked.body.failure.code,'credential_unavailable');assert.equal(blocked.body.failure.reason,'timeout');assert.equal(blocked.body.failure.delivery,'not_sent');
+    const abortedEarly=clean(await call({provider:'xai',method:'listModels',credentialDelayMs:2500,abortAfterMs:50}));
+    assert.equal(abortedEarly.body.failure.code,'provider_timeout');assert.equal(abortedEarly.body.failure.reason,'caller_abort');assert.equal(abortedEarly.body.failure.delivery,'not_sent');
+    await sleep(2600);
+    assert.equal(calls.length,before,'aucun fetch après une résolution de credential bloquée puis tardive');
 
     mode='redirect';
     const redirect=clean(await call({provider:'cursor',method:'getAgent',args:[AGENT]}));

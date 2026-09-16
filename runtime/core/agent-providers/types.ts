@@ -30,7 +30,7 @@ export type DeliveryKnowledge = 'not_sent' | 'unknown' | 'responded';
 // Précision sûre sur l'origine d'un échec ; jamais un extrait de corps ou de secret.
 export type ProviderFailureReason =
   | 'caller_abort' | 'timeout' | 'network' | 'credential_missing' | 'credential_disabled'
-  | 'credential_mismatch' | 'credential_malformed' | 'not_json' | 'too_large' | 'schema'
+  | 'credential_mismatch' | 'credential_malformed' | 'not_json' | 'too_large' | 'schema' | 'unknown_field'
   | 'unknown_status' | 'identity_mismatch' | 'redirect' | 'http_status';
 
 export type ProviderFailureInit = {

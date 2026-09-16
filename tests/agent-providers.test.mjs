@@ -98,8 +98,8 @@ test('createAgent refuse les identifiants, payloads et champs non documentés sa
   const invalid=[
     [{...createInput,agentId:undefined},'agentId'],[{...createInput,agentId:'agent-1'},'agentId'],[{...createInput,agentId:'bc-not-a-uuid'},'agentId'],[{...createInput,agentId:`${AGENT}/../other`},'agentId'],
     [{...createInput,envVars:{TOKEN:'x'}},'envVars'],[{...createInput,mcpServers:[{name:'x',url:'https://mcp.example'}]},'mcpServers'],[{...createInput,customSubagents:[]},'customSubagents'],
-    [{...createInput,prompt:{text:'x',images:[]}},'prompt.images'],[{...createInput,prompt:{text:'   '}},'prompt.text'],[{...createInput,prompt:'texte'},'prompt'],
-    [{...createInput,unknownField:true},'input.unknownField'],[{...createInput,name:'n'.repeat(101)},'name'],[{...createInput,mode:'yolo'},'mode'],
+    [{...createInput,prompt:{text:'x',images:[]}},'prompt'],[{...createInput,prompt:{text:'   '}},'prompt.text'],[{...createInput,prompt:'texte'},'prompt'],
+    [{...createInput,unknownField:true},'input'],[{...createInput,name:'n'.repeat(101)},'name'],[{...createInput,mode:'yolo'},'mode'],
     [{...createInput,repos:[{url:'http://github.com/org/repo'}]},'repos[0].url'],[{...createInput,repos:[{url:'https://gitlab.com/org/repo'}]},'repos[0].url'],
     [{...createInput,repos:[{url:'https://user:pw@github.com/org/repo'}]},'repos[0].url'],[{...createInput,repos:[{url:'https://github.com/org/repo?x=1'}]},'repos[0].url'],
     [{...createInput,repos:[{url:'https://github.com/org/repo',startingRef:'../evil'}]},'repos[0].startingRef'],[{...createInput,repos:[{url:'https://github.com/org/repo',prUrl:'https://github.com/org/repo/issues/1'}]},'repos[0].prUrl'],
@@ -258,7 +258,7 @@ test('xAI createResponse exige model, input, budget borné et store explicite ; 
     [{...base,store:undefined},'store'],[{...base,store:'false'},'store'],[{...base,maxOutputTokens:undefined},'maxOutputTokens'],[{...base,maxOutputTokens:0},'maxOutputTokens'],[{...base,maxOutputTokens:10_000_000},'maxOutputTokens'],[{...base,maxOutputTokens:12.5},'maxOutputTokens'],
     [{...base,model:''},'model'],[{...base,model:'../models'},'model'],[{...base,input:''},'input'],[{...base,input:[]},'input'],[{...base,input:[{role:'robot',content:'x'}]},'input[0].role'],
     [{...base,input:[{role:'user',content:[{type:'input_image',image_url:'https://x'}]}]},'input[0].content[0].type'],[{...base,input:[{type:'function_call_output',call_id:'c 1',output:'x'}]},'input[0].call_id'],
-    [{...base,stream:true},'input.stream'],[{...base,background:true},'input.background'],[{...base,previous_response_id:'x'},'input.previous_response_id'],
+    [{...base,stream:true},'input'],[{...base,background:true},'input'],[{...base,previous_response_id:'x'},'input'],
     [{...base,instructions:'Sois bref',previousResponseId:'resp_prev'},'instructions'],[{...base,previousResponseId:'resp prev'},'previousResponseId'],
     [{...base,tools:[{...tool,parameters:{type:'string'}}]},'tools[0].parameters'],[{...base,tools:[{...tool,parameters:{anyOf:[{type:'object'},{type:'string'}]}}]},'tools[0].parameters'],
     [{...base,tools:[{...tool,type:'web_search'}]},'tools[0].type'],[{...base,tools:[tool,tool]},'tools[1].name'],[{...base,tools:[{...tool,name:'bad name'}]},'tools[0].name'],[{...base,tools:[{...tool,description:undefined}]},'tools[0].description'],
@@ -308,6 +308,65 @@ test('xAI createResponse reste synchrone, transmet les outils sans les exécuter
   assert.equal(limited.code,'provider_quota');assert.equal(limited.retryAfterMs,7000);assert.equal(limited.providerCode,'rate_limit_exceeded');assert.equal(quota.calls.length,1);assertClean(limited);
   const listShape=fakeFetch(()=>jsonResponse({object:'list',data:[{id:''}]}));
   assert.equal((await failure(createXaiProvider({resolveCredential:credentialFor('xai'),fetch:listShape.fetch}).listModels())).code,'provider_response');
+});
+
+test('une clé inconnue n’est jamais recopiée dans l’échec, à tout niveau d’imbrication',async()=>{
+  const MARK='PRIVATE_FAKE_CLIENT_DATA@example.test';
+  const {calls,fetch}=fakeFetch(()=>jsonResponse({}));
+  const cursor=createCursorProvider({resolveCredential:credentialFor('cursor'),fetch}),xai=createXaiProvider({resolveCredential:credentialFor('xai'),fetch});
+  const tool={type:'function',name:'lookup',description:'Recherche',parameters:{type:'object'}};
+  const base={model:'grok-fixture',input:'Bonjour',maxOutputTokens:64,store:false};
+  const cases=[
+    [()=>cursor.createAgent({...createInput,[MARK]:1}),'input'],
+    [()=>cursor.createAgent({...createInput,prompt:{text:'x',[MARK]:1}}),'prompt'],
+    [()=>cursor.createAgent({...createInput,model:{id:'m',[MARK]:1}}),'model'],
+    [()=>cursor.createAgent({...createInput,repos:[{url:'https://github.com/org/repo',[MARK]:1}]}),'repos[0]'],
+    [()=>cursor.createAgent({...createInput,env:{type:'pool',[MARK]:1}}),'env'],
+    [()=>cursor.createAgent({...createInput,[`prompt.${MARK}`]:1}),'input'],
+    [()=>xai.createResponse({...base,[MARK]:1}),'input'],
+    [()=>xai.createResponse({...base,input:[{role:'user',content:'x',[MARK]:1}]}),'input[0]'],
+    [()=>xai.createResponse({...base,input:[{role:'user',content:[{type:'input_text',text:'x',[MARK]:1}]}]}),'input[0].content[0]'],
+    [()=>xai.createResponse({...base,input:[{type:'function_call_output',call_id:'c',output:'o',[MARK]:1}]}),'input[0]'],
+    [()=>xai.createResponse({...base,tools:[{...tool,[MARK]:1}]}),'tools[0]'],
+    [()=>xai.createResponse({...base,tools:[tool],toolChoice:{type:'function',name:'lookup',[MARK]:1}}),'toolChoice'],
+  ];
+  for(const [run,field] of cases){
+    const error=await failure(run());
+    assert.equal(error.code,'invalid_request');assert.equal(error.reason,'unknown_field');assert.equal(error.delivery,'not_sent');assert.equal(error.field,field);
+    const everywhere=[JSON.stringify(error),error.message,String(error.stack),String(error.field),...Object.values(error).map(String)].join('\n');
+    assert.equal(everywhere.includes(MARK),false,`marqueur recopié pour ${field}`);assert.equal(everywhere.includes('example.test'),false);assertClean(error);
+  }
+  assert.equal(calls.length,0);
+});
+
+test('le budget délai/abort couvre la résolution du credential : bloquée, tardive ou annulée, sans aucun fetch',async()=>{
+  const {calls,fetch}=fakeFetch(()=>jsonResponse({items:[]}));
+  const never=()=>new Promise(()=>{});
+  const started=Date.now();
+  const blocked=await failure(createCursorProvider({resolveCredential:never,fetch,timeoutMs:1000}).listModels());
+  const elapsed=Date.now()-started;
+  assert.equal(blocked.code,'credential_unavailable');assert.equal(blocked.reason,'timeout');assert.equal(blocked.delivery,'not_sent');assert.ok(elapsed>=950&&elapsed<1150,`délai respecté (${elapsed} ms)`);assertClean(blocked);
+  let lateResolved=false;
+  const late=()=>new Promise(resolve=>setTimeout(()=>{lateResolved=true;resolve({provider:'cursor',key:KEY_CURSOR,enabled:true});},1300));
+  const lateStart=Date.now();
+  const expired=await failure(createCursorProvider({resolveCredential:late,fetch,timeoutMs:1000}).getAgent(AGENT));
+  assert.ok(Date.now()-lateStart<1150);assert.equal(expired.code,'credential_unavailable');assert.equal(expired.reason,'timeout');assert.equal(expired.delivery,'not_sent');
+  await new Promise(r=>setTimeout(r,450));assert.ok(lateResolved,'la résolution tardive a bien fini');assert.equal(calls.length,0,'aucun fetch après une résolution tardive');
+  const during=new AbortController();
+  const waiting=()=>new Promise(resolve=>setTimeout(()=>resolve({provider:'xai',key:KEY_XAI,enabled:true}),1200));
+  setTimeout(()=>during.abort(),30);
+  const abortStart=Date.now();
+  const cancelled=await failure(createXaiProvider({resolveCredential:waiting,fetch,timeoutMs:5000}).createResponse({model:'grok-fixture',input:'Bonjour',maxOutputTokens:8,store:false},{signal:during.signal}));
+  assert.ok(Date.now()-abortStart<500);assert.equal(cancelled.code,'provider_timeout');assert.equal(cancelled.reason,'caller_abort');assert.equal(cancelled.delivery,'not_sent');
+  let resolverCalls=0;const pre=new AbortController();pre.abort();
+  const untouched=await failure(createCursorProvider({resolveCredential:async()=>{resolverCalls++;return {provider:'cursor',key:KEY_CURSOR,enabled:true};},fetch}).listModels({signal:pre.signal}));
+  assert.equal(untouched.reason,'caller_abort');assert.equal(untouched.delivery,'not_sent');assert.equal(resolverCalls,0,'aucune résolution après un abort préalable');
+  const syncThrow=await failure(createCursorProvider({resolveCredential:()=>{throw new Error(KEY_CURSOR);},fetch}).listModels());
+  assert.equal(syncThrow.code,'credential_unavailable');assert.equal(syncThrow.reason,'credential_missing');assertClean(syncThrow);
+  await new Promise(r=>setTimeout(r,1300));
+  assert.equal(calls.length,0,'aucun fetch, même après la fin de toutes les résolutions');
+  const healthy=createCursorProvider({resolveCredential:credentialFor('cursor'),fetch,timeoutMs:1000});
+  await healthy.listModels();assert.equal(calls.length,1);
 });
 
 test('ProviderFailure se sérialise sans message brut ni secret',()=>{
