@@ -105,7 +105,7 @@ const pathParams=(route:string,pathname:string):Record<string,string>|null=>{
   return params;
 };
 function coerceQuery(schema:JsonSchema|undefined,raw:Record<string,string>):Record<string,unknown>{
-  const result:Record<string,unknown>={};
+  const result:Record<string,unknown>=Object.create(null);
   for(const [key,value] of Object.entries(raw)){
     const child=schema?.properties?.[key];const type=child?.type??(child?.enum?.every((v:unknown)=>typeof v==='number')?'number':undefined);
     if((type==='integer'||type==='number')&&/^-?\d+(?:\.\d+)?$/.test(value))result[key]=Number(value);

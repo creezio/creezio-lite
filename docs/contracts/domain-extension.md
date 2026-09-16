@@ -208,3 +208,17 @@ Politique Certivan :
 
 L’insertion d’un lien, son verrouillage et sa révocation sont eux aussi transactionnels. Une commande attach vérifie dans le même batch que le fichier est encore disponible et dans le même espace ; une suppression gagnante interdit ainsi un attachement tardif. La commande de détachement exige write et expectedVersion du propriétaire, refuse les verrous métier, et ne demande la suppression physique qu’après le dernier lien actif. Ces commandes de démonstration restent des fixtures de test, pas des fonctionnalités publiées.
 
+## Addendum 0.11 — contexte vérifié et erreurs publiques
+
+Les opérations applicatives et le hook FileDeletionContext reçoivent un credential construit uniquement par le résolveur serveur, gelé et sans secret :
+- session : kind=session ;
+- clé API : kind=token, tokenId (ligne lite_access_tokens), workspaceId, mode=read|write ;
+- OAuth : kind=oauth, tokenId (ligne lite_oauth_tokens), grantId, clientId, workspaceId et mode.
+
+Principal.credential reste le genre session|token|oauth. Le credential décrit la résolution initiale ; il n'est pas une preuve que les droits sont encore valides lors d'un commit ultérieur. Le service applicatif doit relire adhésion, portée, expiration, révocation et mode dans ses gardes de transaction. Les identifiants de ligne servent à ces contrôles internes, pas aux réponses ou journaux métier. Le dispatcher rejette les champs de contexte forgés et transmet le même requestId aux handlers, suppressions de fichiers et erreurs HTTP/MCP/WebMCP.
+
+Une erreur destinée au client utilise ApiError(status, code, message, details?). details est un objet plat de 1 à 16 clés identifiantes non sensibles ; ses valeurs sont null, booléens, nombres finis, chaînes de 200 unités UTF-16 au plus, ou listes de 20 de ces scalaires au plus. L'ensemble sérialisé doit tenir dans 2048 octets UTF-8. publicDetails() refuse l'ensemble si une borne ou une clé est invalide. L'enveloppe expose code, message, requestId et les seuls détails validés. Toute autre exception devient une réponse de service indisponible sans son message ni ses propriétés. L'adaptateur choisit les détails autorisés par code ; la validation de forme ne permet jamais de révéler une cible invisible.
+
+Le sous-ensemble de schéma est fermé : types object/array/string/number/integer/boolean/null, enum scalaire, anyOf sans contrainte soeur, propriétés propres/required/additionalProperties booléen ou schéma, items/minItems/maxItems, minLength/maxLength/pattern, minimum/maximum et formats email/date/date-time/uri. Les annotations description/title/readOnly/writeOnly/deprecated sont descriptives. Une contrainte de famille exige son type ; les mots-clés non supportés sont refusés à la déclaration. Les noms __proto__, constructor et prototype sont refusés, corps et query compris. Les formats date refusent les jours inexistants ; date-time demande un décalage et refuse le report de jour par normalisation. Une date facultative d'un module CRUD natif garde sa remise à vide (chaîne vide ou null) ; une commande déclarant format=date reste stricte.
+
+Ces ports n'apportent pas un moteur de relations, de transaction métier, d'idempotence persistante, d'outbox ou d'invitation à portée ressource. Ils permettent de raccorder un tel service en conservant ses garanties testées ; aucune de ces garanties ne doit être déduite de la seule présence du registre.

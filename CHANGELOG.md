@@ -1,5 +1,13 @@
 # Versions de Lite
 
+## 0.11.0 — Registre de domaine et opérations applicatives
+
+- Ajoute les modules entity/collection, commandes et lectures déclarées, avec un catalogue commun HTTP/MCP/WebMCP et assistant.
+- Applique les filtres de portée aux fiches, comptes, recherche et fichiers ; délègue la suppression de fichiers à la politique configurée.
+- Propage les références de credential vérifiées et la corrélation ; borne les détails publics des erreurs à 2 Kio UTF-8.
+- Refuse les collisions et contraintes non supportées ; vérifie les formats et champs propres sans casser les dates facultatives du CRUD natif.
+- Aucun SQL nouveau ; les transactions métier, l’idempotence durable et les invitations par ressource restent à raccorder explicitement.
+
 ## 0.10.2 — Migrations D1 locales fiables
 
 - Le script local conserve les triggers SQL complets et applique chaque migration avec son marqueur dans une même transaction D1.

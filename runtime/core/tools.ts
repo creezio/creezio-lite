@@ -11,7 +11,7 @@ export type ToolBinding={name:string;operationId:string;description:string;enabl
 function invalid(path:string,message:string):never{fail(400,'invalid_arguments',path+message,{field:path.replace(/[\x00-\x1f\x7f]/g,'?').slice(0,200)});}
 const has=(schema:JsonSchema,keys:readonly string[])=>keys.some(key=>schema[key]!==undefined);
 const calendarDate=(value:string)=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString().slice(0,10)===value;
-const dateTime=(value:string)=>/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)&&Number.isFinite(Date.parse(value));
+const dateTime=(value:string)=>calendarDate(value.slice(0,10))&&Number(value.slice(11,13))<24&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)&&Number.isFinite(Date.parse(value));
 const uri=(value:string)=>{try{const parsed=new URL(value);return /^[a-z][a-z0-9+.-]*:$/i.test(parsed.protocol);}catch{return false;}};
 /**
  * Enforce the closed schema subset documented on SCHEMA_KEYWORDS (operations.ts). Only own properties of the

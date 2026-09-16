@@ -517,7 +517,7 @@ test('closed schema subset: own properties only (constructor, __proto__), every 
     // Formats are enforced exactly as declared; anyOf branches carry their own constraints.
     const formats=(body)=>owner('modules/dossiers/formats',{method:'POST',body});
     assert.equal((await formats({day:'2026-09-16',at:'2026-09-16T10:00:00Z',link:'https://example.test/a',tag:'abc',list:[1]})).status,200);
-    for(const body of [{day:'2026-02-30'},{day:'16/09/2026'},{day:''},{at:'2026-09-16 10:00'},{at:'2026-09-16T10:00:00'},{link:'not a uri'},{link:'/relative'},{tag:'far too long'},{tag:3},{list:[]},{list:[1,2,3]},{list:['1']}])
+    for(const body of [{day:'2026-02-30'},{day:'16/09/2026'},{day:''},{at:'2026-09-16 10:00'},{at:'2026-02-30T10:00:00Z'},{at:'2026-09-16T24:00:00Z'},{at:'2026-09-16T10:00:00'},{link:'not a uri'},{link:'/relative'},{tag:'far too long'},{tag:3},{list:[]},{list:[1,2,3]},{list:['1']}])
       assert.equal((await formats(body)).status,400,JSON.stringify(body));
     assert.equal((await formats({tag:null})).status,200);assert.equal(invoked,4);
     // Declarations outside the closed subset are refused with a stable diagnostic.
@@ -575,4 +575,32 @@ test('a handler failure never leaks details and deferred work completes before t
     assert.throws(()=>read({moduleId:'dossiers',name:'records',description:'d',async handle(){}}),/invalide/);
     assert.throws(()=>defineExtensions(domainApp,{scope:{recordFilter:()=>({sql:'1=1',bindings:[]})}}),/ScopeProvider/);
   }finally{db.close();}
+});
+
+test('native optional date clearing stays compatible across HTTP and MCP',async()=>{
+ const db=await localDb();try{
+ const app=defineApp({...structuredClone(domainApp),modules:domainApp.modules.map(mod=>mod.id==='clients'?{...mod,fields:[...mod.fields,{key:'due',label:'Date',type:'date'}]}:mod)});
+ const org=await boot(client(db,alice)),owner=caller(db,alice,org,{},app);
+ const http=await owner('modules/clients/records',{method:'POST',body:{data:{name:'HTTP date blank',due:''}}});
+ assert.equal(http.status,201);assert.equal(http.body.record.data.due,null);
+ const mcp=await owner('/api/mcp',{method:'POST',body:rpc('lite_clients_create',{data:{name:'MCP date blank',due:''}})});
+ assert.notEqual(mcp.body.result.isError,true,JSON.stringify(mcp.body));
+ const listing=await owner('modules/clients/records');
+ const record=listing.body.items.find(row=>row.data.name==='MCP date blank');
+ assert.ok(record);assert.equal(record.data.due,null);
+ const bad=await owner('/api/mcp',{method:'POST',body:rpc('lite_clients_create',{data:{name:'Invalid date',due:'2026-02-30'}})});
+ assert.equal(bad.body.result.isError,true);
+ }finally{db.close();}
+});
+test('reserved query property names are rejected before application handlers',async()=>{
+ const db=await localDb();try{
+ let invoked=0;
+ const ext=defineExtensions(domainApp,{operations:[read({moduleId:'dossiers',name:'query-check',target:'module',description:'Query closed',async handle(){invoked++;return {body:{ok:true}};}})]});
+ const org=await boot(client(db,alice)),owner=caller(db,alice,org,ext);
+ for(const key of ['__proto__','constructor','prototype']){
+ const result=await owner('modules/dossiers/query-check?'+key+'=unexpected');
+ assert.equal(result.status,400,key);
+ }
+ assert.equal(invoked,0);
+ }finally{db.close();}
 });

@@ -147,3 +147,8 @@ import { dispatchRequest } from '@lite/sites-adapter/dispatch';
 1b. Relire `f985811` et `a359575` : valider le sous-ensemble fermé `SCHEMA_KEYWORDS`/`SCHEMA_FORMATS` comme liste du contrat (y compris le refus des mots-clés hors liste et le resserrement de `format:'date'` sur les outils CRUD) ; décider si un contrat M01 a besoin d’un mot-clé absent (`const`, `oneOf`, `uniqueItems`…) avant raccordement.
 2. Décider si `SENSITIVE_KEY` (refus par nom) et les bornes (16 clés, 200 caractères, 20 items, 2 KiB) sont les valeurs du kit ; elles sont des constantes de `validation.ts`.
 3. Intégrer par la procédure réelle (release, `scripts/check-lite-update.mjs`, workflow) puis exécuter les essais NW01 §3–4 sur le Site authentifié : mêmes `requestId` en-tête/erreur/événement, 409 détaillé, révocation clé/grant entre plan et batch, clé read refusée, `deleteFile` délégué.
+
+## Réception mainteneur
+
+Le head644c5ff corrige les quatre blocages reproduits. Reprise propre de main0.10.2. Le mainteneur ajoute la préservation des dates facultatives natives via HTTP/MCP, le refus des date-time calendaires impossibles et le refus de __proto__ en query (objet de coercition sans prototype). Les19tests ciblés D01 passent, y compris les nouveaux cas de transport. Addendum de contrat et guide d’intégration mis à jour ; version0.11.0. Vérification complète et CI du head de réception obligatoires avant fusion. Aucune garantie K02/K05 ou déploiement applicatif déduits de ces tests.
+Validation finale locale Node24/Windows : 111 tests réussis, check0.11.0, typecheck et build du template réussis. La CI GitHub du commit final reste requise, notamment les deux applications générées.
