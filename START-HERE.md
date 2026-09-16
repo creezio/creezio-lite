@@ -27,7 +27,7 @@ Lire [docs/UPDATES.md](docs/UPDATES.md). Ne jamais réinitialiser une applicatio
 
 ## Orchestrer le développement
 
-Le générateur installe dans chaque application la compétence `.cursor/skills/lite-orchestration/` (source canonique du kit) et la règle `.cursor/rules/lite-orchestration.mdc` : Astra orchestre et décide, Cursor Fable 5.1 réalise avec un modèle épinglé et prouvé. Pour une application existante : `node bin/lite.mjs adopt --app /chemin/application` (inspection), puis `--apply` ; un conflit local est refusé et signalé, les règles métier et `AGENTS.md` ne sont pas modifiés.
+Le générateur installe dans chaque application la compétence `.cursor/skills/lite-orchestration/` (source canonique du kit) et la règle `.cursor/rules/lite-orchestration.mdc` : Astra orchestre et décide, Cursor réalise avec une sélection de modèle choisie une fois à l’attribution (Fable 5.1 par défaut) et vérifiée par préflight. Pour une application existante : `node bin/lite.mjs adopt --app /chemin/application` (inspection), puis `--apply` ; un conflit local est refusé et signalé, les règles métier et `AGENTS.md` ne sont pas modifiés.
 
 ## Abonner l’application aux correctifs
 

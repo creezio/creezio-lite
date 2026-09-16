@@ -1,9 +1,9 @@
 # Versions de Lite
 
-## 0.12.0 — Standard d’orchestration Astra ⇄ Cursor Fable 5.1
+## 0.12.0 — Standard d’orchestration Astra ⇄ Cursor
 
-- Source canonique `.cursor/skills/lite-orchestration/` : compétence à chargement progressif, contrat compact (rôles, brief, checkpoints, réception, revue), modèle épinglé `cursor-model.json`.
-- `scripts/cursor-agents.mjs` : préflight strict du modèle (identifiant exact, paramètres, variante ; aucun repli), lancement dédupliqué par identifiant d’agent déterministe, réconciliation des 409 et des appels incertains, checkpoints à polling progressif sans journaux complets, reprise du même agent. Clé uniquement en environnement ; sorties sans secret.
+- Source canonique `.cursor/skills/lite-orchestration/` : compétence à chargement progressif, contrat compact (rôles, sélection, brief, checkpoints, réception, revue), sélections autorisées `cursor-model.json` (`fable` par défaut, `opus`, `grok` ; `fast`/`cyber` désactivés par défaut ; aucun repli).
+- `scripts/cursor-agents.mjs` : préflight du catalogue daté (identifiant exact, variante complète ; aucun repli), sélection choisie une fois au lancement et conservée dans le registre, lancement dédupliqué par identifiant d’agent déterministe, réconciliation des 409 et des appels incertains, checkpoints à polling progressif rappelant la sélection sans journaux complets, reprise du même agent après terminal sans champ `model`, reçu `requested/catalog/createAccepted/runAccepted/modelObserved`. Clé uniquement en environnement ; sorties sans secret.
 - Générateur : installation automatique dans les nouvelles applications ; `lite adopt --app [--apply]` pour les applications existantes, avec manifeste, idempotence et refus explicite des conflits locaux ; information `orchestration` dans le doctor.
 - Documents et règles renvoient à la source unique. Aucun changement du runtime, des migrations, des secrets ni des providers IA métier ; versions API/MCP alignées.
 
