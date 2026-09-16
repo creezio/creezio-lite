@@ -36,7 +36,7 @@
     },
     "resources": {
       "type": "object",
-      "description": "Ressources sémantiques exclusives partagées, déclarées une fois puis référencées par mission.reserves.resources. Deux missions qui réservent la même ressource sont en collision quelles que soient leurs branches.",
+      "description": "Ressources sémantiques exclusives partagées, déclarées une fois puis référencées par mission.reserves.resources. Globales au plan : deux missions qui réservent la même ressource sont en collision quels que soient leurs dépôts et leurs branches.",
       "maxProperties": 100,
       "propertyNames": { "$ref": "#/$defs/resourceId" },
       "additionalProperties": { "$ref": "#/$defs/text200" }
@@ -79,7 +79,7 @@
     },
     "milestone": {
       "enum": ["delivered", "integrated", "published"],
-      "description": "Jalon d’une mission productrice : delivered (run terminal + PR + réception), integrated (fusionnée dans la base), published (release contenant l’intégration)."
+      "description": "Jalon d’une mission productrice : delivered (run terminal + PR + réception : l’artefact existe, il n’est PAS accepté ; une correction peut être demandée), integrated (fusionnée dans la base), published (release contenant l’intégration). Un consommateur qui exige un contrat stable dépend d’une condition d’acceptation sourcée, pas de delivered brut."
     },
     "missionDependency": {
       "type": "object",
@@ -113,7 +113,7 @@
     "reserves": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Réservations exclusives tenues de l’attribution (start) jusqu’à l’intégration (ou clôture/annulation). Collision : chemins dont la liste de segments est préfixe l’une de l’autre, ou ressource identique.",
+      "description": "Réservations exclusives tenues de l’attribution (start) jusqu’à l’intégration (ou clôture/annulation). Collision : chemins du MÊME dépôt (mission.repo) dont la liste de segments est préfixe l’une de l’autre, ou ressource identique (globale au plan).",
       "properties": {
         "paths": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "$ref": "#/$defs/path" } },
         "resources": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "$ref": "#/$defs/resourceId" } }

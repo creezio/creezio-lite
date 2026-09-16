@@ -6,7 +6,8 @@
     "revision": "2026-09-16"
   },
   "repos": {
-    "kit": { "url": "https://github.com/example/kit", "defaultBase": "main" }
+    "kit": { "url": "https://github.com/example/kit", "defaultBase": "main" },
+    "app": { "url": "https://github.com/example/app", "defaultBase": "main" }
   },
   "resources": {
     "kit:version": "package.json, package-lock.json, template/package.json, CHANGELOG.md : version et notes de release",
@@ -20,9 +21,27 @@
     "upstream-schema-frozen": {
       "check": "Le contrat de schéma partagé est publié et figé pour cette version",
       "proof": "URL de la PR fusionnée du contrat ou tag de version"
+    },
+    "a01-ranking-contract-accepted": {
+      "check": "Le contrat de classement livré par A01 est accepté par l’orchestrateur après revue R01, sans correction ouverte",
+      "proof": "URL de la réception acceptée dans la PR de A01 et head SHA accepté"
     }
   },
   "missions": [
+    {
+      "id": "X00",
+      "lot": "foundation",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Socle initial du kit (lot reçu avant la tenue de l’état)",
+      "source": "docs/missions/foundation.md",
+      "deliverable": "Socle runtime/core publié en v1.0.0 ; sélection et agent de l’époque inconnus, jalon prouvé par la release",
+      "criteria": ["Release v1.0.0 publiée avec SHA et notes"],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "dependencies": {},
+      "reserves": { "paths": ["runtime/core/"] }
+    },
     {
       "id": "A01",
       "lot": "search",
@@ -73,15 +92,30 @@
       "lot": "search",
       "kind": "dev",
       "repo": "kit",
-      "title": "Interface de recherche du template",
+      "title": "Fixtures de recherche du template sur l’artefact livré par A01",
       "source": "docs/missions/search.md",
       "section": "§2",
-      "deliverable": "Onglet de recherche du template consommant le classement livré par A01",
+      "deliverable": "Fixtures et scénarios de recherche du template construits sur l’artefact effectivement livré par A01 (head de sa PR), réalignés à l’intégration ; ne dépend pas de l’acceptation du contrat de classement",
       "criteria": ["Réutilise les primitives et le thème existants", "Typecheck et build du template verts"],
       "owner": "kit-maintainer",
       "priority": 1,
       "dependencies": { "start": [{ "mission": "A01", "step": "delivered" }] },
-      "reserves": { "paths": ["template/app/search/"] }
+      "reserves": { "paths": ["template/app/search/fixtures/"] }
+    },
+    {
+      "id": "K01",
+      "lot": "search",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Interface de recherche du template sur le contrat de classement accepté",
+      "source": "docs/missions/search.md",
+      "section": "§2 bis",
+      "deliverable": "Onglet de recherche du template consommant le contrat de classement de A01 une fois accepté ; un artefact livré mais en correction ne suffit pas",
+      "criteria": ["Contrat de classement figé et accepté avant le premier commit", "Typecheck et build du template verts"],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "dependencies": { "start": [{ "mission": "A01", "step": "delivered" }, { "condition": "a01-ranking-contract-accepted" }] },
+      "reserves": { "paths": ["template/app/search/ui/"] }
     },
     {
       "id": "D01",
@@ -109,7 +143,7 @@
       "criteria": ["Déclencheurs D1 inchangés dans leur contrat", "Migration additive"],
       "owner": "kit-maintainer",
       "priority": 2,
-      "dependencies": {},
+      "dependencies": { "start": [{ "mission": "X00", "step": "integrated" }] },
       "reserves": { "paths": ["runtime/core/search/index.ts"] }
     },
     {
@@ -181,6 +215,21 @@
       "priority": 3,
       "dependencies": {},
       "reserves": { "paths": ["README.md"] }
+    },
+    {
+      "id": "L01",
+      "lot": "search",
+      "kind": "dev",
+      "repo": "app",
+      "title": "Recherche de l’application : même chemin qu’A01, autre dépôt",
+      "source": "docs/missions/search.md",
+      "section": "§4",
+      "deliverable": "Adaptation de runtime/core/search dans le dépôt app ; le chemin identique à la réservation d’A01 (dépôt kit) n’est pas une collision",
+      "criteria": ["Droits et org_id appliqués côté serveur"],
+      "owner": "app-maintainer",
+      "priority": 5,
+      "dependencies": {},
+      "reserves": { "paths": ["runtime/core/search/"] }
     },
     {
       "id": "Z00",

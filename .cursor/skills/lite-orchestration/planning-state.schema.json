@@ -21,19 +21,23 @@
     "capacity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["maxActiveRuns", "origin", "source", "observedAt", "maxReviewBacklog"],
+      "required": ["scope", "maxActiveRuns", "origin", "source", "observedAt", "maxReviewBacklog"],
       "properties": {
+        "scope": {
+          "$ref": "#/$defs/key",
+          "description": "Identifiant descriptif du périmètre compté (ex. kit, app-x). maxActiveRuns et observedActiveRuns portent EXACTEMENT sur ce périmètre : on ne soustrait jamais les runs d’un compte entier à un plafond local d’un périmètre plus étroit. L’inventaire externe du compte reste dans le registre de l’orchestrateur, hors de ce format."
+        },
         "maxActiveRuns": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 100,
-          "description": "Nombre maximal de runs actifs simultanés. null = inconnu : ready répond code 3 sans proposition."
+          "description": "Nombre maximal de runs actifs simultanés pour scope. null = inconnu : ready répond code 3 sans proposition. 0 = plan valide, tout start/resume waiting capacity_full. Un quota fournisseur non exposé ne rend pas cette valeur nulle : un plafond local configuré suffit."
         },
         "origin": {
           "enum": ["configured", "observed"],
-          "description": "configured : plafond local décidé par l’orchestrateur (ce n’est pas un quota fournisseur). observed : limite factuelle constatée chez le fournisseur (source obligatoire : réponse datée, document du plan)."
+          "description": "configured : plafond local décidé par l’orchestrateur pour scope (ce n’est pas un quota fournisseur). observed : limite factuelle constatée chez le fournisseur pour ce même périmètre (source obligatoire : réponse datée, document du plan)."
         },
-        "source": { "type": "string", "minLength": 1, "maxLength": 300, "description": "Provenance factuelle du plafond." },
+        "source": { "type": "string", "minLength": 1, "maxLength": 300, "description": "Provenance factuelle du plafond, sur le périmètre scope." },
         "observedAt": { "$ref": "#/$defs/dateTime" },
         "maxReviewBacklog": {
           "type": "integer",
@@ -45,10 +49,10 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["value", "source", "at"],
-          "description": "Comptage indépendant des runs actifs (ex. lecture des agents du compte). L’outil retient le maximum entre ce relevé et le comptage des missions actives.",
+          "description": "Comptage indépendant des runs actifs du MÊME périmètre que capacity.scope (ex. agents de ce périmètre lus par cursor-agents). L’outil retient le maximum entre ce relevé et le comptage des missions actives. Un relevé portant sur un périmètre plus large (compte entier) n’a pas sa place ici.",
           "properties": {
             "value": { "type": "integer", "minimum": 0, "maximum": 1000 },
-            "source": { "type": "string", "minLength": 1, "maxLength": 300 },
+            "source": { "type": "string", "minLength": 1, "maxLength": 300, "description": "Comment et sur quel périmètre le comptage a été fait ; prouve qu’il s’agit bien de scope." },
             "at": { "$ref": "#/$defs/dateTime" }
           }
         },
@@ -105,6 +109,21 @@
     "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "ref": { "type": "string", "minLength": 1, "maxLength": 250, "pattern": "^[^\\s~^:?*\\[\\\\]+$" },
     "url": { "type": "string", "pattern": "^https://[A-Za-z0-9._-]+(?:/[A-Za-z0-9._~%/-]*)?$", "maxLength": 500 },
+    "terminalRunStatus": {
+      "enum": ["FINISHED", "ERROR", "CANCELLED", "EXPIRED"],
+      "description": "Statuts de run terminaux : seuls admis pour delivered."
+    },
+    "historical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step", "evidence", "at"],
+      "description": "Jalon réellement atteint d’un lot reçu avant la tenue de cet état, dont sélection, agent et run sont inconnus. Rien n’est inventé : seul le jalon prouvé est porté. closed seulement pour review/investigation ; integrated/published seulement pour dev (vérifié par le contrat, le plan portant kind).",
+      "properties": {
+        "step": { "enum": ["integrated", "published", "closed"] },
+        "evidence": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Preuve publique du jalon : SHA de fusion, URL de PR fusionnée, tag de release, réception close ; jamais un secret." },
+        "at": { "$ref": "#/$defs/dateTime" }
+      }
+    },
     "providerId": {
       "type": "string",
       "maxLength": 120,
@@ -138,9 +157,10 @@
       "required": ["status"],
       "properties": {
         "status": {
-          "enum": ["pending", "active", "delivered", "integrated", "published", "closed", "cancelled", "unknown"],
-          "description": "active : run en cours ou incertain (CREATING, RUNNING, POST incertain), compte dans la capacité et tient ses réservations. delivered : run terminal, PR et réception disponibles ; réservations toujours tenues. integrated/published/closed/cancelled : réservations libérées, agent historique non compté. unknown : l’orchestrateur ne sait pas ; ready répond code 3."
+          "enum": ["pending", "active", "delivered", "integrated", "published", "closed", "cancelled", "historical", "unknown"],
+          "description": "active : run en cours ou incertain (CREATING, RUNNING, POST incertain), compte dans la capacité et tient ses réservations. delivered : run terminal (aucun POST incertain), PR et réception disponibles ; réservations toujours tenues ; l’artefact existe mais n’est pas accepté pour autant. integrated/published/closed/cancelled/historical : réservations libérées, aucune place consommée, agent historique non compté ; jamais de launch pending/uncertain ni de run CREATING/RUNNING/UNKNOWN non réconcilié. historical : lot réellement reçu avant cet état, sélection/agent/run inconnus, jalon prouvé dans historical ; aucun resume/start proposé, toute reprise est une mission corrective distincte. unknown : l’orchestrateur ne sait pas ; ready répond code 3."
         },
+        "historical": { "$ref": "#/$defs/historical" },
         "selection": { "$ref": "#/$defs/selection" },
         "branch": { "$ref": "#/$defs/ref" },
         "base": { "$ref": "#/$defs/sha", "description": "SHA validé de départ (Base du brief)." },
@@ -190,10 +210,47 @@
       },
       "allOf": [
         { "if": { "properties": { "status": { "const": "active" } } }, "then": { "required": ["selection", "branch", "base", "agentId", "launch", "assignedAt"] } },
-        { "if": { "properties": { "status": { "const": "delivered" } } }, "then": { "required": ["selection", "branch", "base", "agentId", "prUrl", "headSha", "assignedAt", "deliveredAt"] } },
+        {
+          "if": { "properties": { "status": { "const": "delivered" } } },
+          "then": {
+            "required": ["selection", "branch", "base", "agentId", "launch", "runStatus", "prUrl", "headSha", "assignedAt", "deliveredAt"],
+            "properties": {
+              "launch": { "enum": ["launched", "reconciled"] },
+              "runStatus": { "$ref": "#/$defs/terminalRunStatus" }
+            }
+          }
+        },
         { "if": { "properties": { "status": { "const": "integrated" } } }, "then": { "required": ["selection", "prUrl", "headSha", "deliveredAt", "integratedAt"] } },
         { "if": { "properties": { "status": { "const": "published" } } }, "then": { "required": ["selection", "prUrl", "headSha", "integratedAt", "publishedAt"] } },
-        { "if": { "properties": { "status": { "const": "closed" } } }, "then": { "required": ["selection", "deliveredAt", "closedAt"] } }
+        { "if": { "properties": { "status": { "const": "closed" } } }, "then": { "required": ["selection", "deliveredAt", "closedAt"] } },
+        {
+          "if": { "properties": { "status": { "const": "historical" } } },
+          "then": {
+            "required": ["historical"],
+            "properties": {
+              "selection": false,
+              "agentId": false,
+              "runId": false,
+              "runStatus": false,
+              "launch": false,
+              "correction": false,
+              "waiting": false,
+              "readyAt": false,
+              "assignedAt": false
+            }
+          },
+          "else": { "properties": { "historical": false } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["integrated", "published", "closed", "cancelled", "historical"] } } },
+          "then": {
+            "properties": {
+              "launch": { "not": { "enum": ["pending", "uncertain"] } },
+              "runStatus": { "not": { "enum": ["CREATING", "RUNNING", "UNKNOWN"] } },
+              "correction": { "type": "object", "properties": { "requested": { "const": false } } }
+            }
+          }
+        }
       ]
     }
   }

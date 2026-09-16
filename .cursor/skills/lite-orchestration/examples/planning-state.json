@@ -3,12 +3,13 @@
   "plan": { "id": "example-program", "revision": "2026-09-16" },
   "reconciledAt": "2026-09-16T18:40:00Z",
   "capacity": {
+    "scope": "example-program",
     "maxActiveRuns": 5,
     "origin": "configured",
-    "source": "Plafond local décidé par l’orchestrateur ; aucun quota fournisseur vérifié",
+    "source": "Plafond local décidé par l’orchestrateur pour le périmètre example-program (dépôts kit et app) ; aucun quota fournisseur vérifié, le quota global du compte reste inconnu",
     "observedAt": "2026-09-16T18:40:00Z",
     "maxReviewBacklog": 3,
-    "observedActiveRuns": { "value": 1, "source": "Lecture des agents du compte réconciliée par cursor-agents", "at": "2026-09-16T18:40:00Z" }
+    "observedActiveRuns": { "value": 1, "source": "Agents des missions de example-program lus par cursor-agents status et réconciliés ; les autres agents du compte ne sont pas comptés ici", "at": "2026-09-16T18:40:00Z" }
   },
   "pauses": [
     { "scope": "mission", "target": "F01", "reason": "Attente d’arbitrage sur le connecteur mail", "since": "2026-09-16T17:00:00Z" }
@@ -22,6 +23,17 @@
     }
   },
   "missions": {
+    "X00": {
+      "status": "historical",
+      "historical": {
+        "step": "published",
+        "evidence": "Release v1.0.0 https://github.com/example/kit/releases/tag/v1.0.0 sur 1111111111111111111111111111111111111111 ; PR fusionnée https://github.com/example/kit/pull/30",
+        "at": "2026-09-10T12:00:00Z"
+      },
+      "prUrl": "https://github.com/example/kit/pull/30",
+      "headSha": "1111111111111111111111111111111111111111",
+      "note": "Lot reçu avant la tenue de cet état : sélection, agent et run inconnus, non inventés. Réservation runtime/core/ non tenue ; toute reprise serait une mission corrective distincte."
+    },
     "Z00": {
       "status": "integrated",
       "selection": {
