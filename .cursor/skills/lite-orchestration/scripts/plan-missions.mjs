@@ -18,6 +18,9 @@ const REACHED = Object.freeze({ delivered: ['delivered'], closed: ['delivered'],
 const TERMINAL_RUN = new Set(['FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED']);
 const HOLDING = new Set(['active', 'delivered', 'unknown']);
 const byIdStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+// Les données JSON ne se consultent que par propriété propre : « toString », « constructor » ou « hasOwnProperty » sont des clés comme les autres, jamais Object.prototype.
+const own = (object, key) => object !== null && typeof object === 'object' && Object.hasOwn(object, key);
+const get = (object, key) => (own(object, key) ? object[key] : undefined);
 const byPriority = (a, b) => a.mission.priority - b.mission.priority || byIdStr(a.mission.id, b.mission.id);
 
 // --- Validation structurelle : interprète le sous-ensemble JSON Schema 2020-12 utilisé par les deux schémas du contrat.
@@ -25,8 +28,20 @@ function kindOf(value) { return value === null ? 'null' : Array.isArray(value) ?
 function canonical(value) { return kindOf(value) === 'object' ? `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}` : Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : JSON.stringify(value); }
 function resolveRef(root, ref) {
   if (typeof ref !== 'string' || !ref.startsWith('#/')) throw new UsageError(`Schéma : référence non locale ${String(ref)}`);
-  let node = root; for (const part of ref.slice(2).split('/')) { node = node?.[part.replaceAll('~1', '/').replaceAll('~0', '~')]; if (node === undefined) throw new UsageError(`Schéma : référence introuvable ${ref}`); }
+  let node = root; for (const part of ref.slice(2).split('/')) { node = get(node, part.replaceAll('~1', '/').replaceAll('~0', '~')); if (node === undefined) throw new UsageError(`Schéma : référence introuvable ${ref}`); }
   return node;
+}
+// Seul format du contrat : instant RFC 3339 « AAAA-MM-JJThh:mm:ss[.fff](Z|±hh:mm) » vérifié calendairement, sans horloge (les secondes intercalaires ne sont pas admises).
+const instantPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|([+-])(\d{2}):(\d{2}))$/;
+export function validInstant(text) {
+  const match = typeof text === 'string' ? instantPattern.exec(text) : null;
+  if (!match) return false;
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]) return false;
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  return match[7] === undefined || (Number(match[8]) <= 23 && Number(match[9]) <= 59);
 }
 const regexCache = new Map();
 function regex(pattern) { let re = regexCache.get(pattern); if (!re) { re = new RegExp(pattern, 'u'); regexCache.set(pattern, re); } return re; }
@@ -43,6 +58,7 @@ export function validateSchema(schema, data, root = schema, path = '', errors = 
     if (schema.minLength !== undefined && length < schema.minLength) ok = fail(`minLength ${schema.minLength}`);
     if (schema.maxLength !== undefined && length > schema.maxLength) ok = fail(`maxLength ${schema.maxLength}`);
     if (schema.pattern !== undefined && !regex(schema.pattern).test(data)) ok = fail(`motif ${schema.pattern} non respecté`);
+    if (schema.format === 'date-time' && !validInstant(data)) ok = fail('date-time : instant calendaire invalide (mois, jour, heure, minute, seconde ou décalage hors plage)');
   }
   if (kind === 'integer' || kind === 'number') {
     if (schema.minimum !== undefined && data < schema.minimum) ok = fail(`minimum ${schema.minimum}`);
@@ -58,11 +74,11 @@ export function validateSchema(schema, data, root = schema, path = '', errors = 
     const keys = Object.keys(data);
     if (schema.minProperties !== undefined && keys.length < schema.minProperties) ok = fail(`minProperties ${schema.minProperties}`);
     if (schema.maxProperties !== undefined && keys.length > schema.maxProperties) ok = fail(`maxProperties ${schema.maxProperties}`);
-    for (const key of schema.required ?? []) if (!(key in data)) ok = fail(`propriété requise absente : ${key}`);
+    for (const key of schema.required ?? []) if (!own(data, key)) ok = fail(`propriété requise absente : ${key}`);
     for (const key of keys) {
       const sub = `${path}/${key.replaceAll('~', '~0').replaceAll('/', '~1')}`;
       if (schema.propertyNames !== undefined && !validateSchema(schema.propertyNames, key, root, sub, errors)) ok = false;
-      if (schema.properties && key in schema.properties) { if (!validateSchema(schema.properties[key], data[key], root, sub, errors)) ok = false; }
+      if (schema.properties && own(schema.properties, key)) { if (!validateSchema(schema.properties[key], data[key], root, sub, errors)) ok = false; }
       else if (schema.additionalProperties === false) ok = fail(`propriété non permise : ${key}`);
       else if (schema.additionalProperties !== undefined && !validateSchema(schema.additionalProperties, data[key], root, sub, errors)) ok = false;
     }
@@ -82,15 +98,15 @@ export function validatePlanContract(plan, errors) {
   plan.missions.forEach((mission, i) => {
     if (missions.has(mission.id)) push({ code: 'duplicate_mission', path: `/missions/${i}/id`, message: `identifiant de mission en double : ${mission.id}`, mission: mission.id });
     else missions.set(mission.id, mission);
-    if (!(mission.repo in plan.repos)) push({ code: 'unknown_reference', path: `/missions/${i}/repo`, message: `dépôt non déclaré : ${mission.repo}`, mission: mission.id });
-    (mission.reserves.resources ?? []).forEach((resource, j) => { if (!(resource in plan.resources)) push({ code: 'unknown_reference', path: `/missions/${i}/reserves/resources/${j}`, message: `ressource non déclarée : ${resource}`, mission: mission.id }); });
+    if (!own(plan.repos, mission.repo)) push({ code: 'unknown_reference', path: `/missions/${i}/repo`, message: `dépôt non déclaré : ${mission.repo}`, mission: mission.id });
+    (mission.reserves.resources ?? []).forEach((resource, j) => { if (!own(plan.resources, resource)) push({ code: 'unknown_reference', path: `/missions/${i}/reserves/resources/${j}`, message: `ressource non déclarée : ${resource}`, mission: mission.id }); });
   });
   plan.missions.forEach((mission, i) => {
     for (const stage of ['start', 'integrate', 'publish']) {
       const deps = mission.dependencies[stage] ?? []; const base = `/missions/${i}/dependencies/${stage}`;
-      if (stage !== 'start' && mission.kind !== 'dev' && stage in mission.dependencies) push({ code: 'step_not_applicable', path: base, message: `une mission ${mission.kind} ne déclare pas de dépendances ${stage}`, mission: mission.id, step: stage, kind: mission.kind });
+      if (stage !== 'start' && mission.kind !== 'dev' && own(mission.dependencies, stage)) push({ code: 'step_not_applicable', path: base, message: `une mission ${mission.kind} ne déclare pas de dépendances ${stage}`, mission: mission.id, step: stage, kind: mission.kind });
       deps.forEach((dep, j) => {
-        if ('condition' in dep) { if (!(dep.condition in plan.conditions)) push({ code: 'unknown_reference', path: `${base}/${j}/condition`, message: `condition non déclarée : ${dep.condition}`, mission: mission.id }); return; }
+        if (own(dep, 'condition')) { if (!own(plan.conditions, dep.condition)) push({ code: 'unknown_reference', path: `${base}/${j}/condition`, message: `condition non déclarée : ${dep.condition}`, mission: mission.id }); return; }
         if (dep.mission === mission.id) { push({ code: 'self_dependency', path: `${base}/${j}/mission`, message: `auto-dépendance : ${mission.id} → ${mission.id}.${dep.step} (l’ordre start < delivered < integrated < published est implicite)`, mission: mission.id }); return; }
         const producer = missions.get(dep.mission);
         if (!producer) { push({ code: 'unknown_reference', path: `${base}/${j}/mission`, message: `mission non déclarée : ${dep.mission}`, mission: mission.id }); return; }
@@ -102,7 +118,7 @@ export function validatePlanContract(plan, errors) {
   // Graphe (mission, jalon) : arêtes implicites de la chaîne, puis (producteur, jalon) → (consommateur, étape).
   const nodes = []; const edges = new Map(); const add = (from, to) => { edges.get(from).push(to); };
   for (const mission of [...missions.values()].sort((a, b) => byIdStr(a.id, b.id))) { const chain = CHAIN[mission.kind]; for (const step of chain) { nodes.push(`${mission.id}.${step}`); edges.set(`${mission.id}.${step}`, []); } for (let k = 1; k < chain.length; k++) add(`${mission.id}.${chain[k - 1]}`, `${mission.id}.${chain[k]}`); }
-  for (const mission of missions.values()) for (const stage of ['start', 'integrate', 'publish']) for (const dep of mission.dependencies[stage] ?? []) if ('mission' in dep) add(`${dep.mission}.${dep.step}`, `${mission.id}.${STEP_NODE[stage]}`);
+  for (const mission of missions.values()) for (const stage of ['start', 'integrate', 'publish']) for (const dep of mission.dependencies[stage] ?? []) if (own(dep, 'mission')) add(`${dep.mission}.${dep.step}`, `${mission.id}.${STEP_NODE[stage]}`);
   const color = new Map(); const stack = [];
   const visit = (node) => {
     color.set(node, 1); stack.push(node);
@@ -122,10 +138,10 @@ export function validateStateContract(plan, state, missions, errors, warnings) {
   if ((state.plan.revision ?? null) !== (plan.plan.revision ?? null)) warnings.push({ code: 'revision_mismatch', path: '/plan/revision', message: `révision de l’état ${state.plan.revision ?? 'absente'} ≠ révision du plan ${plan.plan.revision ?? 'absente'}` });
   const lots = new Set(plan.missions.map(m => m.lot));
   state.pauses.forEach((pause, i) => {
-    const known = pause.scope === 'all' || (pause.scope === 'mission' ? missions.has(pause.target) : pause.scope === 'lot' ? lots.has(pause.target) : pause.target in plan.repos);
+    const known = pause.scope === 'all' || (pause.scope === 'mission' ? missions.has(pause.target) : pause.scope === 'lot' ? lots.has(pause.target) : own(plan.repos, pause.target));
     if (!known) errors.push({ code: 'unknown_reference', path: `/pauses/${i}/target`, message: `cible de pause non déclarée : ${pause.scope} ${pause.target}` });
   });
-  for (const id of Object.keys(state.conditions)) if (!(id in plan.conditions)) errors.push({ code: 'unknown_reference', path: `/conditions/${id}`, message: `condition hors plan : ${id}` });
+  for (const id of Object.keys(state.conditions)) if (!own(plan.conditions, id)) errors.push({ code: 'unknown_reference', path: `/conditions/${id}`, message: `condition hors plan : ${id}` });
   for (const [id, entry] of Object.entries(state.missions)) {
     const mission = missions.get(id);
     if (!mission) { errors.push({ code: 'state_mission_unknown', path: `/missions/${id}`, message: `mission hors plan : ${id}`, mission: id }); continue; }
@@ -138,6 +154,8 @@ export function validateStateContract(plan, state, missions, errors, warnings) {
       if (entry.runId !== undefined && entry.runId !== null) errors.push(inconsistent(id, 'runId', 'pending avec un run attribué : corriger en active puis réconcilier', reconcile));
       if (entry.runStatus !== undefined) errors.push(inconsistent(id, 'runStatus', `pending avec runStatus ${entry.runStatus} : un historique de run ne redevient pas pending, garder la preuve et réconcilier`, reconcile));
       for (const field of ['assignedAt', 'deliveredAt', 'integratedAt', 'publishedAt', 'closedAt']) if (entry[field] !== undefined) errors.push(inconsistent(id, field, `pending avec jalon ${field} : un jalon atteint ne redevient pas pending`, reconcile));
+      for (const field of ['prUrl', 'headSha']) if (entry[field] !== undefined) errors.push(inconsistent(id, field, `pending avec ${field} : un livrable existe, la mission a été engagée, garder la preuve et réconcilier`, reconcile));
+      if (entry.followups !== undefined && entry.followups > 0) errors.push(inconsistent(id, 'followups', `pending avec ${entry.followups} reprise(s) : un agent a déjà été relancé, garder la preuve et réconcilier`, reconcile));
     }
     if (status === 'active' && ['not_created', 'failed'].includes(entry.launch)) errors.push(inconsistent(id, 'launch', `active avec launch ${entry.launch} : aucun run n’existe, repasser pending (launch conservé) ou relancer par attribution`));
     if (status === 'delivered' && entry.runStatus !== undefined && !TERMINAL_RUN.has(entry.runStatus)) errors.push(inconsistent(id, 'runStatus', `delivered avec run ${entry.runStatus} non terminal : la mission est encore active`));
@@ -165,9 +183,9 @@ function collisions(mission, holds) {
 }
 export function decide(plan, state) {
   const missions = [...plan.missions].sort((a, b) => byIdStr(a.id, b.id));
-  const entryOf = (id) => state.missions[id] ?? { status: 'pending' };
+  const entryOf = (id) => get(state.missions, id) ?? { status: 'pending' };
   const dependencyReasons = (deps) => deps.map(dep => {
-    if ('condition' in dep) { const proof = state.conditions[dep.condition]; return !proof ? { code: 'condition_unverified', condition: dep.condition } : proof.satisfied ? null : { code: 'condition_failed', condition: dep.condition }; }
+    if (own(dep, 'condition')) { const proof = get(state.conditions, dep.condition); return !proof ? { code: 'condition_unverified', condition: dep.condition } : proof.satisfied ? null : { code: 'condition_failed', condition: dep.condition }; }
     const producer = entryOf(dep.mission); const on = { mission: dep.mission, step: dep.step };
     if (producer.status === 'cancelled') return { code: 'dependency_cancelled', on };
     if (producer.status === 'unknown') return { code: 'dependency_unknown', on };
@@ -243,8 +261,8 @@ export function decide(plan, state) {
 
 // --- Rapport (§5) et entrée de commande.
 function summary(plan, state) {
-  const byKind = {}, byStatus = {};
-  for (const mission of plan.missions ?? []) { byKind[mission.kind] = (byKind[mission.kind] ?? 0) + 1; const status = state?.missions?.[mission.id]?.status ?? 'pending'; byStatus[status] = (byStatus[status] ?? 0) + 1; }
+  const byKind = Object.create(null), byStatus = Object.create(null);
+  for (const mission of plan.missions ?? []) { byKind[mission.kind] = (byKind[mission.kind] ?? 0) + 1; const status = get(get(state, 'missions'), mission.id)?.status ?? 'pending'; byStatus[status] = (byStatus[status] ?? 0) + 1; }
   const sorted = (o) => Object.fromEntries(Object.keys(o).sort().map(k => [k, o[k]]));
   return { missions: plan.missions?.length ?? 0, byKind: sorted(byKind), byStatus: sorted(byStatus) };
 }
