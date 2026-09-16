@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { evaluate, loadSchemas, main, exitCodes, pathsCollide, validateSchema, UsageError } from '../.cursor/skills/lite-orchestration/scripts/plan-missions.mjs';
+import { evaluate, loadSchemas, main, exitCodes, pathsCollide, validateSchema, validInstant, UsageError } from '../.cursor/skills/lite-orchestration/scripts/plan-missions.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const skillDir = join(root, '.cursor/skills/lite-orchestration');
@@ -260,6 +260,11 @@ test('state invariants: pending never carries an uncertain, launched or historic
   expectInconsistent({ status: 'pending', runStatus: 'ERROR', launch: 'failed' }, 'runStatus');
   expectInconsistent({ status: 'pending', deliveredAt: T }, 'deliveredAt');
   expectInconsistent({ status: 'pending', assignedAt: T }, 'assignedAt');
+  expectInconsistent({ status: 'pending', prUrl: 'https://github.com/example/kit/pull/7' }, 'prUrl', { nextAction: 'reconcile' });
+  expectInconsistent({ status: 'pending', headSha: SHA('3') }, 'headSha', { nextAction: 'reconcile' });
+  expectInconsistent({ status: 'pending', followups: 1 }, 'followups', { nextAction: 'reconcile' });
+  const zeroFollowups = ready(p, state({ A: { status: 'pending', followups: 0 } }));
+  assert.equal(zeroFollowups.code, exitCodes.ok); assert.equal(zeroFollowups.report.missions.A.outcome, 'proposed');
   expectInconsistent(engaged('A', 'active', { launch: 'not_created', runStatus: 'FINISHED' }), 'launch');
   expectInconsistent(engaged('A', 'active', { launch: 'failed', runStatus: 'ERROR' }), 'launch');
   expectInconsistent(engaged('A', 'closed'), 'status');
@@ -420,4 +425,53 @@ test('the CLI writes one JSON line on stdout, uses codes 0/2/3/4, leaves its inp
   const originalFetch = globalThis.fetch; globalThis.fetch = () => { throw new Error('réseau interdit'); };
   try { const lines = []; const code = await main(['ready', '--plan', examplePlan, '--state', exampleState], { log: line => lines.push(line) }); assert.equal(code, 0); assert.equal(lines.length, 1); assert.equal(JSON.parse(lines[0]).proposals.length, 6); }
   finally { globalThis.fetch = originalFetch; }
+});
+
+test('JSON data is only read through own properties: prototype names are ordinary keys, never inherited values', () => {
+  // Mission « toString » sans entrée d’état : pending ⇒ start, jamais publish hérité d’Object.prototype.
+  const proto = ready(plan([mission('toString', { priority: 1 }), mission('constructor', { priority: 2, dependencies: { start: [{ mission: 'toString', step: 'delivered' }] } })]), state());
+  assert.equal(proto.code, exitCodes.ok);
+  assert.deepEqual(proto.report.missions.toString, { status: 'pending', outcome: 'proposed', step: 'start', reasons: [] });
+  assert.deepEqual(proto.report.missions.constructor, { status: 'pending', outcome: 'blocked', step: 'start', reasons: [{ code: 'dependency_unmet', on: { mission: 'toString', step: 'delivered' } }] });
+  assert.deepEqual(proto.report.summary.byStatus, { pending: 2 });
+  // Références non déclarées portant des noms du prototype ⇒ unknown_reference, pas une résolution silencieuse.
+  const undeclared = validate(plan([mission('A', { repo: 'constructor', dependencies: { start: [{ mission: 'hasOwnProperty', step: 'delivered' }, { condition: 'valueof' }] } })]), state({}, { pauses: [{ scope: 'repo', target: 'toString', reason: 'x', since: T }], conditions: { constructor: { satisfied: true, evidence: 'e', at: T } } }));
+  assert.equal(undeclared.code, exitCodes.invalid);
+  assert.deepEqual(undeclared.report.errors.map(e => [e.code, e.path]), [['unknown_reference', '/missions/0/repo'], ['unknown_reference', '/missions/0/dependencies/start/0/mission'], ['unknown_reference', '/missions/0/dependencies/start/1/condition']]);
+  const resource = validate(plan([mission('A', { reserves: { resources: ['to:string'] } })]), state());
+  assert.deepEqual(codes(resource.report), ['unknown_reference']);
+  const pauseAndProof = validate(plan([mission('A')]), state({}, { pauses: [{ scope: 'repo', target: 'toString', reason: 'x', since: T }], conditions: { constructor: { satisfied: true, evidence: 'e', at: T } } }));
+  assert.deepEqual(pauseAndProof.report.errors.map(e => e.path), ['/pauses/0/target', '/conditions/constructor']);
+  // Schéma : propriété racine inconnue « hasOwnProperty » refusée par additionalProperties:false ; required « toString » absent sur un objet vide.
+  const rootKey = validate({ ...plan([mission('A')]), hasOwnProperty: true }, state());
+  assert.equal(rootKey.code, exitCodes.invalid); assert.deepEqual(rootKey.report.errors[0], { code: 'schema_invalid', path: '/', message: 'propriété non permise : hasOwnProperty', file: 'plan' });
+  assert.equal(validateSchema({ type: 'object', required: ['toString'] }, {}), false);
+  assert.equal(validateSchema({ type: 'object', required: ['toString'] }, { toString: 1 }), true);
+  assert.equal(validateSchema({ type: 'object', properties: { constructor: { type: 'string' } }, additionalProperties: false }, { constructor: 'x' }), true);
+  assert.equal(validateSchema({ type: 'object', properties: { a: { type: 'string' } }, additionalProperties: false }, { constructor: 'x' }), false);
+  assert.throws(() => validateSchema({ $ref: '#/$defs/constructor' }, 1), UsageError, 'une référence de schéma ne résout pas Object.prototype');
+  // Les vraies clés propres portant ces noms restent pleinement utilisables : dépôt, condition, mission, pause, preuve.
+  const p = plan([mission('toString', { repo: 'constructor', priority: 1, dependencies: { start: [{ condition: 'constructor' }] } }), mission('valueOf', { repo: 'constructor', priority: 2, dependencies: { start: [{ mission: 'toString', step: 'delivered' }] }, reserves: { resources: ['to:string'] } }), mission('hasOwnProperty', { priority: 3, reserves: { resources: ['to:string'] } })],
+    { repos: { constructor: { url: 'https://github.com/example/proto' }, kit: { url: 'https://github.com/example/kit' } }, resources: { 'to:string': 'Ressource nommée comme une méthode' }, conditions: { constructor: { check: 'c', proof: 'p' } } });
+  const s = state({ toString: engaged('toString', 'delivered', { prUrl: 'https://github.com/example/proto/pull/1' }) }, { pauses: [{ scope: 'mission', target: 'hasOwnProperty', reason: 'Nom réservé ailleurs, pas ici', since: T }], conditions: { constructor: { satisfied: true, evidence: 'https://github.com/example/proto/pull/1#reception', at: T } } });
+  const own = ready(p, s);
+  assert.equal(own.code, exitCodes.ok); assert.deepEqual(own.report.errors, []);
+  assert.deepEqual(proposedSteps(own.report), ['toString:integrate', 'valueOf:start']);
+  assert.deepEqual(own.report.missions.hasOwnProperty.reasons, [{ code: 'paused', scope: 'mission', target: 'hasOwnProperty', since: T, reason: 'Nom réservé ailleurs, pas ici' }]);
+  assert.deepEqual(own.report.summary, { missions: 3, byKind: { dev: 3 }, byStatus: { delivered: 1, pending: 2 } });
+  assertEveryNonProposalExplained(own.report);
+});
+
+test('date-time values are checked as real UTC instants without any clock: calendar, time and offset ranges', () => {
+  for (const good of ['2026-02-28T23:59:59Z', '2024-02-29T00:00:00.123+02:00', '2000-02-29T12:00:00Z', '2026-12-31T00:00:00-23:59', '2026-01-01T00:00:00.1Z', T]) assert.equal(validInstant(good), true, good);
+  for (const bad of ['2026-13-45T25:61:61Z', '2026-02-30T00:00:00Z', '2023-02-29T00:00:00Z', '1900-02-29T00:00:00Z', '2026-04-31T00:00:00Z', '2026-00-10T00:00:00Z', '2026-01-00T00:00:00Z', '2026-01-01T24:00:00Z', '2026-01-01T00:60:00Z', '2026-01-01T00:00:60Z', '2026-01-01T00:00:00+24:00', '2026-01-01T00:00:00+02:60', '2026-01-01T00:00:00', '2026-01-01 00:00:00Z', '2026-01-01T00:00:00.1234Z', 20260101, null]) assert.equal(validInstant(bad), false, String(bad));
+  const p = plan([mission('A')]);
+  const root = validate(p, { ...state(), reconciledAt: '2026-13-45T25:61:61Z' });
+  assert.equal(root.code, exitCodes.invalid); assert.deepEqual(root.report.errors.map(e => [e.code, e.path]), [['schema_invalid', '/reconciledAt']]); assert.match(root.report.errors[0].message, /^date-time/);
+  const nested = validate(p, state({ A: engaged('A', 'active', { assignedAt: '2026-02-30T10:00:00Z' }) }, { capacity: { ...state().capacity, observedAt: '2026-06-31T00:00:00Z' }, pauses: [{ scope: 'all', reason: 'x', since: '2026-01-01T00:00:00+24:00' }], conditions: { 'ci-green': { satisfied: true, evidence: 'e', at: '2026-01-01T23:59:60Z' } } }));
+  assert.equal(nested.code, exitCodes.invalid);
+  assert.deepEqual(nested.report.errors.map(e => e.path), ['/capacity/observedAt', '/pauses/0/since', '/conditions/ci-green/at', '/missions/A/assignedAt']);
+  assert.ok(nested.report.errors.every(e => e.code === 'schema_invalid' && e.file === 'state'));
+  const leap = validate(p, { ...state(), reconciledAt: '2024-02-29T00:00:00+05:30' });
+  assert.equal(leap.code, exitCodes.ok);
 });
