@@ -1,5 +1,19 @@
 # Versions de Lite
 
+## 0.10.1 — Publication et suivi des applications
+
+- Release GitHub stable au SHA exact de main après CI réussie ; aucun déplacement de tag.
+- Veille livrée avec les applications : une issue par version, sans secret inter-dépôts ni mise à jour aveugle.
+- Responsable commun du kit, suivi distinct des tests, intégrations et déploiements applicatifs.
+- Chargeur de tests natifs compatible avec les chemins Windows pour permettre la revue locale.
+
+## 0.10.0 — Transports des agents
+
+- Transports Cursor et xAI injectables, avec états et capacités explicites ; aucune activation d’agent ou dépense automatique.
+- Validation fermée des requêtes, erreurs minimisées, expiration et annulation couvrant aussi la résolution des identifiants.
+- Tests sur transports simulés et Worker ; pas de nouvelle table, migration, UI ou secret.
+- Conserve le correctif de journaux 0.9.1. Les applications adoptent le runtime par l’upgrade vérifié.
+
 ## 0.9.1 — Journal des requêtes minimisé
 
 - Journal limité aux métadonnées et codes d’erreur à vocabulaire fermé ; corps, paramètres et arguments exclus.

@@ -1,0 +1,6 @@
+---
+description: Réception et passage de relais des missions du kit Lite
+alwaysApply: true
+---
+
+Lire AGENTS.md puis le brief et ses contrats. Une mission déléguée reste sur ses fichiers attribués, vérifie le comportement livré et remet la même PR avec SHA, tests réels, limites et prochaine action pour l’orchestrateur. Elle ne fusionne ni ne déploie ni ne lance de mission supplémentaire. Les lots Certivan retrouvent les sources métier dans le miroir du dépôt certivan-bo ; ne pas les réinventer. Le responsable commun du kit pilote ses revues, fusions et versions selon docs/MAINTENANCE.md ; le pilote de chaque application reçoit les mises à jour et les intègre avec ses propres tests. Réconcilier les runs existants avant toute attribution.

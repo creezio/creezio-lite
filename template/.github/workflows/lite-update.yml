@@ -1,0 +1,30 @@
+name: Veille Creezio Lite
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - lite.lock.json
+      - scripts/check-lite-update.mjs
+      - .github/workflows/lite-update.yml
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: lite-update-notification
+  cancel-in-progress: false
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Signaler la version validée sans modifier l'application
+        run: node scripts/check-lite-update.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

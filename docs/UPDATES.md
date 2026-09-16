@@ -60,3 +60,17 @@ Appliquer la mise à jour du runtime et la migration additive `0010_browser_rela
 Appliquer la mise à jour du runtime seul : aucune migration, aucun secret et aucune page applicative ne changent. Le journal `lite_request_logs` cesse de copier les corps, paramètres, arguments d’outils et messages ; il ne conserve que des métadonnées à vocabulaire fermé (voir [API.md](API.md#journal-des-requêtes)). Chaque réponse porte désormais l’en-tête `x-lite-request-id`, valeur du champ `correlationId` de la ligne correspondante.
 
 Les lignes écrites avant la mise à jour restent en base : la lecture les renvoie avec `legacy:true`, sans leur `detail_json` stocké, avec leur chemin re-résolu par le catalogue ; la recherche `q` ne les parcourt pas. Elles sont supprimées par la rétention de 30 jours à la prochaine écriture de l’espace, ou immédiatement par « Vider » dans l’écran Activité. Aucune fiche, aucun fichier et aucune conversation ne sont modifiés. Un nettoyage immédiat des anciennes lignes par migration reste possible sur demande, sous forme d’une instruction additive `DELETE`/`UPDATE` ciblant `lite_request_logs` ; il n’est pas inclus ici.
+
+## Passage à 0.10.0
+
+Ajoute les transports purs Cursor/xAI, sans raccordement applicatif automatique. L’upgrade du runtime conserve les changements 0.9.1 ; aucune migration ni rotation de secret. L’activation des commandes, des droits, des tables et des vues Agents reste un lot d’intégration distinct. Relire les capacités et erreurs typées du contrat `docs/contracts/agent-provider-transport.md` avant raccordement.
+
+## Notifications de nouvelles versions (depuis 0.10.1)
+
+Le responsable du kit publie une release GitHub après revue et CI réussie sur le commit exact de main. Le responsable du kit notifie les pilotes et déclenche leur workflow lors de la réception d’une nouvelle release. Le workflow est aussi exécutable à la demande et lorsque le verrou change sur main. Aucun schedule/cron n’est installé dans les applications.
+
+Les nouvelles applications reçoivent `.github/workflows/lite-update.yml` et `scripts/check-lite-update.mjs`. Dans une application existante, intégrer explicitement ces deux fichiers depuis la version validée du kit, activer Actions et Issues et adapter le nom de branche si nécessaire. Aucun jeton personnel ou secret inter-dépôts n’est requis : `GITHUB_TOKEN` lit le kit public et écrit seulement les issues de l’application. Aucun code applicatif ni installation de dépendance n’est exécuté par la veille.
+
+Une issue persistante par version contient le SHA exact, les changements et la recette. Les relances ne créent pas de doublon. La veille ne fusionne ni ne déploie et ne clôture jamais sur la seule version du verrou : le pilote de l’application confirme tests, intégration et publication. Une issue close comme « non prévue » reste différée ; une clôture prématurée sans version intégrée est rouverte.
+
+Pour un Site sans dépôt GitHub applicatif, enregistrer la source et le responsable dans le registre privé du mainteneur ; notifier sa tâche et y suivre explicitement la mise à jour. Ne pas publier les noms ou chemins des applications privées dans le dépôt public du kit. Voir [MAINTENANCE.md](MAINTENANCE.md).

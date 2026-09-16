@@ -14,3 +14,9 @@ Lite est un socle autonome. Le code exécutable est dans `runtime/` ; `template/
 - Vérifier les parcours modifiés dans un navigateur lorsque possible. Distinguer les preuves sur fixtures des parcours du Site authentifié.
 - Publier les changements du kit par une branche et une PR ; attendre la CI avant fusion. Augmenter la version après chaque publication. Ne pas modifier la configuration Git globale ou locale.
 - Les évolutions de schéma sont additives. Les fichiers SQL et métadonnées déjà appliqués sont immuables. Une migration vers une nouvelle structure d’app demande une fusion explicite des fichiers du template.
+
+## Missions déléguées et passage de relais
+
+- Un agent délégué livre sa branche et sa PR ; il ne fusionne pas, ne publie pas et ne lance pas un autre agent ou un lot suivant sans attribution. Respecter le brief et ses propriétaires de fichiers ; les versions et raccordements partagés sont pilotés par l’orchestrateur.
+- Terminer chaque lot avec mission, agent/run si connus, PR/SHA, tests exécutés et résultat, limites et prochaine action concrète avec responsable. Une fin de run ne prouve pas l’intégration ni le déploiement.
+- Le responsable commun de Creezio Lite possède les fusions et publications du kit. Les orchestrateurs applicatifs proposent leurs correctifs par PR et restent responsables de leurs propres mises à jour ; ils ne pilotent plus les fusions du kit. Suivre `docs/MAINTENANCE.md`, reprendre les agents existants et posséder le verrou du dépôt avant mutation.
