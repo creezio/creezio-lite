@@ -68,7 +68,7 @@ Environnement : Node 24.21.0 (installé via nvm, le VM fournissait 22.14), pnpm 
 
 | Contrôle | Résultat |
 |---|---|
-| `npm test` (synchronise le template puis 26 fichiers, B00 et D03 inclus) | 94 tests, 0 échec (78 existants dont B00 et D03 + 16 D01) — relancé après la fusion de `main` (0.10.0) et après la reprise NW01 ; les quatre régressions de la revue précédente (fileFilter, pattern, collisions natives, `:id`/`:recordId`) rejouées et vertes |
+| `npm test` (synchronise le template puis 25 fichiers, B00 et D03 inclus) | 94 tests, 0 échec (78 existants dont B00 et D03 + 16 D01) — relancé après la fusion de `main` (0.10.0) et après la reprise NW01 ; les quatre régressions de la revue précédente (fileFilter, pattern, collisions natives, `:id`/`:recordId`) rejouées et vertes |
 | `npm run check` | `ok:true`, version 0.10.0 (héritée de `main`), 2 exemples |
 | `pnpm typecheck` dans `template/` | exit 0 |
 | `pnpm build` dans `template/` | exit 0 (vinext) |
