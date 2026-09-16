@@ -1,5 +1,12 @@
 # Versions de Lite
 
+## 0.10.0 — Transports des agents
+
+- Transports Cursor et xAI injectables, avec états et capacités explicites ; aucune activation d’agent ou dépense automatique.
+- Validation fermée des requêtes, erreurs minimisées, expiration et annulation couvrant aussi la résolution des identifiants.
+- Tests sur transports simulés et Worker ; pas de nouvelle table, migration, UI ou secret.
+- Conserve le correctif de journaux 0.9.1. Les applications adoptent le runtime par l’upgrade vérifié.
+
 ## 0.9.1 — Journal des requêtes minimisé
 
 - Journal limité aux métadonnées et codes d’erreur à vocabulaire fermé ; corps, paramètres et arguments exclus.

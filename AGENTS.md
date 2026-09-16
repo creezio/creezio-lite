@@ -14,3 +14,9 @@ Lite est un socle autonome. Le code exécutable est dans `runtime/` ; `template/
 - Vérifier les parcours modifiés dans un navigateur lorsque possible. Distinguer les preuves sur fixtures des parcours du Site authentifié.
 - Publier les changements du kit par une branche et une PR ; attendre la CI avant fusion. Augmenter la version après chaque publication. Ne pas modifier la configuration Git globale ou locale.
 - Les évolutions de schéma sont additives. Les fichiers SQL et métadonnées déjà appliqués sont immuables. Une migration vers une nouvelle structure d’app demande une fusion explicite des fichiers du template.
+
+## Missions déléguées et passage de relais
+
+- Un agent délégué livre sa branche et sa PR ; il ne fusionne pas, ne publie pas et ne lance pas un autre agent ou un lot suivant sans attribution. Respecter le brief et ses propriétaires de fichiers ; les versions et raccordements partagés sont pilotés par l’orchestrateur.
+- Terminer chaque lot avec mission, agent/run si connus, PR/SHA, tests exécutés et résultat, limites et prochaine action concrète avec responsable. Une fin de run ne prouve pas l’intégration ni le déploiement.
+- Pour l’orchestration Certivan explicitement mandatée, suivre la compétence `certivan-orchestration` et `docs/ORCHESTRATION.md` du dépôt applicatif ; utiliser le même verrou local pour les deux dépôts et réconcilier les états Cursor/GitHub avant mutation. Ne pas créer un deuxième pilote local dans le kit.
