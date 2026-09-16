@@ -488,6 +488,73 @@ test('server context: verified credential reference (session, API key, OAuth tok
   }finally{db.close();}
 });
 
+test('closed schema subset: own properties only (constructor, __proto__), every declared constraint enforced or refused at declaration, anyOf keeps its siblings, publicDetails bounded in UTF-8 bytes',async()=>{
+  const db=await localDb();try{
+    fixtureTables(db);
+    let invoked=0;
+    const ext=defineExtensions(domainApp,{scope:openScope,operations:[
+      command({moduleId:'dossiers',moduleName:'Dossiers',name:'strict',description:'Objet fermé',target:'module',idempotencyKey:'none',fields:{a:{type:'integer'}},required:['a'],async handle(){invoked++;return {body:{ok:true}};}}),
+      {operation:operation({kind:'business',id:'read.dossiers.loose',moduleId:'dossiers',moduleName:'Dossiers',method:'POST',path:'/api/v1/modules/dossiers/loose',description:'Objet ouvert typé',roles:['owner','admin','member'],
+        bodySchema:{type:'object',properties:{a:{type:'integer'}},additionalProperties:{type:'string',pattern:'^SAFE$'}}}),async handle(){invoked++;return {body:{ok:true}};}},
+      {operation:operation({kind:'business',id:'read.dossiers.formats',moduleId:'dossiers',moduleName:'Dossiers',method:'POST',path:'/api/v1/modules/dossiers/formats',description:'Formats et anyOf',roles:['owner','admin','member'],
+        bodySchema:objectSchema({day:{type:'string',format:'date'},at:{type:'string',format:'date-time'},link:{type:'string',format:'uri'},tag:{anyOf:[{type:'string',maxLength:3},{type:'null'}],description:'court ou nul'},list:{type:'array',items:{type:'integer'},minItems:1,maxItems:2}})}),async handle(){invoked++;return {body:{ok:true}};}},
+    ]});
+    const org=await boot(client(db,alice));const owner=caller(db,alice,org,ext,domainApp);
+    const rawJson=(text)=>({method:'POST',body:new TextEncoder().encode(text),headers:{'content-type':'application/json'}});
+    // 1. Own properties only: the maintainer's two JSON bodies, on HTTP and MCP, never reach the handler.
+    for(const text of ['{"a":1,"constructor":{"unvalidated":true}}','{"a":1,"__proto__":{"unvalidated":true}}','{"a":1,"prototype":1}']){
+      const http=await owner('modules/dossiers/commands/strict',rawJson(text));
+      assert.equal(http.status,400,text);assert.equal(http.body.error.code,'invalid_arguments');assert.match(http.body.error.details.field,/^body\.(constructor|__proto__|prototype)$/);
+      const mcp=await owner('/api/mcp',rawJson(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lite_command_dossiers_strict","arguments":{"body":${text}}}}`));
+      assert.equal(mcp.body.result.isError,true,JSON.stringify(mcp.body));assert.equal(mcp.body.result.structuredContent.error.code,'invalid_arguments');
+    }
+    assert.equal((await owner('modules/dossiers/commands/strict',rawJson('{"constructor":1}'))).status,400,'a required name is never satisfied through the prototype');
+    assert.equal((await owner('modules/dossiers/commands/strict',{method:'POST',body:{a:1}})).status,200);assert.equal(invoked,1);
+    // 2. additionalProperties as a schema is enforced, including its pattern; the declaration is accepted because it is enforceable.
+    assert.equal((await owner('modules/dossiers/loose',{method:'POST',body:{a:1,undeclared:'not an integer'}})).status,400);
+    assert.equal((await owner('modules/dossiers/loose',{method:'POST',body:{a:1,undeclared:'not safe'}})).status,400);
+    assert.equal((await owner('modules/dossiers/loose',{method:'POST',body:{a:1,undeclared:'SAFE'}})).status,200);assert.equal(invoked,2);
+    // Formats are enforced exactly as declared; anyOf branches carry their own constraints.
+    const formats=(body)=>owner('modules/dossiers/formats',{method:'POST',body});
+    assert.equal((await formats({day:'2026-09-16',at:'2026-09-16T10:00:00Z',link:'https://example.test/a',tag:'abc',list:[1]})).status,200);
+    for(const body of [{day:'2026-02-30'},{day:'16/09/2026'},{day:''},{at:'2026-09-16 10:00'},{at:'2026-09-16T10:00:00'},{link:'not a uri'},{link:'/relative'},{tag:'far too long'},{tag:3},{list:[]},{list:[1,2,3]},{list:['1']}])
+      assert.equal((await formats(body)).status,400,JSON.stringify(body));
+    assert.equal((await formats({tag:null})).status,200);assert.equal(invoked,4);
+    // Declarations outside the closed subset are refused with a stable diagnostic.
+    const declare=(bodySchema)=>()=>defineExtensions(domainApp,{operations:[{operation:operation({kind:'business',id:'read.dossiers.x',moduleId:'dossiers',moduleName:'Dossiers',method:'POST',path:'/api/v1/modules/dossiers/x',description:'d',roles:['owner'],bodySchema}),async handle(){}}]});
+    const refused=[
+      [{anyOf:[{type:'string'}],type:'string',maxLength:3},/anyOf ne se combine pas/],
+      [{type:'string',minimum:3},/minimum exige type number/],
+      [{type:'object',properties:{},maxLength:3},/maxLength exige type string/],
+      [{type:'string',format:'uuid'},/format non pris en charge/],
+      [{type:'string',const:'x'},/mot-clé non pris en charge : const/],
+      [{type:'object',properties:{a:{type:'string',oneOf:[{type:'string'}]}}},/mot-clé non pris en charge : oneOf/],
+      [{type:'object',properties:{a:{type:'array',items:{type:'object',properties:{b:{type:'string',default:'x'}}}}}},/mot-clé non pris en charge : default/],
+      [{type:'object',additionalProperties:{type:'string',pattern:'('}},/pattern non compilable/],
+      [{type:'object',properties:Object.fromEntries([['__proto__',{type:'string'}]])},/nom de propriété refusé/],
+      [{type:'object',properties:{constructor:{type:'string'}}},/nom de propriété refusé/],
+      [{type:'object',properties:{},required:['constructor']},/nom de propriété refusé/],
+      [{type:'object',properties:{},required:['a'],additionalProperties:false},/champ requis non déclaré : a/],
+      [{type:'array',items:{type:'integer'},minItems:3,maxItems:2},/minItems dépasse maxItems/],
+      [{type:'string',description:'x'.repeat(2001)},/description doit être un texte/],
+    ];
+    for(const [schema,pattern] of refused)assert.throws(declare(schema),error=>error.name==='OperationCatalogError'&&error.code==='invalid_schema'&&pattern.test(error.message),JSON.stringify(schema));
+    // Annotations remain accepted; the whole native catalogue of the kit lies inside the subset.
+    assert.doesNotThrow(declare({type:'object',properties:{a:{type:'string',description:'d',title:'t',writeOnly:true,deprecated:false}},required:[],additionalProperties:false}));
+    const { nativeCatalog }=await import('../runtime/modules/sites-adapter/src/catalog.ts');
+    const { assertJsonSchema }=await import('../runtime/core/operations.ts');
+    let checked=0;for(const op of nativeCatalog(domainApp))for(const schema of [op.inputSchema,op.bodySchema,op.querySchema])if(schema){assertJsonSchema(schema,op.id);checked++;}
+    assert.ok(checked>100,'the kit schemas were checked');
+    // 4. publicDetails bounds UTF-8 bytes, not string units: four 190-character CJK strings weigh 2313 bytes.
+    const cjk=Object.fromEntries(['k0','k1','k2','k3'].map(k=>[k,'漢'.repeat(190)]));
+    assert.ok(JSON.stringify(cjk).length<2048&&new TextEncoder().encode(JSON.stringify(cjk)).length>2048,'the fixture separates units from bytes');
+    assert.equal(publicDetails(cjk),undefined);
+    assert.deepEqual(publicDetails({k0:'漢'.repeat(190),k1:'漢'.repeat(190),k2:'漢'.repeat(190)}),{k0:'漢'.repeat(190),k1:'漢'.repeat(190),k2:'漢'.repeat(190)});
+    assert.equal(publicDetails(Object.fromEntries(Array.from({length:11},(_,i)=>[`k${i}`,'y'.repeat(190)]))),undefined,'ASCII regression: 11 × 190 exceeds 2 KiB');
+    assert.ok(publicDetails(Object.fromEntries(Array.from({length:10},(_,i)=>[`k${i}`,'y'.repeat(190)]))),'ASCII 10 × 190 fits');
+  }finally{db.close();}
+});
+
 test('a handler failure never leaks details and deferred work completes before the response is final without defer',async()=>{
   const db=await localDb();try{
     fixtureTables(db);
