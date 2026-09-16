@@ -32,14 +32,14 @@ function recorder(routes) {
   };
   return { calls, fetchImpl };
 }
-async function pin() { return agents.loadPinnedModel(); }
+async function selections() { return agents.loadSelections(); }
 function assertNoLeak(value) {
   const text = JSON.stringify(value) + (value instanceof Error ? value.stack : '');
   for (const marker of [KEY, BODY_MARKER, PROMPT_MARKER, 'Bearer ']) assert.ok(!text.includes(marker), `fuite de « ${marker.trim()} » dans ${text.slice(0, 200)}`);
 }
 async function withTemp(prefix, run) { const temp = await mkdtemp(join(tmpdir(), prefix)); try { return await run(temp); } finally { await rm(temp, { recursive: true, force: true }); } }
 
-test('the canonical skill has a valid frontmatter, a strict pinned model and no private data', async () => {
+test('the canonical skill has a valid frontmatter, fixed selections without fallback and no private data', async () => {
   const skill = await readFile(join(root, orchestrationDir, 'SKILL.md'), 'utf8');
   const front = skill.match(/^---\n([\s\S]*?)\n---\n/); assert.ok(front, 'frontmatter YAML attendu');
   assert.match(front[1], /^name: lite-orchestration$/m);
@@ -52,47 +52,56 @@ test('the canonical skill has a valid frontmatter, a strict pinned model and no 
     assert.doesNotMatch(content, /bc-[0-9a-f]{8}-[0-9a-f]{4}|run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}|\/home\/|\/Users\/|[A-Z]:\\|key_[A-Za-z0-9]{20}|sk-[A-Za-z0-9]{20}/, `donnée privée dans ${source}`);
     assert.ok(!content.includes('Codex ') || /pas de|aucun|ni /i.test(content));
   }
-  const model = agents.validatePinnedModel(JSON.parse(await readFile(sources[`${orchestrationDir}/cursor-model.json`], 'utf8')));
-  assert.equal(model.modelId, 'claude-fable-5-1-thinking-high'); assert.equal(model.effectiveModelName, model.modelId);
-  assert.throws(() => agents.validatePinnedModel({ formatVersion: 1, provider: 'cursor', modelId: 'x', params: [], effectiveModelName: 'x', matching: 'exact-id', fallback: 'first-available' }), /fallback none/);
+  const config = agents.validateSelections(JSON.parse(await readFile(sources[`${orchestrationDir}/cursor-model.json`], 'utf8')));
+  assert.equal(config.default, 'fable'); assert.deepEqual(Object.keys(config.selections), ['fable', 'opus', 'grok']);
+  assert.equal(agents.resolveSelection(config).modelId, 'claude-fable-5-1-thinking-high'); assert.equal(agents.resolveSelection(config, 'opus').modelId, 'claude-opus-5-thinking-high'); assert.equal(agents.resolveSelection(config, 'grok').modelId, 'cursor-grok-4.6-high');
+  assert.ok(Object.values(config.selections).every(s => s.params.length === 0), 'aucun contexte ni effort inventé hors catalogue');
+  assert.deepEqual(config.disabledWhenExposed, { fast: 'false', cyber: 'false' });
+  assert.throws(() => agents.resolveSelection(config, 'sonnet'), /Sélection inconnue/);
+  assert.throws(() => agents.validateSelections({ formatVersion: 2, provider: 'cursor', default: 'a', selections: { a: { modelId: 'x' } }, rules: { chosenOnceAtAttribution: true, keptForFollowups: true, fallback: 'first-available' } }), /fallback:none/);
   const script = await readFile(sources[`${orchestrationDir}/scripts/cursor-agents.mjs`], 'utf8');
   const imports = [...script.matchAll(/^import .* from ['"]([^'"]+)['"]/gm)].map(m => m[1]);
   assert.ok(imports.length > 0 && imports.every(i => i.startsWith('node:')), `le script doit rester autonome, sans import du kit : ${imports}`);
   assert.equal(script.split('${key}').length - 1, 1, 'la clé n’est interpolée que dans l’en-tête Authorization');
 });
 
-test('preflight accepts only the exact pinned identifier with its parameters, without fallback', async () => {
-  const p = await pin();
+test('preflight validates the selection against a complete catalog variant, without fallback', async () => {
+  const config = await selections(); const fableSel = agents.resolveSelection(config);
   const ok = recorder({ 'GET /v1/models': () => models([other, fable]) });
-  const accepted = await agents.preflight({ pin: p, key: KEY, fetchImpl: ok.fetchImpl });
-  assert.equal(accepted.status, 'ok'); assert.equal(accepted.matchedBy, 'id'); assert.equal(accepted.fallback, 'none'); assert.equal(accepted.modelsListed, 2);
+  const accepted = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: ok.fetchImpl });
+  assert.equal(accepted.status, 'ok'); assert.equal(accepted.selection, 'fable'); assert.equal(accepted.fallback, 'none');
+  assert.deepEqual(accepted.requested, { modelId: fableSel.modelId, params: [] });
+  assert.equal(accepted.catalog.validated, true); assert.equal(accepted.catalog.modelsListed, 2); assert.deepEqual(accepted.catalog.completeParams, []); assert.match(accepted.catalog.checkedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(ok.calls.length, 1); assert.equal(ok.calls[0].headers.authorization, `Bearer ${KEY}`); assert.equal(ok.calls[0].redirect, 'manual'); assert.equal(ok.calls[0].url, 'https://api.cursor.com/v1/models');
   assertNoLeak(accepted);
 
   const absent = recorder({ 'GET /v1/models': () => models([other, { id: 'claude-fable-5-1-thinking', displayName: 'Fable' }, { id: 'claude-fable-5-thinking-high', displayName: 'Fable 5' }]) });
-  const blocked = await agents.preflight({ pin: p, key: KEY, fetchImpl: absent.fetchImpl });
-  assert.equal(blocked.status, 'blocked'); assert.equal(blocked.reason, 'model_absent'); assert.deepEqual(blocked.candidates, ['claude-fable-5-1-thinking', 'claude-fable-5-thinking-high']);
+  const blocked = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: absent.fetchImpl });
+  assert.equal(blocked.status, 'blocked'); assert.equal(blocked.reason, 'model_absent'); assert.equal(blocked.catalog.validated, false); assert.deepEqual(blocked.candidates, ['claude-fable-5-1-thinking', 'claude-fable-5-thinking-high']);
   assert.equal(absent.calls.length, 1, 'aucun second appel ni sélection de remplacement');
 
-  const alias = recorder({ 'GET /v1/models': () => models([{ id: 'claude-fable-5-1-thinking', displayName: 'Fable', aliases: [p.modelId] }]) });
-  const aliased = await agents.preflight({ pin: p, key: KEY, fetchImpl: alias.fetchImpl });
+  const alias = recorder({ 'GET /v1/models': () => models([{ id: 'claude-fable-5-1-thinking', displayName: 'Fable', aliases: [fableSel.modelId] }]) });
+  const aliased = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: alias.fetchImpl });
   assert.equal(aliased.status, 'blocked'); assert.equal(aliased.reason, 'alias_only'); assert.equal(aliased.canonicalId, 'claude-fable-5-1-thinking');
 
-  const needsParams = recorder({ 'GET /v1/models': () => models([{ ...fable, variants: other.variants }]) });
-  const required = await agents.preflight({ pin: p, key: KEY, fetchImpl: needsParams.fetchImpl });
-  assert.equal(required.status, 'blocked'); assert.equal(required.reason, 'params_required'); assert.equal(required.variants.length, 2);
-
-  const withParams = { ...p, params: [{ id: 'fast', value: 'true' }] };
-  const unsupported = await agents.preflight({ pin: withParams, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([fable]) }).fetchImpl });
-  assert.equal(unsupported.status, 'blocked'); assert.equal(unsupported.reason, 'param_unsupported'); assert.equal(unsupported.param, 'fast');
-  const unknownVariant = await agents.preflight({ pin: { ...p, params: [{ id: 'fast', value: 'false' }] }, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([{ ...fable, parameters: other.parameters, variants: [other.variants[0]] }]) }).fetchImpl });
-  assert.equal(unknownVariant.status, 'blocked'); assert.equal(unknownVariant.reason, 'variant_unknown');
-  const variantOk = await agents.preflight({ pin: { ...p, params: [{ id: 'fast', value: 'true' }] }, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([{ ...fable, parameters: other.parameters, variants: other.variants }]) }).fetchImpl });
-  assert.equal(variantOk.status, 'ok'); assert.equal(variantOk.variant, 'Other fast');
+  // Variante complète : fast exposé ⇒ désactivé par défaut, puis la combinaison doit exister dans le catalogue.
+  const fastExposed = { ...fable, parameters: other.parameters, variants: other.variants.map(v => ({ ...v, displayName: v.displayName.replace('Other', 'Fable') })) };
+  const disabled = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([fastExposed]) }).fetchImpl });
+  assert.equal(disabled.status, 'ok'); assert.deepEqual(disabled.catalog.completeParams, [{ id: 'fast', value: 'false' }]); assert.equal(disabled.catalog.variant, 'Fable');
+  const onlyFast = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([{ ...fastExposed, variants: [fastExposed.variants[0]] }]) }).fetchImpl });
+  assert.equal(onlyFast.status, 'blocked'); assert.equal(onlyFast.reason, 'variant_invalid'); assert.deepEqual(onlyFast.completeParams, [{ id: 'fast', value: 'false' }]); assert.equal(onlyFast.variants.length, 1, 'le catalogue est rapporté, aucune variante choisie à la place');
+  const grokSel = agents.resolveSelection(config, 'grok');
+  const grokCatalog = { id: grokSel.modelId, displayName: 'Grok 4.6', parameters: [{ id: 'fast', values: [{ value: 'true' }, { value: 'false' }] }, { id: 'context', values: [{ value: '1m' }] }], variants: [{ params: [{ id: 'fast', value: 'false' }], displayName: 'Grok 4.6' }, { params: [{ id: 'fast', value: 'true' }], displayName: 'Grok 4.6 fast', isDefault: true }] };
+  const grok = await agents.preflight({ selection: grokSel, config, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([grokCatalog]) }).fetchImpl });
+  assert.equal(grok.status, 'ok'); assert.equal(grok.catalog.variant, 'Grok 4.6'); assert.ok(!grok.catalog.completeParams.some(p => p.id === 'context'), 'aucun contexte Grok inventé');
+  const extraParam = await agents.preflight({ selection: { ...fableSel, params: [{ id: 'effort', value: 'max' }] }, config, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([fable]) }).fetchImpl });
+  assert.equal(extraParam.status, 'blocked'); assert.equal(extraParam.reason, 'variant_invalid');
+  const noVariants = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([{ id: fableSel.modelId, displayName: 'Fable' }]) }).fetchImpl });
+  assert.equal(noVariants.status, 'ok'); assert.equal(noVariants.catalog.variant, 'Fable');
 });
 
 test('an unavailable Cursor API blocks explicitly, never substitutes a model and never leaks bodies or the key', async () => {
-  const p = await pin();
+  const config = await selections(); const p = agents.resolveSelection(config);
   const cases = [
     [() => json({ error: { code: 'unauthorized', message: BODY_MARKER } }, 401), 'auth', 401],
     [() => json({ error: { code: 'forbidden', message: BODY_MARKER } }, 403), 'auth', 403],
@@ -105,28 +114,28 @@ test('an unavailable Cursor API blocks explicitly, never substitutes a model and
   ];
   for (const [handler, reason, httpStatus] of cases) {
     const r = recorder({ 'GET /v1/models': handler });
-    const report = await agents.preflight({ pin: p, key: KEY, fetchImpl: r.fetchImpl });
-    assert.equal(report.status, 'unavailable', reason); assert.equal(report.reason, reason); assert.equal(report.httpStatus, httpStatus); assert.equal(report.modelId, p.modelId);
+    const report = await agents.preflight({ selection: p, config, key: KEY, fetchImpl: r.fetchImpl });
+    assert.equal(report.status, 'unavailable', reason); assert.equal(report.reason, reason); assert.equal(report.httpStatus, httpStatus); assert.equal(report.requested.modelId, p.modelId); assert.equal(report.catalog.validated, false);
     if (reason === 'quota') assert.equal(report.retryAfterMs, 30_000);
     assert.equal(r.calls.length, 1, 'aucune redirection suivie, aucun renvoi');
     assertNoLeak(report);
   }
   const slow = { fetchImpl: (url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(new Error('aborted')))) };
-  const timedOut = await agents.preflight({ pin: p, key: KEY, fetchImpl: slow.fetchImpl, timeoutMs: 50 });
+  const timedOut = await agents.preflight({ selection: p, config, key: KEY, fetchImpl: slow.fetchImpl, timeoutMs: 50 });
   assert.equal(timedOut.status, 'unavailable'); assert.equal(timedOut.reason, 'timeout');
-  const big = await agents.preflight({ pin: p, key: KEY, fetchImpl: async () => new Response('x'.repeat(3_000_000), { status: 200, headers: { 'content-type': 'application/json', 'content-length': '3000000' } }) });
+  const big = await agents.preflight({ selection: p, config, key: KEY, fetchImpl: async () => new Response('x'.repeat(3_000_000), { status: 200, headers: { 'content-type': 'application/json', 'content-length': '3000000' } }) });
   assert.equal(big.status, 'unavailable'); assert.equal(big.reason, 'too_large');
-  const missing = await agents.preflight({ pin: p, key: null, fetchImpl: () => { throw new Error('ne doit pas être appelé'); } });
+  const missing = await agents.preflight({ selection: p, config, key: null, fetchImpl: () => { throw new Error('ne doit pas être appelé'); } });
   assert.equal(missing.status, 'unavailable'); assert.equal(missing.reason, 'credential_missing');
   assert.equal(agents.readKey({ CURSOR_API_KEY: ' bad key ' }), null); assert.equal(agents.readKey({}), null); assert.equal(agents.readKey({ CURSOR_API_KEY: KEY }), KEY);
 });
 
-test('launch deduplicates missions, pins the model in the payload, reconciles 409 and uncertain calls', async () => {
-  const p = await pin();
+test('launch deduplicates missions, fixes the selection once in the payload and registry, reconciles 409 and uncertain calls', async () => {
+  const config = await selections(); const p = agents.resolveSelection(config);
   await withTemp('lite-orch-launch-', async (temp) => {
     const registryFile = join(temp, 'private', 'registry.json');
     const brief = `Mission O01 — ${PROMPT_MARKER}`;
-    const base = { mission: 'O01', repo: REPO + '.git', ref: 'agents/O01-standard', promptText: brief, pin: p, key: KEY, registryFile };
+    const base = { mission: 'O01', repo: REPO + '.git', ref: 'agents/O01-standard', promptText: brief, config, key: KEY, registryFile };
     assert.equal(AGENT, agents.missionAgentId('https://github.com/example-org/example-app/', 'O01'), 'identifiant déterministe indépendant du suffixe .git');
     assert.notEqual(AGENT, agents.missionAgentId(REPO, 'O02'));
 
@@ -137,7 +146,9 @@ test('launch deduplicates missions, pins the model in the payload, reconciles 40
 
     const created = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': (request) => json({ agent: agentRecord(), run: runRecord() }) });
     const launched = await agents.launch({ ...base, fetchImpl: created.fetchImpl, name: 'O01 — standard' });
-    assert.equal(launched.status, 'launched'); assert.equal(launched.agentId, AGENT); assert.equal(launched.runId, RUN); assert.equal(launched.modelId, p.modelId);
+    assert.equal(launched.status, 'launched'); assert.equal(launched.agentId, AGENT); assert.equal(launched.runId, RUN);
+    assert.equal(launched.selection.key, 'fable'); assert.deepEqual(launched.selection.requested, { modelId: p.modelId, params: [] });
+    assert.equal(launched.selection.createAccepted, true); assert.equal(launched.selection.runAccepted, false); assert.equal(launched.selection.modelObserved, null); assert.match(launched.selection.catalog.checkedAt, /^\d{4}-/); assert.match(launched.selection.note, /ne prouve pas/);
     const post = created.calls[1];
     assert.equal(post.method, 'POST'); assert.equal(post.url, 'https://api.cursor.com/v1/agents');
     assert.deepEqual(post.body, { agentId: AGENT, prompt: { text: brief }, model: { id: p.modelId }, repos: [{ url: REPO, startingRef: 'agents/O01-standard' }], workOnCurrentBranch: true, autoCreatePR: false, name: 'O01 — standard' });
@@ -145,6 +156,15 @@ test('launch deduplicates missions, pins the model in the payload, reconciles 40
     assertNoLeak(launched);
     let registry = await agents.loadRegistry(registryFile);
     assert.equal(registry.missions.O01.state, 'launched'); assert.equal(registry.missions.O01.runId, RUN); assertNoLeak(registry);
+    assert.deepEqual({ key: registry.missions.O01.selection.key, modelId: registry.missions.O01.selection.modelId, params: registry.missions.O01.selection.params }, { key: 'fable', modelId: p.modelId, params: [] }, 'sélection initiale conservée dans le registre');
+
+    // Sélection explicite à l’attribution : opus/grok seulement pour une mission bornée ; fast désactivé quand exposé.
+    const grokCatalog = { id: 'cursor-grok-4.6-high', displayName: 'Grok 4.6', parameters: [{ id: 'fast', values: [{ value: 'true' }, { value: 'false' }] }], variants: [{ params: [{ id: 'fast', value: 'false' }], displayName: 'Grok 4.6' }, { params: [{ id: 'fast', value: 'true' }], displayName: 'Grok 4.6 fast', isDefault: true }] };
+    const grokAgent = agents.missionAgentId(REPO, 'S02');
+    const simple = recorder({ 'GET /v1/models': () => models([fable, grokCatalog]), 'POST /v1/agents': () => json({ agent: agentRecord({ id: grokAgent }), run: runRecord({ agentId: grokAgent }) }) });
+    const bounded = await agents.launch({ ...base, mission: 'S02', select: 'grok', fetchImpl: simple.fetchImpl });
+    assert.equal(bounded.status, 'launched'); assert.deepEqual(simple.calls[1].body.model, { id: 'cursor-grok-4.6-high', params: [{ id: 'fast', value: 'false' }] }); assert.equal(bounded.selection.catalog.variant, 'Grok 4.6');
+    await assert.rejects(agents.launch({ ...base, mission: 'S03', select: 'sonnet', fetchImpl: recorder({}).fetchImpl }), /Sélection inconnue/);
 
     const again = recorder({});
     const dedup = await agents.launch({ ...base, fetchImpl: again.fetchImpl });
@@ -218,15 +238,41 @@ test('status polls progressively, reports only changes, truncates results and ne
   });
 });
 
-test('followup reuses the same agent and surfaces agent_busy without retry', async () => {
+test('followup reuses the same agent after a terminal run, keeps the initial selection and sends no model field', async () => {
   const busy = recorder({ [`POST /v1/agents/${AGENT}/runs`]: () => json({ error: { code: 'agent_busy', message: BODY_MARKER } }, 409) });
   const blocked = await agents.followup({ agentId: AGENT, promptText: PROMPT_MARKER, key: KEY, fetchImpl: busy.fetchImpl });
-  assert.equal(blocked.status, 'blocked'); assert.equal(blocked.providerCode, 'agent_busy'); assert.equal(busy.calls.length, 1); assertNoLeak(blocked);
-  const ok = recorder({ [`POST /v1/agents/${AGENT}/runs`]: (request) => { assert.deepEqual(request.body, { prompt: { text: PROMPT_MARKER } }); return json({ run: runRecord({ id: 'run-00000000-0000-4000-8000-000000000002' }) }); } });
+  assert.equal(blocked.status, 'blocked'); assert.equal(blocked.providerCode, 'agent_busy'); assert.equal(busy.calls.length, 1); assert.equal(blocked.modelSent, false); assertNoLeak(blocked);
+  const RUN2 = 'run-00000000-0000-4000-8000-000000000002';
+  const ok = recorder({ [`POST /v1/agents/${AGENT}/runs`]: (request) => { assert.deepEqual(request.body, { prompt: { text: PROMPT_MARKER } }); return json({ run: runRecord({ id: RUN2 }) }); } });
   const launched = await agents.followup({ agentId: AGENT, promptText: PROMPT_MARKER, key: KEY, fetchImpl: ok.fetchImpl });
-  assert.equal(launched.status, 'launched'); assert.equal(launched.runId, 'run-00000000-0000-4000-8000-000000000002'); assertNoLeak(launched);
+  assert.equal(launched.status, 'launched'); assert.equal(launched.runId, RUN2); assertNoLeak(launched);
   const lost = await agents.followup({ agentId: AGENT, promptText: 'x', key: KEY, fetchImpl: recorder({ [`POST /v1/agents/${AGENT}/runs`]: () => { throw new Error('reset'); } }).fetchImpl });
   assert.equal(lost.status, 'uncertain'); assert.match(lost.nextAction, /latestRunId/);
+
+  const config = await selections();
+  await withTemp('lite-orch-followup-', async (temp) => {
+    const registryFile = join(temp, 'registry.json');
+    const created = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => json({ agent: agentRecord(), run: runRecord() }) });
+    const first = await agents.launch({ mission: 'O01', repo: REPO, ref: 'agents/O01', promptText: 'brief', config, key: KEY, registryFile, fetchImpl: created.fetchImpl });
+    assert.equal(first.status, 'launched');
+    const running = recorder({ [`GET /v1/agents/${AGENT}/runs/${RUN}`]: () => json(runRecord({ status: 'RUNNING' })) });
+    const early = await agents.followup({ mission: 'O01', registryFile, promptText: 'suite', key: KEY, fetchImpl: running.fetchImpl });
+    assert.equal(early.status, 'blocked'); assert.equal(early.reason, 'run_active'); assert.deepEqual(running.calls.map(c => c.method), ['GET'], 'aucun second run avant le terminal');
+    let runBody;
+    const later = recorder({ [`GET /v1/agents/${AGENT}/runs/${RUN}`]: () => json(runRecord({ status: 'FINISHED' })), [`POST /v1/agents/${AGENT}/runs`]: (request) => { runBody = request.body; return json({ run: runRecord({ id: RUN2 }) }); } });
+    const resumed = await agents.followup({ mission: 'O01', registryFile, promptText: 'suite', key: KEY, fetchImpl: later.fetchImpl });
+    assert.equal(resumed.status, 'launched'); assert.equal(resumed.runId, RUN2); assert.equal(resumed.modelSent, false);
+    assert.deepEqual(Object.keys(runBody), ['prompt'], 'le POST run ne porte aucun champ model');
+    assert.deepEqual(resumed.selection.requested, first.selection.requested); assert.equal(resumed.selection.catalog.checkedAt, first.selection.catalog.checkedAt, 'sélection initiale et catalogue daté conservés, sans revalidation ni changement');
+    assert.equal(resumed.selection.runAccepted, true); assert.equal(resumed.selection.modelObserved, null);
+    const entry = (await agents.loadRegistry(registryFile)).missions.O01;
+    assert.equal(entry.runId, RUN2); assert.equal(entry.followups, 1); assert.deepEqual({ modelId: entry.selection.modelId, params: entry.selection.params }, first.selection.requested);
+    const check = await agents.status({ mission: 'O01', registryFile, key: KEY, fetchImpl: recorder({ [`GET /v1/agents/${AGENT}/runs/${RUN2}`]: () => json(runRecord({ id: RUN2, status: 'RUNNING' })) }).fetchImpl });
+    assert.equal(check.status, 'ok'); assert.equal(check.run.runId, RUN2); assert.equal(check.selection.key, 'fable'); assert.deepEqual(check.selection.requested, first.selection.requested); assert.equal(check.selection.modelObserved, null);
+    await assert.rejects(agents.followup({ mission: 'O01', agentId: 'bc-ffffffff-ffff-4fff-8fff-ffffffffffff', registryFile, promptText: 'x', key: KEY }), /pas celui de la mission/);
+    await agents.saveRegistry(registryFile, { formatVersion: 1, missions: { O01: { ...entry, state: 'uncertain' } } });
+    await assert.rejects(agents.followup({ mission: 'O01', registryFile, promptText: 'x', key: KEY }), /reconcile/);
+  });
 });
 
 test('the CLI refuses to run without the environment key and maps outcomes to exit codes', async () => {
@@ -234,6 +280,8 @@ test('the CLI refuses to run without the environment key and maps outcomes to ex
   await assert.rejects(agents.main(['preflight'], { env: {}, fetchImpl: () => { throw new Error('ne doit pas être appelé'); }, log: l => logs.push(l) }), /CURSOR_API_KEY/);
   assert.equal(await agents.main(['preflight'], { env: { CURSOR_API_KEY: KEY }, fetchImpl: recorder({ 'GET /v1/models': () => models([fable]) }).fetchImpl, log: l => logs.push(l) }), 0);
   assert.equal(await agents.main(['preflight'], { env: { CURSOR_API_KEY: KEY }, fetchImpl: recorder({ 'GET /v1/models': () => models([other]) }).fetchImpl, log: l => logs.push(l) }), 2);
+  assert.equal(await agents.main(['preflight', '--select', 'opus'], { env: { CURSOR_API_KEY: KEY }, fetchImpl: recorder({ 'GET /v1/models': () => models([{ id: 'claude-opus-5-thinking-high', displayName: 'Opus 5' }]) }).fetchImpl, log: l => logs.push(l) }), 0);
+  await assert.rejects(agents.main(['preflight', '--select', 'sonnet'], { env: { CURSOR_API_KEY: KEY }, fetchImpl: () => { throw new Error('ne doit pas être appelé'); } }), /Sélection inconnue/);
   assert.equal(await agents.main(['preflight'], { env: { CURSOR_API_KEY: KEY }, fetchImpl: recorder({ 'GET /v1/models': () => json({ error: { code: 'unauthorized' } }, 401) }).fetchImpl, log: l => logs.push(l) }), 3);
   for (const line of logs) { assert.ok(!line.includes(KEY)); JSON.parse(line); }
   await assert.rejects(agents.main(['launch', '--mission', 'O01', '--unknown'], { env: { CURSOR_API_KEY: KEY } }), agents.UsageError);
@@ -263,7 +311,7 @@ test('the generator installs the standard as an exact managed copy usable withou
     const script = join(standalone, orchestrationDir, 'scripts/cursor-agents.mjs');
     const help = spawnSync(process.execPath, [script, '--help'], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
     assert.equal(help.status, 0, help.stderr); assert.match(help.stdout, /preflight/);
-    const check = spawnSync(process.execPath, ['--input-type=module', '-e', `import('${script.replaceAll('\\', '/')}').then(async m=>{const pin=await m.loadPinnedModel();console.log(JSON.stringify(await m.preflight({pin,key:'FAKE_TEST_KEY_NOT_A_SECRET',fetchImpl:async()=>new Response(JSON.stringify({items:[{id:pin.modelId,displayName:'Fable'}]}),{status:200,headers:{'content-type':'application/json'}})})))})`], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
+    const check = spawnSync(process.execPath, ['--input-type=module', '-e', `import('${script.replaceAll('\\', '/')}').then(async m=>{const config=await m.loadSelections();const selection=m.resolveSelection(config);console.log(JSON.stringify(await m.preflight({selection,config,key:'FAKE_TEST_KEY_NOT_A_SECRET',fetchImpl:async()=>new Response(JSON.stringify({items:[{id:selection.modelId,displayName:'Fable'}]}),{status:200,headers:{'content-type':'application/json'}})})))})`], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
     assert.equal(check.status, 0, check.stderr); assert.equal(JSON.parse(check.stdout).status, 'ok');
     const skill = await readFile(join(standalone, orchestrationDir, 'SKILL.md'), 'utf8');
     assert.match(skill, /^---\nname: lite-orchestration\n/);

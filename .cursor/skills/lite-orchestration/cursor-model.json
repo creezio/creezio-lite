@@ -1,16 +1,18 @@
 {
-  "formatVersion": 1,
+  "formatVersion": 2,
   "provider": "cursor",
   "api": "https://api.cursor.com/v1",
-  "modelId": "claude-fable-5-1-thinking-high",
-  "params": [],
-  "effectiveModelName": "claude-fable-5-1-thinking-high",
-  "displayName": "Claude Fable 5.1 (Thinking, high)",
-  "matching": "exact-id",
-  "fallback": "none",
-  "evidence": {
-    "kind": "cloud-agent-run-info.originalModelName",
-    "observedAt": "2026-09-16",
-    "note": "Nom effectif relevé sur un run créé par l’API. L’identifiant model.id reste à confirmer par le préflight GET /v1/models avec une clé autorisée ; aucun alias n’est présumé."
-  }
+  "default": "fable",
+  "selections": {
+    "fable": { "modelId": "claude-fable-5-1-thinking-high", "params": [], "use": "Habituel et conservateur : la majorité des missions." },
+    "opus": { "modelId": "claude-opus-5-thinking-high", "params": [], "use": "Dernière Claude Opus : seulement une mission clairement plus simple et bornée dès l’attribution." },
+    "grok": { "modelId": "cursor-grok-4.6-high", "params": [], "use": "Grok 4.6 : seulement une mission clairement plus simple et bornée dès l’attribution ; aucun contexte inventé." }
+  },
+  "disabledWhenExposed": { "fast": "false", "cyber": "false" },
+  "rules": {
+    "chosenOnceAtAttribution": true,
+    "keptForFollowups": true,
+    "fallback": "none"
+  },
+  "catalogNote": "Identifiants à confirmer par le préflight authentifié GET /v1/models ; aucun alias présumé. Une variante complète du catalogue doit correspondre à la sélection."
 }

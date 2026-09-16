@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const API = 'https://api.cursor.com';
-export const pinnedModelFile = resolve(dirname(fileURLToPath(import.meta.url)), '../cursor-model.json');
+export const selectionsFile = resolve(dirname(fileURLToPath(import.meta.url)), '../cursor-model.json');
 export const exitCodes = Object.freeze({ ok: 0, blocked: 2, unavailable: 3, usage: 4 });
 export const pollIntervalsMs = Object.freeze([15_000, 30_000, 60_000, 120_000, 300_000]);
 const agentIdPattern = /^bc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -25,17 +25,30 @@ export function readKey(env = process.env) {
   return key;
 }
 
-export function validatePinnedModel(pin) {
-  if (!pin || typeof pin !== 'object' || pin.formatVersion !== 1 || pin.provider !== 'cursor') throw new UsageError('cursor-model.json : formatVersion 1 et provider cursor attendus.');
-  if (typeof pin.modelId !== 'string' || !modelIdPattern.test(pin.modelId)) throw new UsageError('cursor-model.json : modelId invalide.');
-  if (!Array.isArray(pin.params) || pin.params.length > 16 || pin.params.some(p => !p || typeof p.id !== 'string' || typeof p.value !== 'string' || !p.id || !p.value)) throw new UsageError('cursor-model.json : params doit être une liste {id,value}.');
-  if (typeof pin.effectiveModelName !== 'string' || !pin.effectiveModelName.trim()) throw new UsageError('cursor-model.json : effectiveModelName requis.');
-  if (pin.fallback !== 'none' || pin.matching !== 'exact-id') throw new UsageError('cursor-model.json : matching exact-id et fallback none sont imposés.');
-  return { modelId: pin.modelId, params: pin.params.map(p => ({ id: p.id, value: p.value })), effectiveModelName: pin.effectiveModelName, displayName: typeof pin.displayName === 'string' ? pin.displayName : undefined };
+// Sélections autorisées : choisies une fois à l'attribution, conservées pour toute la mission. Aucun repli, aucun alias présumé.
+const paramsList = (value, where) => { if (!Array.isArray(value) || value.length > 16 || value.some(p => !p || typeof p.id !== 'string' || typeof p.value !== 'string' || !p.id || !p.value)) throw new UsageError(`cursor-model.json : ${where} doit être une liste {id,value}.`); return value.map(p => ({ id: p.id, value: p.value })); };
+export function validateSelections(config) {
+  if (!config || typeof config !== 'object' || config.formatVersion !== 2 || config.provider !== 'cursor') throw new UsageError('cursor-model.json : formatVersion 2 et provider cursor attendus.');
+  if (!config.selections || typeof config.selections !== 'object' || !Object.keys(config.selections).length) throw new UsageError('cursor-model.json : selections requis.');
+  const selections = {};
+  for (const [name, entry] of Object.entries(config.selections)) {
+    if (!/^[a-z][a-z0-9-]{0,31}$/.test(name) || !entry || typeof entry.modelId !== 'string' || !modelIdPattern.test(entry.modelId)) throw new UsageError(`cursor-model.json : sélection ${name} invalide.`);
+    selections[name] = { key: name, modelId: entry.modelId, params: paramsList(entry.params ?? [], `selections.${name}.params`) };
+  }
+  if (typeof config.default !== 'string' || !selections[config.default]) throw new UsageError('cursor-model.json : default doit désigner une sélection.');
+  const disabledWhenExposed = config.disabledWhenExposed ?? {};
+  if (typeof disabledWhenExposed !== 'object' || Object.values(disabledWhenExposed).some(v => typeof v !== 'string')) throw new UsageError('cursor-model.json : disabledWhenExposed invalide.');
+  if (config.rules?.fallback !== 'none' || config.rules?.chosenOnceAtAttribution !== true || config.rules?.keptForFollowups !== true) throw new UsageError('cursor-model.json : rules {chosenOnceAtAttribution, keptForFollowups, fallback:none} imposées.');
+  return { default: config.default, selections, disabledWhenExposed: { ...disabledWhenExposed } };
 }
-export async function loadPinnedModel(file = pinnedModelFile) {
+export async function loadSelections(file = selectionsFile) {
   let raw; try { raw = JSON.parse(await readFile(file, 'utf8')); } catch { throw new UsageError('cursor-model.json illisible.'); }
-  return validatePinnedModel(raw);
+  return validateSelections(raw);
+}
+export function resolveSelection(config, key) {
+  const selection = config.selections[key ?? config.default];
+  if (!selection) throw new UsageError(`Sélection inconnue : ${String(key)}. Choix possibles : ${Object.keys(config.selections).join(', ')}.`);
+  return selection;
 }
 
 // UUID v5 (espace de noms URL) de "dépôt#mission" : le même brief produit toujours le même agent.
@@ -113,31 +126,35 @@ function parseModels(data) {
 }
 const paramKey = params => params.map(p => `${p.id}=${p.value}`).sort().join('&');
 
-// Préflight strict : identifiant exact listé, paramètres acceptés, variante existante. Aucun repli, aucun défaut supposé.
-export async function preflight({ pin, key, fetchImpl, timeoutMs } = {}) {
+// Paramètres complets envoyés : la sélection, plus les options désactivées par défaut (fast, cyber) lorsque le catalogue les expose.
+function completeParams(selection, model, disabledWhenExposed) {
+  const params = selection.params.map(p => ({ ...p }));
+  for (const [id, value] of Object.entries(disabledWhenExposed)) {
+    const exposed = model.parameters?.find(p => p.id === id);
+    if (exposed && !params.some(p => p.id === id) && exposed.values.includes(value)) params.push({ id, value });
+  }
+  return params;
+}
+// Préflight : catalogue authentifié et daté ; identifiant exact listé ; une variante complète du catalogue correspond. Aucun repli.
+export async function preflight({ selection, config, key, fetchImpl, timeoutMs } = {}) {
   const checkedAt = new Date().toISOString();
-  const base = { command: 'preflight', modelId: pin.modelId, params: pin.params, effectiveModelName: pin.effectiveModelName, checkedAt, fallback: 'none' };
+  const base = { command: 'preflight', selection: selection.key, requested: { modelId: selection.modelId, params: selection.params }, catalog: { checkedAt, validated: false }, fallback: 'none' };
   const result = await call({ path: '/v1/models', key, fetchImpl, timeoutMs });
   if (result.outcome !== 'ok') return { ...base, status: 'unavailable', reason: result.reason ?? result.outcome, ...(result.status ? { httpStatus: result.status } : {}), ...(result.retryAfterMs ? { retryAfterMs: result.retryAfterMs } : {}), ...(result.providerCode ? { providerCode: result.providerCode } : {}) };
   const models = parseModels(result.data);
   if (!models) return { ...base, status: 'unavailable', reason: 'invalid_response', httpStatus: result.status };
-  const exact = models.find(m => m.id === pin.modelId);
+  const exact = models.find(m => m.id === selection.modelId);
   if (!exact) {
-    const alias = models.find(m => m.aliases.includes(pin.modelId));
+    const alias = models.find(m => m.aliases.includes(selection.modelId));
     if (alias) return { ...base, status: 'blocked', reason: 'alias_only', canonicalId: alias.id, modelsListed: models.length };
-    const candidates = models.map(m => m.id).filter(id => /fable/i.test(id)).slice(0, 10);
-    return { ...base, status: 'blocked', reason: 'model_absent', modelsListed: models.length, candidates };
+    const family = selection.modelId.split(/[-.]/).find(part => /^[a-z]{3,}$/i.test(part) && !/^(claude|cursor|thinking|high|low|medium|fast)$/i.test(part));
+    return { ...base, status: 'blocked', reason: 'model_absent', modelsListed: models.length, candidates: models.map(m => m.id).filter(id => family && id.toLowerCase().includes(family.toLowerCase())).slice(0, 10) };
   }
-  for (const param of pin.params) {
-    const definition = exact.parameters?.find(p => p.id === param.id);
-    if (!definition || !definition.values.includes(param.value)) return { ...base, status: 'blocked', reason: 'param_unsupported', param: param.id, supportedParams: (exact.parameters ?? []).map(p => p.id) };
-  }
-  let variant;
-  if (exact.variants && exact.variants.length) {
-    variant = exact.variants.find(v => paramKey(v.params) === paramKey(pin.params));
-    if (!variant) return { ...base, status: 'blocked', reason: pin.params.length ? 'variant_unknown' : 'params_required', variants: exact.variants.map(v => ({ displayName: v.displayName, params: v.params, isDefault: v.isDefault })) };
-  }
-  return { ...base, status: 'ok', matchedBy: 'id', displayName: exact.displayName, ...(variant ? { variant: variant.displayName } : {}), modelsListed: models.length };
+  const params = completeParams(selection, exact, config?.disabledWhenExposed ?? {});
+  const variants = exact.variants ?? [];
+  const variant = variants.length ? variants.find(v => paramKey(v.params) === paramKey(params)) : (params.length ? undefined : { displayName: exact.displayName, params: [] });
+  if (!variant) return { ...base, status: 'blocked', reason: 'variant_invalid', completeParams: params, variants: variants.map(v => ({ displayName: v.displayName, params: v.params, isDefault: v.isDefault })), modelsListed: models.length };
+  return { ...base, status: 'ok', catalog: { checkedAt, validated: true, displayName: exact.displayName, variant: variant.displayName, completeParams: params, modelsListed: models.length } };
 }
 
 // Registre privé, hors dépôt : { formatVersion:1, missions:{ [mission]: entrée } }. Écriture atomique.
@@ -166,29 +183,36 @@ function runSummary(run, { full = false } = {}) {
   return out;
 }
 
+// Reçu de sélection : ce qui a été demandé, ce que le catalogue a validé, ce que l'API a accepté ; modelObserved reste null tant que l'API n'expose pas le modèle d'un run.
+function selectionReceipt(selection, { createAccepted = false, runAccepted = false } = {}) {
+  return { key: selection.key, requested: { modelId: selection.modelId, params: selection.params }, catalog: selection.catalog, createAccepted, runAccepted, modelObserved: null, note: 'Un POST accepté ne prouve pas la sélection effective ; un routage interne du fournisseur reste possible.' };
+}
 // Lancement dédupliqué : registre → préflight → POST avec agentId déterministe → réconciliation des 409 et appels incertains.
-export async function launch({ mission, repo, ref, prUrl, promptText, name, autoCreatePR = false, workOnCurrentBranch = true, pin, key, registryFile, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
+export async function launch({ mission, repo, ref, prUrl, promptText, name, autoCreatePR = false, workOnCurrentBranch = true, config, select, key, registryFile, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
   if (typeof mission !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(mission)) throw new UsageError('--mission : clé courte [A-Za-z0-9._-] requise.');
   if (typeof promptText !== 'string' || !promptText.trim() || promptText.length > 200_000) throw new UsageError('Brief vide ou trop long.');
   const repoUrl = normalizeRepo(repo);
   if (prUrl !== undefined) { const url = new URL(prUrl); if (url.protocol !== 'https:' || url.hostname !== 'github.com' || !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+\/?$/.test(url.pathname) || url.search || url.hash || url.username) throw new UsageError('URL de PR GitHub attendue.'); }
   else refName(ref);
+  const chosen = resolveSelection(config, select);
   const registry = await loadRegistry(registryFile);
   const existing = registry.missions[mission];
   if (existing && activeStates.has(existing.state)) return { command: 'launch', status: 'deduplicated', mission, entry: existing, nextAction: existing.state === 'uncertain' ? 'reconcile' : 'followup ou nouvelle clé de mission' };
-  const check = await preflight({ pin, key, fetchImpl, timeoutMs });
+  const check = await preflight({ selection: chosen, config, key, fetchImpl, timeoutMs });
   if (check.status !== 'ok') return { command: 'launch', status: check.status, mission, preflight: check };
   const agentId = missionAgentId(repoUrl, mission);
-  const entry = { agentId, repo: repoUrl, ...(prUrl ? { prUrl } : { ref }), modelId: pin.modelId, state: 'pending', updatedAt: now() };
+  // La sélection est fixée ici, une fois, et conservée pour toute la mission (reprises comprises).
+  const selection = { key: chosen.key, modelId: chosen.modelId, params: check.catalog.completeParams, catalog: { checkedAt: check.catalog.checkedAt, displayName: check.catalog.displayName, variant: check.catalog.variant } };
+  const entry = { agentId, repo: repoUrl, ...(prUrl ? { prUrl } : { ref }), selection, state: 'pending', updatedAt: now() };
   registry.missions[mission] = entry; await saveRegistry(registryFile, registry);
-  const body = { agentId, prompt: { text: promptText }, model: pin.params.length ? { id: pin.modelId, params: pin.params } : { id: pin.modelId }, repos: [prUrl ? { url: repoUrl, prUrl } : { url: repoUrl, startingRef: ref }], workOnCurrentBranch, autoCreatePR, ...(name ? { name: String(name).slice(0, 100) } : {}) };
+  const body = { agentId, prompt: { text: promptText }, model: selection.params.length ? { id: selection.modelId, params: selection.params } : { id: selection.modelId }, repos: [prUrl ? { url: repoUrl, prUrl } : { url: repoUrl, startingRef: ref }], workOnCurrentBranch, autoCreatePR, ...(name ? { name: String(name).slice(0, 100) } : {}) };
   const result = await call({ method: 'POST', path: '/v1/agents', body, key, fetchImpl, timeoutMs });
   const finish = async (state, extra) => { Object.assign(entry, { state, updatedAt: now() }, extra); await saveRegistry(registryFile, registry); };
   if (result.outcome === 'ok') {
     const agent = agentSummary(result.data?.agent), run = runSummary(result.data?.run);
     if (!agent || !run || agent.agentId !== agentId || run.agentId !== agentId) { await finish('uncertain', { reason: 'identity_mismatch' }); return { command: 'launch', status: 'uncertain', mission, agentId, reason: 'identity_mismatch', nextAction: 'reconcile' }; }
     await finish('launched', { runId: run.runId, url: agent.url });
-    return { command: 'launch', status: 'launched', mission, agentId, runId: run.runId, url: agent.url, modelId: pin.modelId, effectiveModelProof: 'réception : run-info.originalModelName' };
+    return { command: 'launch', status: 'launched', mission, agentId, runId: run.runId, url: agent.url, selection: selectionReceipt(selection, { createAccepted: true }) };
   }
   if (result.outcome === 'rejected' && result.status === 409) {
     const reconciled = await reconcileEntry({ entry, key, fetchImpl, timeoutMs, now });
@@ -234,27 +258,63 @@ export function diffRun(previous, current) {
 }
 export const terminalRunStatuses = new Set(['FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED']);
 export function nextInterval(previousMs) { const index = pollIntervalsMs.indexOf(previousMs); return index < 0 ? pollIntervalsMs[0] : pollIntervalsMs[Math.min(index + 1, pollIntervalsMs.length - 1)]; }
-export async function status({ agentId, runId, stateFile, key, fetchImpl, timeoutMs, full = false }) {
-  assertAgentId(agentId); assertRunId(runId);
+async function missionEntry({ mission, registryFile }) {
+  const registry = await loadRegistry(registryFile);
+  const entry = registry.missions[mission];
+  if (!entry) throw new UsageError('Mission inconnue du registre.');
+  return { registry, entry };
+}
+async function readRun({ agentId, runId, key, fetchImpl, timeoutMs, full }) {
   const result = await call({ path: `/v1/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}`, key, fetchImpl, timeoutMs });
-  if (result.outcome !== 'ok') return { command: 'status', status: result.outcome === 'rejected' ? 'blocked' : 'unavailable', agentId, runId, reason: result.reason ?? result.outcome, ...(result.status ? { httpStatus: result.status } : {}), ...(result.providerCode ? { providerCode: result.providerCode } : {}) };
+  if (result.outcome !== 'ok') return { failure: { status: result.outcome === 'rejected' ? 'blocked' : 'unavailable', reason: result.reason ?? result.outcome, ...(result.status ? { httpStatus: result.status } : {}), ...(result.providerCode ? { providerCode: result.providerCode } : {}) } };
   const run = runSummary(result.data, { full });
-  if (!run || run.runId !== runId || run.agentId !== agentId) return { command: 'status', status: 'unavailable', agentId, runId, reason: 'invalid_response' };
+  if (!run || run.runId !== runId || run.agentId !== agentId) return { failure: { status: 'unavailable', reason: 'invalid_response' } };
+  return { run };
+}
+// Checkpoint : le run demandé (ou le dernier run de la mission), le diff, et la sélection initiale rappelée telle quelle.
+export async function status({ agentId, runId, mission, registryFile, stateFile, key, fetchImpl, timeoutMs, full = false }) {
+  let selection;
+  if (mission !== undefined) { const { entry } = await missionEntry({ mission, registryFile }); agentId ??= entry.agentId; runId ??= entry.runId; selection = entry.selection; if (!runId) throw new UsageError('Aucun run connu pour cette mission ; reconcile d’abord.'); }
+  assertAgentId(agentId); assertRunId(runId);
+  const { run, failure } = await readRun({ agentId, runId, key, fetchImpl, timeoutMs, full });
+  if (failure) return { command: 'status', ...failure, agentId, runId };
   let previous = null;
   if (stateFile) { try { previous = JSON.parse(await readFile(stateFile, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw new UsageError('Fichier d’état illisible.'); } }
   const changes = diffRun(previous, run);
   if (stateFile) { await mkdir(dirname(resolve(stateFile)), { recursive: true }); await writeFile(stateFile, JSON.stringify(run, null, 2) + '\n'); }
-  return { command: 'status', status: 'ok', changed: changes.length > 0, changes, terminal: terminalRunStatuses.has(run.status), run };
+  return { command: 'status', status: 'ok', changed: changes.length > 0, changes, terminal: terminalRunStatuses.has(run.status), run, ...(selection ? { selection: selectionReceipt(selection, { createAccepted: true }) } : {}) };
 }
 
-// Reprise du même agent (docs/MAINTENANCE.md : pas de doublon). 409 agent_busy remonte tel quel.
-export async function followup({ agentId, promptText, key, fetchImpl, timeoutMs }) {
+// Reprise du même agent (docs/MAINTENANCE.md : pas de doublon), seulement après un run terminal. Le POST run ne porte aucun champ model :
+// la sélection initiale s'applique telle quelle et n'est ni renvoyée ni réputée changée.
+export async function followup({ agentId, mission, registryFile, promptText, key, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
+  let registry, entry;
+  if (mission !== undefined) {
+    ({ registry, entry } = await missionEntry({ mission, registryFile }));
+    if (!['launched', 'reconciled'].includes(entry.state)) throw new UsageError(`Mission en état ${entry.state} : reconcile ou launch avant toute reprise.`);
+    agentId ??= entry.agentId;
+    if (agentId !== entry.agentId) throw new UsageError('L’agent indiqué n’est pas celui de la mission.');
+  }
   assertAgentId(agentId);
   if (typeof promptText !== 'string' || !promptText.trim() || promptText.length > 200_000) throw new UsageError('Brief de reprise vide ou trop long.');
+  const receipt = entry?.selection ? { selection: selectionReceipt(entry.selection, { createAccepted: true }), modelSent: false } : { modelSent: false };
+  if (entry?.runId) {
+    const { run, failure } = await readRun({ agentId, runId: entry.runId, key, fetchImpl, timeoutMs });
+    if (failure) return { command: 'followup', ...failure, agentId, runId: entry.runId, ...receipt };
+    if (!terminalRunStatuses.has(run.status)) return { command: 'followup', status: 'blocked', reason: 'run_active', agentId, runId: run.runId, runStatus: run.status, nextAction: 'attendre le terminal (status --follow) ; aucun second run envoyé', ...receipt };
+  }
   const result = await call({ method: 'POST', path: `/v1/agents/${encodeURIComponent(agentId)}/runs`, body: { prompt: { text: promptText } }, key, fetchImpl, timeoutMs });
-  if (result.outcome === 'ok') { const run = runSummary(result.data?.run); if (run && run.agentId === agentId) return { command: 'followup', status: 'launched', agentId, runId: run.runId, runStatus: run.status }; return { command: 'followup', status: 'uncertain', agentId, reason: 'invalid_response', nextAction: 'status sur latestRunId de l’agent' }; }
-  if (result.outcome === 'rejected') return { command: 'followup', status: 'blocked', agentId, httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}) };
-  return { command: 'followup', status: result.delivery === 'unknown' ? 'uncertain' : 'unavailable', agentId, reason: result.reason, ...(result.delivery === 'unknown' ? { nextAction: 'lire l’agent (latestRunId) avant toute relance' } : {}) };
+  if (result.outcome === 'ok') {
+    const run = runSummary(result.data?.run);
+    if (run && run.agentId === agentId) {
+      if (entry) { Object.assign(entry, { runId: run.runId, followups: (entry.followups ?? 0) + 1, updatedAt: now() }); await saveRegistry(registryFile, registry); }
+      if (receipt.selection) receipt.selection.runAccepted = true;
+      return { command: 'followup', status: 'launched', agentId, runId: run.runId, runStatus: run.status, ...receipt };
+    }
+    return { command: 'followup', status: 'uncertain', agentId, reason: 'invalid_response', nextAction: 'status sur latestRunId de l’agent', ...receipt };
+  }
+  if (result.outcome === 'rejected') return { command: 'followup', status: 'blocked', agentId, httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}), ...receipt };
+  return { command: 'followup', status: result.delivery === 'unknown' ? 'uncertain' : 'unavailable', agentId, reason: result.reason, ...(result.delivery === 'unknown' ? { nextAction: 'lire l’agent (latestRunId) avant toute relance' } : {}), ...receipt };
 }
 
 export function exitCodeFor(report) {
@@ -269,18 +329,19 @@ function parseArgs(args) {
     if (!arg.startsWith('--')) throw new UsageError(`Argument inconnu : ${arg}`);
     const name = arg.slice(2);
     if (['follow', 'full', 'auto-pr', 'new-branch'].includes(name)) options.flags.add(name);
-    else if (['model-file', 'mission', 'repo', 'ref', 'pr-url', 'prompt-file', 'registry', 'name', 'agent', 'run', 'state'].includes(name) && i + 1 < args.length) options[name] = args[++i];
+    else if (['model-file', 'select', 'mission', 'repo', 'ref', 'pr-url', 'prompt-file', 'registry', 'name', 'agent', 'run', 'state'].includes(name) && i + 1 < args.length) options[name] = args[++i];
     else throw new UsageError(`Option inconnue ou incomplète : ${arg}`);
   }
   return options;
 }
 const help = `cursor-agents — orchestration Creezio Lite (clé : CURSOR_API_KEY en environnement)
-  preflight [--model-file f]
-  launch --mission K --repo URL (--ref BRANCHE | --pr-url URL) --prompt-file f --registry f [--name n] [--auto-pr] [--new-branch]
+  preflight [--select fable|opus|grok] [--model-file f]
+  launch --mission K --repo URL (--ref BRANCHE | --pr-url URL) --prompt-file f --registry f [--select clé] [--name n] [--auto-pr] [--new-branch]
   reconcile --mission K --registry f
-  status --agent bc-… --run run-… [--state f] [--follow] [--full]
-  followup --agent bc-… --prompt-file f
-Codes : 0 ok · 2 bloqué (modèle refusé, requête rejetée) · 3 indisponible ou incertain · 4 usage`;
+  status (--mission K --registry f | --agent bc-… --run run-…) [--state f] [--follow] [--full]
+  followup (--mission K --registry f | --agent bc-…) --prompt-file f
+La sélection (--select, défaut : fable) est choisie une fois au lancement puis conservée pour toute la mission.
+Codes : 0 ok · 2 bloqué (modèle refusé, requête rejetée, run actif) · 3 indisponible ou incertain · 4 usage`;
 export async function main(argv = process.argv.slice(2), { env = process.env, fetchImpl, sleep = ms => new Promise(r => setTimeout(r, ms)), log = line => console.log(line) } = {}) {
   const [command, ...rest] = argv;
   if (!command || command === '--help') { log(help); return exitCodes.ok; }
@@ -288,25 +349,25 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
   const key = readKey(env);
   if (!key) throw new UsageError('CURSOR_API_KEY absente ou invalide dans l’environnement ; aucun appel émis.');
   const emit = report => { log(JSON.stringify(report)); return exitCodeFor(report); };
-  if (command === 'preflight') { const pin = await loadPinnedModel(options['model-file']); return emit(await preflight({ pin, key, fetchImpl })); }
+  if (command === 'preflight') { const config = await loadSelections(options['model-file']); return emit(await preflight({ selection: resolveSelection(config, options.select), config, key, fetchImpl })); }
   if (command === 'launch') {
-    const pin = await loadPinnedModel(options['model-file']);
+    const config = await loadSelections(options['model-file']);
     if (!options['prompt-file']) throw new UsageError('--prompt-file requis.');
     const promptText = await readFile(options['prompt-file'], 'utf8');
-    return emit(await launch({ mission: options.mission, repo: options.repo, ref: options.ref, prUrl: options['pr-url'], promptText, name: options.name, autoCreatePR: options.flags.has('auto-pr'), workOnCurrentBranch: !options.flags.has('new-branch'), pin, key, registryFile: options.registry, fetchImpl }));
+    return emit(await launch({ mission: options.mission, repo: options.repo, ref: options.ref, prUrl: options['pr-url'], promptText, name: options.name, autoCreatePR: options.flags.has('auto-pr'), workOnCurrentBranch: !options.flags.has('new-branch'), config, select: options.select, key, registryFile: options.registry, fetchImpl }));
   }
   if (command === 'reconcile') return emit(await reconcile({ mission: options.mission, key, registryFile: options.registry, fetchImpl }));
   if (command === 'status') {
     let interval = 0, code = exitCodes.ok;
     for (;;) {
-      const report = await status({ agentId: options.agent, runId: options.run, stateFile: options.state, key, fetchImpl, full: options.flags.has('full') });
+      const report = await status({ agentId: options.agent, runId: options.run, mission: options.mission, registryFile: options.registry, stateFile: options.state, key, fetchImpl, full: options.flags.has('full') });
       if (report.status !== 'ok') return emit(report);
       if (report.changed || !options.flags.has('follow')) code = emit(report);
       if (!options.flags.has('follow') || report.terminal) return code;
       interval = nextInterval(interval); await sleep(interval);
     }
   }
-  if (command === 'followup') { if (!options['prompt-file']) throw new UsageError('--prompt-file requis.'); return emit(await followup({ agentId: options.agent, promptText: await readFile(options['prompt-file'], 'utf8'), key, fetchImpl })); }
+  if (command === 'followup') { if (!options['prompt-file']) throw new UsageError('--prompt-file requis.'); return emit(await followup({ agentId: options.agent, mission: options.mission, registryFile: options.registry, promptText: await readFile(options['prompt-file'], 'utf8'), key, fetchImpl })); }
   throw new UsageError(`Commande inconnue : ${command}`);
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
