@@ -13,6 +13,28 @@ function within(parent,child){const path=relative(parent,child);return path===''
 async function runtimeAt(destination){await cp(join(root,'runtime'),join(destination,'runtime'),{recursive:true,filter:path=>!/(?:^|\/)(?:node_modules|dist)(?:\/|$)/.test(path)});}
 export async function runtimeHashes(app){const result={};for(const file of await files(join(app,'runtime')))result['runtime/'+file.replaceAll(sep,'/')]=digest(await readFile(join(app,'runtime',file)));return result;}
 export async function writeLock(app){const lock={formatVersion:2,kitVersion:packageInfo.version,sourceRepository:packageInfo.repository.url,schemaHash:digest(await readFile(join(app,'db/schema.ts'))),runtimeFiles:await runtimeHashes(app)};await writeFile(join(app,'lite.lock.json'),JSON.stringify(lock,null,2)+'\n');return lock;}
+// Standard d'orchestration : source canonique .cursor/skills/lite-orchestration du kit + règle du template ; copies gérées par manifest.
+export const orchestrationDir='.cursor/skills/lite-orchestration',orchestrationManifest=orchestrationDir+'/manifest.json',orchestrationRule='.cursor/rules/lite-orchestration.mdc';
+export async function orchestrationSources(){const list={};for(const file of await files(join(root,orchestrationDir))){const path=orchestrationDir+'/'+file.replaceAll(sep,'/');if(path!==orchestrationManifest)list[path]=join(root,path);}list[orchestrationRule]=join(root,'template',orchestrationRule);return list;}
+async function readManifest(app){if(!await exists(join(app,orchestrationManifest)))return null;const manifest=JSON.parse(await readFile(join(app,orchestrationManifest),'utf8'));if(manifest.formatVersion!==1||typeof manifest.files!=='object')throw new Error('Manifeste d’orchestration inconnu : ne pas le modifier à la main.');return manifest;}
+export async function inspectOrchestration(app){
+ const sources=await orchestrationSources(),manifest=await readManifest(app),files_={},conflicts=[],pending=[];
+ for(const [path,source] of Object.entries(sources)){const want=digest(await readFile(source));if(!await exists(join(app,path))){files_[path]='missing';pending.push(path);continue;}const have=digest(await readFile(join(app,path)));if(have===want)files_[path]='current';else if(manifest?.files?.[path]===have){files_[path]='outdated';pending.push(path);}else{files_[path]='conflict';conflicts.push(path);}}
+ const unmanaged=await exists(join(app,orchestrationDir))?(await files(join(app,orchestrationDir))).map(f=>orchestrationDir+'/'+f.replaceAll(sep,'/')).filter(p=>!(p in sources)&&p!==orchestrationManifest):[];
+ const manifestCurrent=Boolean(manifest)&&manifest.kitVersion===packageInfo.version&&Object.keys(sources).every(p=>manifest.files[p]!==undefined);
+ const agents=await exists(join(app,'AGENTS.md'))?await readFile(join(app,'AGENTS.md'),'utf8'):'';
+ return {installedVersion:manifest?.kitVersion??null,targetVersion:packageInfo.version,files:files_,conflicts,unmanaged,changed:pending.length>0||!manifestCurrent,pending,agentsMentionsStandard:agents.includes('lite-orchestration'),status:conflicts.length?'conflict':pending.length?(manifest?'outdated':'missing'):manifestCurrent?'current':'outdated'};
+}
+export async function installOrchestration(app,{only}={}){const sources=await orchestrationSources(),manifest={formatVersion:1,owner:'creezio-lite',kitVersion:packageInfo.version,sourceRepository:packageInfo.repository.url,files:{}};for(const [path,source] of Object.entries(sources)){const bytes=await readFile(source);manifest.files[path]=digest(bytes);if(!only||only.includes(path)){await mkdir(dirname(join(app,path)),{recursive:true});await writeFile(join(app,path),bytes);}}await writeFile(join(app,orchestrationManifest),JSON.stringify(manifest,null,2)+'\n');return manifest;}
+export async function adopt(appPath,apply=false){
+ const app=resolve(appPath);if(within(root,app)||within(app,root))throw new Error('adopt vise une application indépendante du kit.');
+ for(const file of ['brand.json','AGENTS.md','lite.lock.json'])if(!await exists(join(app,file)))throw new Error(`Application Lite attendue : ${file} manquant.`);
+ const report=await inspectOrchestration(app);
+ if(apply&&report.conflicts.length)throw new Error(`Conflit local sur ${report.conflicts.join(', ')} : copie modifiée hors du kit. Aucune modification effectuée ; restaurer la copie du kit ou consigner le report avant --apply.`);
+ if(!apply||!report.changed)return{...report,applied:false};
+ await installOrchestration(app,{only:report.pending});
+ return {...report,applied:true,written:report.pending,manifest:orchestrationManifest};
+}
 export async function createApp({out,spec}){
  if(!out||!spec)throw new Error('create exige --spec <brief.json> et --out <dossier-vide>.');
  const destination=resolve(out),app=defineApp(JSON.parse(await readFile(resolve(spec),'utf8')));
@@ -22,7 +44,7 @@ export async function createApp({out,spec}){
  try{
   const omit=new Set(['.git','node_modules','dist','.next','.wrangler','.sites-runtime','runtime','coverage','.lite-backups']);
   await cp(join(root,'template'),staging,{recursive:true,filter:async path=>{const name=basename(path);if(omit.has(name)||name.endsWith('.tsbuildinfo')||(name.startsWith('.env')&&name!=='.env.example')||/\.(pem|key|sqlite|db)$/.test(name))return false;if((await lstat(path)).isSymbolicLink())throw new Error('Le template doit être autonome, sans symlink.');return true;}});
-  await runtimeAt(staging);await writeFile(join(staging,'brand.json'),JSON.stringify(app,null,2)+'\n');
+  await runtimeAt(staging);await installOrchestration(staging);await writeFile(join(staging,'brand.json'),JSON.stringify(app,null,2)+'\n');
   await writeFile(join(staging,'.openai/hosting.json'),JSON.stringify({d1:'DB',r2:'BUCKET'},null,2)+'\n');
   const pkg=JSON.parse(await readFile(join(staging,'package.json'),'utf8'));pkg.name=app.id;pkg.version='0.1.0';pkg.private=true;await writeFile(join(staging,'package.json'),JSON.stringify(pkg,null,2)+'\n');
   await writeLock(staging);if(await exists(destination))await rmdir(destination);await rename(staging,destination);
@@ -43,7 +65,9 @@ export async function doctor(appPath){
  for(const [file,hash] of Object.entries(lock.runtimeFiles??{}))if(actual[file]!==hash)issues.push(`Socle modifié ou manquant : ${file}`);
  for(const file of Object.keys(actual))if(!(file in (lock.runtimeFiles??{})))issues.push(`Fichier ajouté au socle : ${file}`);
  if(!(await readdir(join(app,'drizzle'))).some(f=>f.endsWith('.sql')))issues.push('Migration D1 manquante.');
- return {ok:!issues.length,kitVersion:lock.kitVersion,registered:Boolean(host.project_id),issues};
+ // Information seulement : l'absence du standard d'orchestration ne bloque ni doctor ni upgrade des applications existantes.
+ let orchestration;try{const o=await inspectOrchestration(app);orchestration={status:o.status,installedVersion:o.installedVersion,targetVersion:o.targetVersion,conflicts:o.conflicts};}catch(e){orchestration={status:'invalid',error:e.message};}
+ return {ok:!issues.length,kitVersion:lock.kitVersion,registered:Boolean(host.project_id),issues,orchestration};
 }
 export async function upgrade(appPath,apply=false){
  const app=resolve(appPath),report=await doctor(app);if(!report.ok)throw new Error(report.issues.join('\n'));
@@ -68,8 +92,9 @@ async function main(){const [command,...args]=process.argv.slice(2),options={};f
  else if(command==='doctor'){const report=await doctor(options.app??process.cwd());console.log(JSON.stringify(report,null,2));if(!report.ok)process.exitCode=1;}
  else if(command==='upgrade'){if(!options.app)throw new Error('upgrade exige --app <application>.');console.log(JSON.stringify(await upgrade(options.app,options.apply),null,2));}
  else if(command==='module'){if(!options.app||!options.spec)throw new Error('module exige --app et --spec.');console.log(JSON.stringify(await addModule(options.app,options.spec),null,2));}
+ else if(command==='adopt'){if(!options.app)throw new Error('adopt exige --app <application>.');const report=await adopt(options.app,options.apply);console.log(JSON.stringify(report,null,2));if(report.conflicts.length)process.exitCode=2;}
  else if(command==='--version')console.log(packageInfo.version);
- else if(!command||command==='--help')console.log('Lite\n  create --spec brief.json --out dossier-vide\n  module --app dossier --spec module.json\n  doctor --app dossier\n  upgrade --app dossier [--apply]');
+ else if(!command||command==='--help')console.log('Lite\n  create --spec brief.json --out dossier-vide\n  module --app dossier --spec module.json\n  doctor --app dossier\n  upgrade --app dossier [--apply]\n  adopt --app dossier [--apply]   (standard d’orchestration .cursor/skills/lite-orchestration)');
  else throw new Error('Commande inconnue. Utilisez --help.');
 }
 if(process.argv[1]&&pathToFileURL(resolve(process.argv[1])).href===import.meta.url)main().catch(e=>{console.error(e.message);process.exitCode=1;});
