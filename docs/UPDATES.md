@@ -74,3 +74,9 @@ Les nouvelles applications reçoivent `.github/workflows/lite-update.yml` et `sc
 Une issue persistante par version contient le SHA exact, les changements et la recette. Les relances ne créent pas de doublon. La veille ne fusionne ni ne déploie et ne clôture jamais sur la seule version du verrou : le pilote de l’application confirme tests, intégration et publication. Une issue close comme « non prévue » reste différée ; une clôture prématurée sans version intégrée est rouverte.
 
 Pour un Site sans dépôt GitHub applicatif, enregistrer la source et le responsable dans le registre privé du mainteneur ; notifier sa tâche et y suivre explicitement la mise à jour. Ne pas publier les noms ou chemins des applications privées dans le dépôt public du kit. Voir [MAINTENANCE.md](MAINTENANCE.md).
+
+## Correction 0.10.2 — Migrations locales
+
+Après la mise à jour habituelle du runtime, intégrer explicitement `template/scripts/migrate-local.mjs` du kit dans `scripts/migrate-local.mjs` de l’application. L’upgrade du runtime ne copie pas ce script. Conserver les adaptations métier et tous les fichiers SQL déjà appliqués à l’octet.
+
+Construire l’application, puis exécuter `pnpm db:local` pour valider la base locale. Les triggers restent des instructions complètes ; chaque migration et son marqueur sont appliqués ensemble. Les marqueurs existants sont conservés : les migrations déjà appliquées ne rejouent pas. Ce correctif utilise Miniflare fourni par Wrangler déjà verrouillé, sans nouvelle dépendance. Il ne modifie ni les migrations ni la base du Site publié.

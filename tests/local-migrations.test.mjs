@@ -26,3 +26,19 @@ test('failed migration rolls back its schema and completion marker',async()=>{
  assert.equal((await local.db.prepare('SELECT name FROM d1_migrations').all()).results.length,0);
  }finally{await local.dispose();assert.equal(dirname(resolve(dir)),resolve(tmpdir()));assert.ok(dir.includes('lite-migrate-'));await rm(dir,{recursive:true,force:true});}
 });
+
+test('persistent local D1 keeps data and migration markers after restart',async()=>{
+ const persist=await mkdtemp(join(tmpdir(),'lite-migrate-persist-'));
+ let local;
+ try{
+ const directory=fileURLToPath(new URL('../template/drizzle',import.meta.url));
+ local=await localDatabase({id:'persistent-migration-fixture',persist});
+ assert.equal(await migrate(local.db,directory),11);
+ await local.db.prepare("INSERT INTO lite_orgs(id,name,created_at) VALUES('persistent-org','Must survive restart','2026-09-16T00:00:00Z')").run();
+ await local.dispose();local=undefined;
+ local=await localDatabase({id:'persistent-migration-fixture',persist});
+ assert.equal(await migrate(local.db,directory),0);
+ assert.equal((await local.db.prepare('SELECT COUNT(*) AS n FROM d1_migrations').first()).n,11);
+ assert.equal((await local.db.prepare("SELECT name FROM lite_orgs WHERE id='persistent-org'").first()).name,'Must survive restart');
+ }finally{if(local)await local.dispose();assert.equal(dirname(resolve(persist)),resolve(tmpdir()));assert.ok(persist.includes('lite-migrate-persist-'));await rm(persist,{recursive:true,force:true});}
+});
