@@ -2,7 +2,8 @@
 // Outil d’orchestration Creezio Lite pour l’API Cursor Cloud Agents v1 (https://cursor.com/docs/cloud-agent/api/endpoints).
 // Usage orchestrateur uniquement ; distinct du transport métier runtime/core/agent-providers. Aucune dépendance au kit.
 // Accès : CURSOR_API_KEY en environnement (un compte implicite) sinon le pool commun de comptes via l’adaptateur local optionnel
-// (scripts/cursor-account-pool.mjs du kit ou CURSOR_ACCOUNT_POOL_MODULE), décidé une fois par appel. Sorties JSON sans clé, sans prompt, sans corps fournisseur.
+// (cursor-account-pool.mjs à côté de ce script, distribué avec la compétence, ou CURSOR_ACCOUNT_POOL_MODULE), décidé une fois par appel.
+// Sorties JSON sans clé, sans prompt, sans corps fournisseur.
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
@@ -10,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const API = 'https://api.cursor.com';
 export const selectionsFile = resolve(dirname(fileURLToPath(import.meta.url)), '../cursor-model.json');
-export const accountPoolModule = new URL('../../../../scripts/cursor-account-pool.mjs', import.meta.url);
+export const accountPoolModule = new URL('./cursor-account-pool.mjs', import.meta.url);
 export const exitCodes = Object.freeze({ ok: 0, blocked: 2, unavailable: 3, usage: 4 });
 export const pollIntervalsMs = Object.freeze([15_000, 30_000, 60_000, 120_000, 300_000]);
 const agentIdPattern = /^bc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -35,7 +36,7 @@ export function envAccess(key) { return { mode: 'env', pool: null, keyFor: async
 export async function loadAccountAdapter(env = process.env) {
   const override = typeof env.CURSOR_ACCOUNT_POOL_MODULE === 'string' && env.CURSOR_ACCOUNT_POOL_MODULE.trim() ? pathToFileURL(resolve(env.CURSOR_ACCOUNT_POOL_MODULE.trim())).href : null;
   try { return await import(override ?? accountPoolModule.href); }
-  catch (error) { if (!override && error?.code === 'ERR_MODULE_NOT_FOUND') return null; throw new UsageError(`Adaptateur de comptes illisible (${override ? 'CURSOR_ACCOUNT_POOL_MODULE' : 'scripts/cursor-account-pool.mjs'}) ; aucun appel émis.`); }
+  catch (error) { if (!override && error?.code === 'ERR_MODULE_NOT_FOUND') return null; throw new UsageError(`Adaptateur de comptes illisible (${override ? 'CURSOR_ACCOUNT_POOL_MODULE' : 'cursor-account-pool.mjs à côté de cursor-agents.mjs'}) ; aucun appel émis.`); }
 }
 export async function resolveAccess({ env = process.env, adapter, decrypt, now } = {}) {
   const key = readKey(env);
@@ -59,7 +60,7 @@ const evidenceHint = (evidence) => {
   if (!evidence) return undefined;
   if (evidence.classification === 'included_usage_exhausted') return `usage inclus épuisé sur le compte ${evidence.accountId} pour ce pool (état enregistré) : relancer la même commande, le compte premium suivant sera choisi ; ou activer l’usage à la demande manuellement. Aucune inférence sur l’autre pool.`;
   if (evidence.classification === 'plan_required') return `compte ${evidence.accountId} sans plan Cloud Agent (deux pools indisponibles, enregistré) : relancer la même commande pour le compte suivant.`;
-  if (evidence.classification === 'hard_limit_start_refused') return `plafond de dépenses du compte ${evidence.accountId} : création refusée par le fournisseur. Augmenter la limite manuellement (tableau de bord) ou placer un autre compte en tête de l’ordre ; aucune relance automatique, aucune inférence sur le solde standard, état des pools inchangé.`;
+  if (evidence.classification === 'hard_limit_start_refused') return `plafond de dépenses du compte ${evidence.accountId} : départ refusé par le fournisseur ; nouveaux départs bloqués sur ce compte (startBlock enregistré) jusqu’à validation explicite. Relever la limite manuellement (tableau de bord) puis valider par « --account ${evidence.accountId} », ou relancer la même commande pour le compte suivant de l’ordre ; aucune relance automatique, aucune inférence sur le solde standard, pools et plafond inchangés.`;
   return undefined;
 };
 
@@ -226,7 +227,7 @@ function selectionReceipt(selection, { createAccepted = false, runAccepted = fal
   return { key: selection.key, requested: { modelId: selection.modelId, params: selection.params }, catalog: selection.catalog, createAccepted, runAccepted, modelObserved: null, note: 'Un POST accepté ne prouve pas la sélection effective ; un routage interne du fournisseur reste possible.', ...(entry?.currentSelection ? { currentSelection: { key: entry.currentSelection.key, requested: { modelId: entry.currentSelection.modelId, params: entry.currentSelection.params }, catalog: entry.currentSelection.catalog }, exception: entry.exception ?? null } : {}) };
 }
 const effectiveSelection = entry => entry?.currentSelection ?? entry?.selection ?? null;
-const accountFields = (accountId, decision) => (accountId ? { account: { id: accountId, ...(decision ? { pool: decision.pool, decision: decision.status } : {}) } } : {});
+const accountFields = (accountId, decision) => (accountId ? { account: { id: accountId, ...(decision ? { pool: decision.pool, decision: decision.status, ...(decision.explicitValidation ? { explicitValidation: decision.explicitValidation } : {}) } : {}) } } : {});
 
 // Création d’un agent (lancement ou successeur) : POST unique avec agentId déterministe, réconciliation des 409 et appels incertains, preuve enregistrée sur le compte appelé.
 async function createAgent({ command, mission, entry, registry, registryFile, body, key, access, accountId, decision, modelId, fetchImpl, timeoutMs, now }) {
@@ -289,14 +290,14 @@ export async function launch({ mission, repo, ref, prUrl, promptText, name, auto
   const body = { agentId, prompt: { text: promptText }, model: active.params.length ? { id: active.modelId, params: active.params } : { id: active.modelId }, repos: [prUrl ? { url: repoUrl, prUrl } : { url: repoUrl, startingRef: ref }], workOnCurrentBranch, autoCreatePR, ...(name ? { name: String(name).slice(0, 100) } : {}) };
   return createAgent({ command: 'launch', mission, entry, registry, registryFile, body, key: await access.keyFor(accountId), access, accountId, decision, modelId: active.modelId, fetchImpl, timeoutMs, now });
 }
-// Compte imposé (--account) : décision humaine explicite, par exemple une mission bornée grok destinée à produire la preuve d’accès standard. Composer reste interdit,
-// un pool confirmé indisponible aussi.
+// Compte imposé (--account) : décision humaine explicite, par exemple une mission bornée grok destinée à produire la preuve d’accès standard, ou la validation
+// d’un compte en startBlock après relèvement manuel du plafond (l’acceptation lève le blocage). Composer reste interdit, un pool confirmé indisponible aussi.
 async function routeExplicit(access, accountId, selection) {
   if (/composer/i.test(selection.modelId)) return { status: 'blocked', reason: 'composer_forbidden', accountId, nextAction: 'Composer n’est jamais utilisé.' };
   const owner = await access.pool.owner({ accountId, modelId: selection.modelId });
   if (!owner.known) return { status: 'blocked', reason: 'account_unknown', accountId, nextAction: `compte ${accountId} absent de l’état du pool.` };
   if (owner.confirmedUnavailable) return { status: 'blocked', reason: 'account_pool_unavailable', accountId, pool: owner.pool, poolState: owner.poolState, nextAction: `pool ${owner.pool} du compte ${accountId} confirmé indisponible (${owner.poolState}) : réactiver manuellement après vérification, aucun POST.` };
-  return { status: 'route', accountId, pool: owner.pool, modelId: selection.modelId, selection: 'initial', explicit: true };
+  return { status: 'route', accountId, pool: owner.pool, modelId: selection.modelId, selection: 'initial', explicit: true, ...(owner.startBlocked ? { explicitValidation: 'start_block', startBlock: owner.startBlock } : {}) };
 }
 async function readAgent({ agentId, key, fetchImpl, timeoutMs }) {
   const result = await call({ path: `/v1/agents/${encodeURIComponent(agentId)}`, key, fetchImpl, timeoutMs });
@@ -415,9 +416,11 @@ export async function followup({ agentId, mission, account, registryFile, prompt
   const stale = registryRunId && registryRunId !== run.runId ? { registryRunId } : {};
   if (!terminalRunStatuses.has(run.status)) return report({ status: 'blocked', reason: 'run_active', runId: run.runId, runStatus: run.status, ...stale, nextAction: 'attendre le terminal (status --follow) ; aucun second run envoyé' });
   // Pool confirmé indisponible pour le propriétaire : aucun POST voué à l’échec ; la suite passe par un successeur lié sur le compte premium suivant.
+  // Départ bloqué (plafond refusé) : un run est un nouveau départ ; seul « --account <propriétaire> » explicite vaut validation humaine après relèvement du plafond.
   if (access.pool && accountId && modelId) {
     const owner = await access.pool.owner({ accountId, modelId });
     if (owner.confirmedUnavailable) return report({ status: 'blocked', reason: 'owner_pool_unavailable', runId: run.runId, pool: owner.pool, poolState: owner.poolState, ...stale, nextAction: `pool ${owner.pool} du compte propriétaire ${accountId} confirmé indisponible (${owner.poolState}) : aucun POST ; successor --mission --checkpoint <SHA poussé> pour continuer sur le compte premium suivant, ou réactiver le compte après vérification manuelle.` });
+    if (owner.startBlocked && account === undefined) return report({ status: 'blocked', reason: 'owner_start_blocked', runId: run.runId, startBlock: owner.startBlock, ...stale, nextAction: `départs bloqués sur le compte propriétaire ${accountId} depuis un refus de plafond (${owner.startBlock?.at ?? 'date inconnue'}) : aucun POST. Relever la limite manuellement puis valider explicitement par « followup --mission … --account ${accountId} », ou successor --mission --checkpoint <SHA poussé> vers le compte premium suivant.` });
   }
   const priorRunId = run.runId;
   await persist({ followup: { state: 'pending', priorRunId, requestedAt: now() } });

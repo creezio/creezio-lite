@@ -17,6 +17,7 @@ export const composerPattern = /composer/i;
 export const modelPoolStates = Object.freeze(['probe_passed_balance_unknown', 'exhaustion_reported', 'recheck_required', 'unavailable_plan']);
 export const confirmedUnavailable = new Set(['exhaustion_reported', 'unavailable_plan']);
 export const callKinds = Object.freeze(['models', 'create', 'run', 'agent', 'run_read']);
+// requireStandardValidation est conservé pour la compatibilité du fichier d’état mais n’est pas un interrupteur : la preuve d’accès standard est toujours exigée.
 export const defaultRoutingPolicy = Object.freeze({ priorityAccountIds: [], preferredModel: 'claude-fable-5-1', fallbackModel: FALLBACK_MODEL, fallbackWhen: 'all_custom_accounts_confirmed_unavailable', reuseInactiveForStandard: true, requireStandardValidation: true, neverFallbackToComposer: true, preserveRunningMissions: true, standardProofMaxAgeHours: 24 });
 
 // Signatures fournisseur observées, comparées strictement (statut, code, message exact). Tout autre motif reste « undetermined » : aucune inférence.
@@ -35,7 +36,10 @@ export function credentialsPath(env = process.env) {
 }
 export function poolPaths(credentialsFile) { const dir = dirname(credentialsFile); return { credentialsFile, stateFile: join(dir, 'pool-state.json'), lockFile: join(dir, 'pool-state.lock') }; }
 
-// credentials.json {formatVersion:1, encryption:'windows-dpapi-current-user', createdAt, accounts:[{id, secretDpapi}]}. Les blobs ne sont jamais recopiés dans une erreur.
+// credentials.json {formatVersion:1, encryption:'windows-dpapi-current-user', createdAt, accounts:[{id, secretDpapi}]}. secretDpapi est la sortie de
+// ConvertFrom-SecureString (DPAPI CurrentUser) : chaîne hexadécimale de longueur paire, jamais recopiée dans une erreur. Le coffre n’est jamais réécrit ici.
+export const secureStringHexPattern = /^(?:[0-9A-Fa-f]{2}){16,16384}$/;
+export function isSecureStringHex(value) { return typeof value === 'string' && secureStringHexPattern.test(value); }
 export function parseCredentials(raw) {
   if (!raw || typeof raw !== 'object' || raw.formatVersion !== 1) throw new PoolError('credentials_invalid', 'credentials.json : formatVersion 1 attendu.');
   if (raw.encryption !== 'windows-dpapi-current-user') throw new PoolError('credentials_invalid', 'credentials.json : encryption windows-dpapi-current-user attendu.');
@@ -44,25 +48,28 @@ export function parseCredentials(raw) {
   for (const [index, account] of raw.accounts.entries()) {
     const id = account && typeof account === 'object' && typeof account.id === 'string' && idPattern.test(account.id) ? account.id : null;
     if (!id || seen.has(id)) throw new PoolError('credentials_invalid', `credentials.json : compte n°${index + 1} sans identifiant valide ou dupliqué.`);
-    if (typeof account.secretDpapi !== 'string' || !/^[A-Za-z0-9+/]{16,16384}={0,2}$/.test(account.secretDpapi)) throw new PoolError('credentials_invalid', `credentials.json : compte ${id} sans blob DPAPI base64 valide.`);
+    if (!isSecureStringHex(account.secretDpapi)) throw new PoolError('credentials_invalid', `credentials.json : compte ${id} sans chaîne SecureString hexadécimale valide (ConvertFrom-SecureString).`);
     seen.add(id); accounts.push({ id, secretDpapi: account.secretDpapi });
   }
   return { formatVersion: 1, encryption: raw.encryption, createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : null, accounts };
 }
 
-// Déchiffrement DPAPI CurrentUser par PowerShell : blob en entrée standard, secret en sortie standard, rien sur la ligne de commande. Windows uniquement.
+// Déchiffrement DPAPI CurrentUser par PowerShell : la chaîne SecureString hexadécimale (sortie de ConvertFrom-SecureString) arrive par l’entrée standard,
+// ConvertTo-SecureString sans -Key la déchiffre pour l’utilisateur courant, le texte clair sort par la sortie standard en UTF-8. Rien sur la ligne de commande,
+// rien dans les erreurs (stderr ignorée). Windows uniquement ; les mocks Linux ne prouvent pas DPAPI.
+export const dpapiPowershellScript = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; $hex=[Console]::In.ReadToEnd().Trim(); if($hex -notmatch '^(?:[0-9A-Fa-f]{2})+$'){exit 3}; $secure=ConvertTo-SecureString -String $hex; $clear=[System.Net.NetworkCredential]::new('',$secure).Password; [Console]::Out.Write($clear)";
 export async function dpapiUnprotectCurrentUser(secretDpapi, { platform = process.platform, spawnImpl = spawn, timeoutMs = 15_000 } = {}) {
   if (platform !== 'win32') throw new PoolError('dpapi_unavailable', 'Déchiffrement DPAPI disponible seulement sous Windows (session de l’utilisateur courant).');
-  const script = "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Security; $blob=[Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()); $clear=[System.Security.Cryptography.ProtectedData]::Unprotect($blob,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Text.Encoding]::UTF8.GetString($clear))";
+  if (!isSecureStringHex(secretDpapi)) throw new PoolError('credentials_invalid', 'Chaîne SecureString hexadécimale attendue ; aucun déchiffreur lancé.');
   return new Promise((resolvePromise, reject) => {
-    const child = spawnImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawnImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', dpapiPowershellScript], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     const out = []; let failed = false;
     const fail = (code, message) => { if (failed) return; failed = true; clearTimeout(timer); reject(new PoolError(code, message)); };
     const timer = setTimeout(() => { child.kill(); fail('decrypt_failed', 'Déchiffrement DPAPI interrompu (délai).'); }, timeoutMs);
     child.on('error', () => fail('decrypt_failed', 'Déchiffreur DPAPI introuvable ou non exécutable.'));
     child.stdout.on('data', chunk => out.push(chunk));
     child.stderr.on('data', () => {});
-    child.on('close', code => { clearTimeout(timer); if (failed) return; if (code !== 0) return fail('decrypt_failed', 'Déchiffrement DPAPI refusé (autre utilisateur, blob altéré ou session différente).'); resolvePromise(Buffer.concat(out).toString('utf8')); });
+    child.on('close', code => { clearTimeout(timer); if (failed) return; if (code !== 0) return fail('decrypt_failed', code === 3 ? 'Chaîne SecureString rejetée par le déchiffreur (format).' : 'Déchiffrement DPAPI refusé (autre utilisateur, chaîne altérée ou session différente).'); resolvePromise(Buffer.concat(out).toString('utf8')); });
     child.stdin.on('error', () => {});
     child.stdin.end(secretDpapi);
   });
@@ -179,9 +186,12 @@ export function classifyResult({ callKind, modelId, result, at = isoNow(), agent
   return { ...base, classification: match ? match.classification : 'undetermined', reason: result.reason ?? result.outcome ?? null, httpStatus: Number.isInteger(result.status) ? result.status : null, providerCode: typeof result.providerCode === 'string' ? result.providerCode : null, messageMatched: Boolean(match) };
 }
 function deactivate(account, reason, at) { if (account.status !== 'inactive') { account.status = 'inactive'; account.inactiveReason = reason; account.inactiveAt = at; } }
+const startCalls = new Set(['create', 'run']);
 // Effets : épuisement inclus ⇒ le seul pool du modèle appelé est « exhaustion_reported », l’autre « recheck_required » sauf s’il est déjà confirmé ; plan manquant ⇒ deux pools
-// « unavailable_plan » ; plafond de création (400) et motifs génériques ⇒ preuve conservée, aucun changement d’état ; acceptation ⇒ « probe_passed_balance_unknown » et, pour
-// le pool standard, preuve datée d’accès réel. Une sonde passée ne prouve ni solde ni accès futur.
+// « unavailable_plan » ; plafond de dépenses (400 usage_limit_exceeded) ⇒ startBlock : plus aucun nouveau départ (création ou run) sur le compte jusqu’à une validation
+// explicite, pools et plafond inchangés, aucun solde inféré ; motifs génériques ⇒ preuve conservée, aucun changement d’état ; acceptation d’un départ ⇒
+// « probe_passed_balance_unknown », levée du startBlock (seul un départ explicite --account peut l’atteindre) et, pour le pool standard, preuve datée d’accès réel.
+// Tout refus fournisseur daté (statut HTTP) invalide les preuves antérieures du compte (lastRefusalAt). Une sonde passée ne prouve ni solde ni accès futur.
 export function applyEvidence(state, accountId, evidence) {
   const account = state.accounts.find(a => a.id === accountId);
   if (!account) throw new PoolError('account_unknown', `Compte ${String(accountId).slice(0, 64)} absent de l’état du pool.`, { accountId });
@@ -191,23 +201,31 @@ export function applyEvidence(state, accountId, evidence) {
   if (Array.isArray(account.evidence)) { account.evidence.push(record); if (account.evidence.length > 20) account.evidence.splice(0, account.evidence.length - 20); }
   if (!account.modelPools || typeof account.modelPools !== 'object') account.modelPools = {};
   const pool = poolFor(record.modelId);
+  const isStart = startCalls.has(record.callKind);
+  // Invalidation par ordre des événements (pas seulement par horodatage) : une preuve antérieure à un refus, un blocage ou un recheck ne vaut plus rien.
+  const invalidateProof = reason => { if (account.standardProof && typeof account.standardProof === 'object' && !account.standardProof.invalidatedBy) account.standardProof.invalidatedBy = { at, reason }; };
+  if (record.classification !== 'accepted' && Number.isInteger(record.httpStatus) && record.httpStatus >= 400) { account.lastRefusalAt = at; invalidateProof(record.classification === 'undetermined' ? `refusal_${record.httpStatus}` : record.classification); }
   switch (record.classification) {
     case 'included_usage_exhausted':
-      if (pool) { account.modelPools[pool] = 'exhaustion_reported'; if (!confirmedUnavailable.has(account.modelPools[otherPool(pool)])) account.modelPools[otherPool(pool)] = 'recheck_required'; deactivate(account, 'included_usage_exhausted', at); }
+      if (pool) { account.modelPools[pool] = 'exhaustion_reported'; if (!confirmedUnavailable.has(account.modelPools[otherPool(pool)])) { account.modelPools[otherPool(pool)] = 'recheck_required'; if (otherPool(pool) === 'standard') { account.standardRecheckAt = at; invalidateProof('standard_recheck_required'); } } deactivate(account, 'included_usage_exhausted', at); }
       break;
     case 'plan_required':
       account.modelPools.custom = 'unavailable_plan'; account.modelPools.standard = 'unavailable_plan'; deactivate(account, 'plan_required', at);
       break;
+    case 'hard_limit_start_refused':
+      if (isStart) { account.startBlock = { at, reason: 'hard_limit_start_refused', callKind: record.callKind, modelId: record.modelId, httpStatus: record.httpStatus ?? 400, providerCode: record.providerCode ?? 'usage_limit_exceeded' }; invalidateProof('start_block'); }
+      break;
     case 'accepted':
-      if (pool && ['create', 'run'].includes(record.callKind)) { account.modelPools[pool] = 'probe_passed_balance_unknown'; if (pool === 'standard') account.standardProof = { at, modelId: record.modelId, kind: `${record.callKind}_accepted`, ...(record.agentId ? { agentId: record.agentId } : {}) }; }
+      if (pool && isStart) { account.modelPools[pool] = 'probe_passed_balance_unknown'; if (account.startBlock) { account.startBlock = null; account.startBlockClearedAt = at; } if (pool === 'standard') account.standardProof = { at, modelId: record.modelId, kind: `${record.callKind}_accepted`, ...(record.agentId ? { agentId: record.agentId } : {}) }; }
       break;
     default: break;
   }
   return summarizeAccount(account);
 }
 export function summarizeAccount(account) {
-  return { id: account.id, status: account.status ?? 'active', inactiveReason: account.inactiveReason ?? null, modelPools: { custom: account.modelPools?.custom ?? null, standard: account.modelPools?.standard ?? null }, standardProof: account.standardProof ? { at: account.standardProof.at, modelId: account.standardProof.modelId, kind: account.standardProof.kind } : null, lastEvidence: account.lastEvidence ? { at: account.lastEvidence.at, callKind: account.lastEvidence.callKind, classification: account.lastEvidence.classification, ...(account.lastEvidence.httpStatus ? { httpStatus: account.lastEvidence.httpStatus } : {}), ...(account.lastEvidence.providerCode ? { providerCode: account.lastEvidence.providerCode } : {}) } : null };
+  return { id: account.id, status: account.status ?? 'active', inactiveReason: account.inactiveReason ?? null, modelPools: { custom: account.modelPools?.custom ?? null, standard: account.modelPools?.standard ?? null }, startBlock: account.startBlock ? { at: account.startBlock.at, reason: account.startBlock.reason, callKind: account.startBlock.callKind ?? null } : null, lastRefusalAt: account.lastRefusalAt ?? null, standardProof: account.standardProof ? { at: account.standardProof.at, modelId: account.standardProof.modelId, kind: account.standardProof.kind, ...(account.standardProof.invalidatedBy ? { invalidatedBy: account.standardProof.invalidatedBy } : {}) } : null, lastEvidence: account.lastEvidence ? { at: account.lastEvidence.at, callKind: account.lastEvidence.callKind, classification: account.lastEvidence.classification, ...(account.lastEvidence.httpStatus ? { httpStatus: account.lastEvidence.httpStatus } : {}), ...(account.lastEvidence.providerCode ? { providerCode: account.lastEvidence.providerCode } : {}) } : null };
 }
+export const startBlocked = account => Boolean(account?.startBlock && typeof account.startBlock === 'object');
 export function summarizeState(state) { return { revision: state.revision, updatedAt: state.updatedAt, activeAccountId: state.activeAccountId ?? null, order: orderedAccounts(state).map(a => a.id), routingPolicy: { ...defaultRoutingPolicy, ...(state.routingPolicy ?? {}) }, accounts: orderedAccounts(state).map(summarizeAccount) }; }
 
 // Ordre configuré : priorityAccountIds, puis order, puis les comptes restants dans l’ordre du fichier. Aucun reclassement selon l’état.
@@ -217,11 +235,22 @@ export function orderedAccounts(state) {
   for (const id of [...(state.routingPolicy?.priorityAccountIds ?? []), ...state.order, ...state.accounts.map(a => a.id)]) { if (byId.has(id) && !seen.has(id)) { seen.add(id); out.push(byId.get(id)); } }
   return out;
 }
-function freshProof(account, modelId, nowMs, maxAgeMs) {
+// Preuve d’accès standard : départ accepté (create/run) sur CE compte pour CE modèle, datée, plus récente que tout refus fournisseur, tout passage du pool standard à
+// recheck_required et tout blocage de départ, et cohérente avec l’état courant (pool standard « probe_passed_balance_unknown », aucun startBlock). Sinon : motif explicite.
+export function standardProofStatus(account, modelId, nowMs, maxAgeMs) {
   const proof = account.standardProof;
-  if (!proof || proof.modelId !== modelId || !['create_accepted', 'run_accepted'].includes(proof.kind)) return null;
-  const at = Date.parse(proof.at); if (!Number.isFinite(at)) return null;
-  const age = nowMs - at; return age >= 0 && age <= maxAgeMs ? { at: proof.at, modelId: proof.modelId, kind: proof.kind, ageMs: age } : null;
+  const invalid = reason => ({ valid: false, reason, proof: proof ? { at: proof.at, modelId: proof.modelId, kind: proof.kind } : null });
+  if (!proof) return invalid('no_proof');
+  if (proof.invalidatedBy) return invalid(`invalidated_${proof.invalidatedBy.reason ?? 'event'}`);
+  if (proof.modelId !== modelId) return invalid('model_mismatch');
+  if (!['create_accepted', 'run_accepted'].includes(proof.kind)) return invalid('kind_not_start');
+  const at = Date.parse(proof.at); if (!Number.isFinite(at)) return invalid('undated');
+  const age = nowMs - at; if (age < 0 || age > maxAgeMs) return invalid('expired');
+  if (startBlocked(account)) return invalid('start_blocked');
+  if (account.modelPools?.standard !== 'probe_passed_balance_unknown') return invalid(`standard_pool_${account.modelPools?.standard ?? 'unknown'}`);
+  // Garde secondaire par horodatage (états édités à la main) : strictement antérieure à un refus, un recheck ou une désactivation ⇒ caduque.
+  const after = (field, reason) => { const t = Date.parse(account[field] ?? ''); return Number.isFinite(t) && at < t ? invalid(reason) : null; };
+  return after('lastRefusalAt', 'refusal_after_proof') ?? after('standardRecheckAt', 'recheck_after_proof') ?? after('inactiveAt', 'inactive_after_proof') ?? { valid: true, reason: null, proof: { at: proof.at, modelId: proof.modelId, kind: proof.kind, ageMs: age } };
 }
 // Décision déterministe. selection = {key, modelId, params} choisie à l’attribution ; fallbackSelection = entrée grok du catalogue (ou null).
 // route : même sélection sur le premier compte éligible de l’ordre ; exception : tous les comptes premium confirmés indisponibles ET une preuve
@@ -238,32 +267,38 @@ export function decide(state, { selection, fallbackSelection = null, excludeAcco
   const pool = poolFor(selection.modelId);
   if (!pool) return blocked('model_pool_unknown', 'Modèle sans pool connu (custom/standard) : aucune inférence de facturation ; compléter poolFor par PR du kit.');
   if (!all.length) return blocked('no_accounts', 'Aucun compte dans le pool : renseigner credentials.json (coffre DPAPI de l’utilisateur).');
-  const standardEligible = a => (a.status !== 'inactive' || policy.reuseInactiveForStandard === true) && !confirmedUnavailable.has(a.modelPools?.standard);
+  // startBlock (plafond de dépenses refusé) : aucun nouveau départ automatique sur ce compte, quel que soit le pool, jusqu’à validation explicite (--account).
+  const startAllowed = a => !startBlocked(a);
+  const standardEligible = a => startAllowed(a) && (a.status !== 'inactive' || policy.reuseInactiveForStandard === true) && !confirmedUnavailable.has(a.modelPools?.standard);
+  const startBlockedIds = all.filter(a => !startAllowed(a)).map(a => a.id);
+  const startBlockHint = startBlockedIds.length ? ` Départs bloqués après refus de plafond (hard_limit_start_refused) : ${startBlockedIds.join(', ')} ; validation explicite requise (plafond relevé manuellement puis « --account <id> »), aucun solde inféré.` : '';
   if (pool === 'standard') {
     const eligible = candidates.find(standardEligible);
     if (eligible) return { status: 'route', pool, accountId: eligible.id, modelId: selection.modelId, selection: 'initial', accounts };
-    return blocked('no_standard_account', 'Aucun compte éligible au pool standard dans l’ordre configuré ; réexaminer manuellement les comptes après vérification de leur accès.');
+    return blocked('no_standard_account', `Aucun compte éligible au pool standard dans l’ordre configuré ; réexaminer manuellement les comptes après vérification de leur accès.${startBlockHint}`, { startBlocked: startBlockedIds });
   }
-  const customEligible = a => a.status !== 'inactive' && !confirmedUnavailable.has(a.modelPools?.custom);
+  const customEligible = a => startAllowed(a) && a.status !== 'inactive' && !confirmedUnavailable.has(a.modelPools?.custom);
   const eligible = candidates.find(customEligible);
   if (eligible) return { status: 'route', pool, accountId: eligible.id, modelId: selection.modelId, selection: 'initial', accounts };
   if (all.some(a => excluded.has(a.id) && customEligible(a))) return blocked('only_excluded_account_eligible', 'Seul le compte exclu (propriétaire actuel) reste éligible : reprendre le même agent (followup), pas un successeur.');
   const confirmed = all.filter(a => confirmedUnavailable.has(a.modelPools?.custom)).map(a => a.id);
   const unknown = all.filter(a => !confirmedUnavailable.has(a.modelPools?.custom)).map(a => a.id);
-  if (unknown.length) return blocked('custom_availability_unknown', `Comptes premium sans indisponibilité confirmée mais non éligibles (inactifs pour une autre raison ou état inconnu) : ${unknown.join(', ')}. Vérifier manuellement et réactiver dans pool-state.json ; aucun repli tant qu’un doute subsiste.`, { confirmed, unknown });
+  if (unknown.length) return blocked('custom_availability_unknown', `Comptes premium sans indisponibilité confirmée mais non éligibles (inactifs pour une autre raison, départ bloqué ou état inconnu) : ${unknown.join(', ')}. Vérifier manuellement et réactiver dans pool-state.json ; aucun repli tant qu’un doute subsiste.${startBlockHint}`, { confirmed, unknown, startBlocked: startBlockedIds });
   if (policy.fallbackWhen !== 'all_custom_accounts_confirmed_unavailable') return blocked('fallback_policy_disabled', 'Tous les comptes premium sont confirmés indisponibles et routingPolicy.fallbackWhen interdit le repli : attendre le rétablissement (on-demand ou plan) ; aucun autre modèle.', { confirmed });
   const fallbackModel = policy.fallbackModel;
   const fallbackValid = policy.neverFallbackToComposer === true && fallbackModel === FALLBACK_MODEL && !composerPattern.test(fallbackModel) && fallbackSelection && fallbackSelection.modelId === fallbackModel && !composerPattern.test(fallbackSelection.modelId) && poolFor(fallbackModel) === 'standard';
   if (!fallbackValid) return blocked('fallback_model_forbidden', `Repli autorisé uniquement vers ${FALLBACK_MODEL} déclaré dans cursor-model.json, jamais Composer ; aucune sélection de repli valide.`, { confirmed });
   const standardCandidates = candidates.filter(standardEligible);
-  if (!standardCandidates.length) return blocked('no_standard_account', 'Tous les comptes premium sont confirmés indisponibles et aucun compte n’est éligible au pool standard ; attendre le rétablissement, aucun autre modèle.', { confirmed });
+  if (!standardCandidates.length) return blocked('no_standard_account', `Tous les comptes premium sont confirmés indisponibles et aucun compte n’est éligible au pool standard ; attendre le rétablissement, aucun autre modèle.${startBlockHint}`, { confirmed, startBlocked: startBlockedIds });
+  // Preuve obligatoire, quelle que soit routingPolicy.requireStandardValidation : jamais d’exception avec proof:null, jamais de solde inventé.
   const nowMs = Date.parse(now()); const maxAgeMs = Math.max(1, Number(policy.standardProofMaxAgeHours) || 24) * 3_600_000;
-  if (policy.requireStandardValidation !== false) {
-    const proven = standardCandidates.map(a => ({ account: a, proof: freshProof(a, fallbackModel, nowMs, maxAgeMs) })).find(c => c.proof);
-    if (!proven) return blocked('standard_access_unproven', `Tous les comptes premium sont confirmés indisponibles (${confirmed.join(', ')}). Aucune preuve datée (< ${Math.round(maxAgeMs / 3_600_000)} h) d’accès réel à ${fallbackModel} pour ${standardCandidates.map(a => a.id).join(', ')} ; GET /models n’en est pas une. Aucune sonde payante automatique. Action explicite : lancer une mission bornée « --select grok --account <id> » (coût réel, décision humaine), dont l’acceptation enregistre la preuve ; sinon rester bloqué.`, { confirmed, standardCandidates: standardCandidates.map(a => a.id) });
-    return { status: 'exception', pool: 'standard', accountId: proven.account.id, modelId: fallbackModel, selection: 'fallback', reason: 'all_custom_accounts_confirmed_unavailable', confirmed, proof: proven.proof, accounts };
+  const proofs = standardCandidates.map(a => ({ account: a, ...standardProofStatus(a, fallbackModel, nowMs, maxAgeMs) }));
+  const proven = proofs.find(c => c.valid);
+  if (!proven) {
+    const proofStatus = Object.fromEntries(proofs.map(c => [c.account.id, c.reason]));
+    return blocked('standard_access_unproven', `Tous les comptes premium sont confirmés indisponibles (${confirmed.join(', ')}). Aucune preuve valable (< ${Math.round(maxAgeMs / 3_600_000)} h, postérieure à tout refus, recheck_required ou blocage, pool standard probe_passed_balance_unknown) d’accès réel à ${fallbackModel} pour ${proofs.map(c => `${c.account.id} (${c.reason})`).join(', ')} ; GET /models n’en est pas une. Aucune sonde payante automatique. Action explicite : lancer une mission bornée « --select grok --account <id> » (coût réel, décision humaine), dont l’acceptation enregistre la preuve ; sinon rester bloqué.${startBlockHint}`, { confirmed, standardCandidates: standardCandidates.map(a => a.id), proofStatus, startBlocked: startBlockedIds, requireStandardValidation: 'always' });
   }
-  return { status: 'exception', pool: 'standard', accountId: standardCandidates[0].id, modelId: fallbackModel, selection: 'fallback', reason: 'all_custom_accounts_confirmed_unavailable', confirmed, proof: null, accounts };
+  return { status: 'exception', pool: 'standard', accountId: proven.account.id, modelId: fallbackModel, selection: 'fallback', reason: 'all_custom_accounts_confirmed_unavailable', confirmed, proof: proven.proof, accounts };
 }
 
 // Pool ouvert pour le transport : identifiants publics, clés à la demande, lecture/décision/enregistrement sous verrou. Retourne null sans coffre configuré.
@@ -282,8 +317,9 @@ export async function openAccountPool({ env = process.env, decrypt, now = isoNow
     classify: args => classifyResult({ at: now(), ...args }),
     read: () => withPoolState(paths, () => ({ changed: false, value: state => summarizeState(state) }), options),
     decide: args => withPoolState(paths, state => ({ changed: false, value: decide(state, { ...args, now }) }), options),
-    // Propriétaire d’une mission : ses GET restent toujours possibles ; un POST sur un pool confirmé indisponible est refusé avant envoi.
-    owner: ({ accountId, modelId }) => withPoolState(paths, state => { const account = state.accounts.find(a => a.id === accountId); const pool = poolFor(modelId); const poolState = account?.modelPools?.[pool] ?? null; return { changed: false, value: { accountId, known: Boolean(account), status: account?.status ?? null, pool, poolState, confirmedUnavailable: confirmedUnavailable.has(poolState) } }; }, options),
+    // Propriétaire d’une mission : ses GET restent toujours possibles ; un POST sur un pool confirmé indisponible est refusé avant envoi ; un départ sur un compte
+    // en startBlock n’est possible que par validation explicite du transport (--account), jamais automatiquement.
+    owner: ({ accountId, modelId }) => withPoolState(paths, state => { const account = state.accounts.find(a => a.id === accountId); const pool = poolFor(modelId); const poolState = account?.modelPools?.[pool] ?? null; return { changed: false, value: { accountId, known: Boolean(account), status: account?.status ?? null, pool, poolState, confirmedUnavailable: confirmedUnavailable.has(poolState), startBlocked: startBlocked(account), startBlock: account?.startBlock ? { at: account.startBlock.at, reason: account.startBlock.reason } : null } }; }, options),
     record: (accountId, evidence, { activate = false } = {}) => withPoolState(paths, state => { const summary = applyEvidence(state, accountId, { ...evidence, at: evidence.at ?? now() }); if (activate && evidence.classification === 'accepted') state.activeAccountId = accountId; return { changed: true, value: summary }; }, options),
   };
   return pool;
