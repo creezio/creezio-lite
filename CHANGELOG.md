@@ -1,5 +1,12 @@
 # Versions de Lite
 
+## 0.10.1 — Publication et suivi des applications
+
+- Release GitHub stable au SHA exact de main après CI réussie ; aucun déplacement de tag.
+- Veille livrée avec les applications : une issue par version, sans secret inter-dépôts ni mise à jour aveugle.
+- Responsable commun du kit, suivi distinct des tests, intégrations et déploiements applicatifs.
+- Chargeur de tests natifs compatible avec les chemins Windows pour permettre la revue locale.
+
 ## 0.10.0 — Transports des agents
 
 - Transports Cursor et xAI injectables, avec états et capacités explicites ; aucune activation d’agent ou dépense automatique.
