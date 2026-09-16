@@ -46,6 +46,13 @@ function assertNoLeak(value) {
   for (const marker of [KEY, BODY_MARKER, PROMPT_MARKER, 'Bearer ']) assert.ok(!text.includes(marker), `fuite de « ${marker.trim()} » dans ${text.slice(0, 200)}`);
 }
 async function withTemp(prefix, run) { const temp = await mkdtemp(join(tmpdir(), prefix)); try { return await run(temp); } finally { await rm(temp, { recursive: true, force: true }); } }
+// Ressources distribuées par le standard composé (O01 transport + P1 contrat de planification + P2 outil) : liste explicite, jamais dérivée du code testé.
+export const DISTRIBUTED = [
+  orchestrationRule,
+  `${orchestrationDir}/SKILL.md`, `${orchestrationDir}/CONTRACT.md`, `${orchestrationDir}/cursor-model.json`, `${orchestrationDir}/scripts/cursor-agents.mjs`,
+  `${orchestrationDir}/PLANNING.md`, `${orchestrationDir}/planning-plan.schema.json`, `${orchestrationDir}/planning-state.schema.json`, `${orchestrationDir}/examples/planning-plan.json`, `${orchestrationDir}/examples/planning-state.json`,
+  `${orchestrationDir}/scripts/plan-missions.mjs`,
+].sort();
 
 test('the canonical skill has a valid frontmatter, fixed selections without fallback and no private data', async () => {
   const skill = await readFile(join(root, orchestrationDir, 'SKILL.md'), 'utf8');
@@ -54,11 +61,15 @@ test('the canonical skill has a valid frontmatter, fixed selections without fall
   const description = front[1].match(/^description: (.+)$/m); assert.ok(description && description[1].length > 40 && description[1].length <= 1024);
   for (const link of ['CONTRACT.md', 'cursor-model.json', 'scripts/cursor-agents.mjs']) assert.ok(skill.includes(link) && (await readdir(join(root, orchestrationDir, link.includes('/') ? 'scripts' : '.'))).includes(link.split('/').pop()));
   const sources = await orchestrationSources();
-  assert.deepEqual(Object.keys(sources).sort(), [orchestrationRule, `${orchestrationDir}/CONTRACT.md`, `${orchestrationDir}/SKILL.md`, `${orchestrationDir}/cursor-model.json`, `${orchestrationDir}/scripts/cursor-agents.mjs`].sort());
+  assert.deepEqual(Object.keys(sources).sort(), DISTRIBUTED, 'onze ressources distribuées : transport O01, cinq ressources du contrat de planification, outil plan-missions');
   for (const source of Object.values(sources)) {
     const content = await readFile(source, 'utf8');
     assert.doesNotMatch(content, /bc-[0-9a-f]{8}-[0-9a-f]{4}|run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}|\/home\/|\/Users\/|[A-Z]:\\|key_[A-Za-z0-9]{20}|sk-[A-Za-z0-9]{20}/, `donnée privée dans ${source}`);
     assert.ok(!content.includes('Codex ') || /pas de|aucun|ni /i.test(content));
+  }
+  for (const script of ['cursor-agents.mjs', 'plan-missions.mjs']) {
+    const imports = [...(await readFile(sources[`${orchestrationDir}/scripts/${script}`], 'utf8')).matchAll(/^import .* from ['"]([^'"]+)['"]/gm)].map(m => m[1]);
+    assert.ok(imports.length > 0 && imports.every(i => i.startsWith('node:')), `${script} doit rester autonome, sans import du kit : ${imports}`);
   }
   const config = agents.validateSelections(JSON.parse(await readFile(sources[`${orchestrationDir}/cursor-model.json`], 'utf8')));
   assert.equal(config.default, 'fable'); assert.deepEqual(Object.keys(config.selections), ['fable', 'opus', 'grok']);
@@ -424,7 +435,7 @@ test('adopt inspects, applies once, preserves local rules and unmanaged files, a
     assert.ok(!(await readdir(join(app, '.cursor'))).includes('skills'), 'l’inspection n’écrit rien');
 
     const applied = await adopt(app, true);
-    assert.equal(applied.applied, true); assert.equal(applied.written.length, 5);
+    assert.equal(applied.applied, true); assert.deepEqual([...applied.written].sort(), DISTRIBUTED);
     const again = await adopt(app, true);
     assert.equal(again.applied, false); assert.equal(again.changed, false); assert.equal(again.status, 'current');
     assert.equal(await readFile(join(app, '.cursor/rules/metier.mdc'), 'utf8'), localRule);
@@ -491,7 +502,7 @@ test('adopt refuses symlinked managed paths and parents before any write, and re
     await rm(join(app, '.cursor/skills/lite-orchestration'));
 
     // 3. Fichier géré symlinké vers une cible externe, avec manifeste le déclarant outdated.
-    const normal = await adopt(app, true); assert.equal(normal.applied, true); assert.equal(normal.written.length, 5);
+    const normal = await adopt(app, true); assert.equal(normal.applied, true); assert.deepEqual([...normal.written].sort(), DISTRIBUTED);
     const skillPath = join(app, orchestrationDir, 'SKILL.md'), target = join(outside, 'target.md');
     const stale = 'ancienne copie externe\n'; await writeFile(target, stale);
     await rm(skillPath); await symlink(target, skillPath, 'file');

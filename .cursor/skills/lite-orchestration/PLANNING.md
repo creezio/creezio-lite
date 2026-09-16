@@ -7,7 +7,7 @@ Complète `CONTRACT.md` (rôles, sélection, brief, lancement, réception). Ce c
 | **Plan** : ce que le programme doit produire (missions, dépendances par étape, réservations) | public, versionné à `docs/planning/plan.json` du dépôt de l’application ou du kit | `planning-plan.schema.json` | `examples/planning-plan.json` |
 | **État** : ce qui est engagé (statuts, sélection, branche/base/agent/run/PR, jalons, capacité, pauses, preuves) | privé, **hors dépôt**, à côté du registre `cursor-agents` | `planning-state.schema.json` | `examples/planning-state.json` |
 
-Le plan ne contient jamais de branche, d’agent, de run, de PR, de sélection, de chemin local ni d’identifiant de tâche interne. Les exemples sont génériques ; ils n’implémentent aucune mission réelle. Les cinq ressources de ce contrat (`PLANNING.md`, les deux schémas, les deux exemples) sont distribuées avec le dossier par `lite adopt` ; leur raccordement depuis `SKILL.md`/`CONTRACT.md`, `check-kit` et les tests du kit appartient à la mission d’intégration (P4).
+Le plan ne contient jamais de branche, d’agent, de run, de PR, de sélection, de chemin local ni d’identifiant de tâche interne. Les exemples sont génériques ; ils n’implémentent aucune mission réelle. Les cinq ressources de ce contrat (`PLANNING.md`, les deux schémas, les deux exemples) et l’outil `scripts/plan-missions.mjs` sont distribués avec le dossier par `lite create`/`lite adopt` (toute ressource du dossier canonique, via `manifest.json`) ; `check-kit` et les tests du kit vérifient que les exemples valident et que `ready` reproduit le rapport §5. Le renvoi depuis `SKILL.md`/`CONTRACT.md` suit la prochaine mise à jour de ces deux fichiers.
 
 ## 1. Interface de l’outil (implémentation : mission P2)
 
@@ -141,8 +141,10 @@ Rapport attendu de `ready` sur les deux exemples (code 0) :
 ```json
 {
   "command": "ready", "formatVersion": 1, "plan": { "id": "example-program", "revision": "2026-09-16" },
-  "valid": true, "errors": [], "warnings": [], "reliable": true,
-  "capacity": { "maxActiveRuns": 5, "origin": "configured", "source": "Plafond local décidé par l’orchestrateur ; aucun quota fournisseur vérifié", "observedAt": "2026-09-16T18:40:00Z", "providerQuotaVerified": false, "active": 1, "proposed": 4, "free": 0, "reviewBacklog": { "count": 2, "max": 3 } },
+  "valid": true, "errors": [], "warnings": [],
+  "summary": { "missions": 15, "byKind": { "dev": 14, "review": 1 }, "byStatus": { "active": 1, "closed": 1, "delivered": 2, "historical": 1, "integrated": 1, "pending": 9 } },
+  "reliable": true,
+  "capacity": { "maxActiveRuns": 5, "origin": "configured", "source": "Plafond local décidé par l’orchestrateur pour le périmètre example-program (dépôts kit et app) ; aucun quota fournisseur vérifié, le quota global du compte reste inconnu", "observedAt": "2026-09-16T18:40:00Z", "providerQuotaVerified": false, "active": 1, "proposed": 4, "free": 0, "reviewBacklog": { "count": 2, "max": 3 } },
   "active": [ { "mission": "B01", "kind": "dev", "runStatus": "UNKNOWN", "launch": "uncertain", "counted": true } ],
   "ready": [
     { "mission": "J01", "step": "integrate" }, { "mission": "Z00", "step": "publish" }, { "mission": "A01", "step": "resume" },
@@ -152,7 +154,7 @@ Rapport attendu de `ready` sur les deux exemples (code 0) :
     { "order": 1, "mission": "J01", "step": "integrate", "repo": "kit", "prUrl": "https://github.com/example/kit/pull/42", "headSha": "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d", "consumesCapacity": false },
     { "order": 2, "mission": "Z00", "step": "publish", "repo": "kit", "covers": ["Z00"], "consumesCapacity": false },
     { "order": 3, "mission": "A01", "step": "resume", "repo": "kit", "priority": 1, "agentId": "bc-example-a01", "selection": { "key": "fable", "modelId": "claude-fable-5-1", "params": [ { "id": "thinking", "value": "true" }, { "id": "context", "value": "300k" }, { "id": "effort", "value": "high" } ], "chosenAt": "2026-09-15T10:00:00Z" }, "reason": "Revue R01 : test négatif d’accès croisé org_id manquant", "consumesCapacity": true, "holds": { "paths": ["runtime/core/search/", "docs/SEARCH.md"], "resources": [] } },
-    { "order": 4, "mission": "C01", "step": "start", "repo": "kit", "priority": 1, "selection": null, "consumesCapacity": true, "holds": { "paths": ["template/app/search/"], "resources": [] } },
+    { "order": 4, "mission": "C01", "step": "start", "repo": "kit", "priority": 1, "selection": null, "consumesCapacity": true, "holds": { "paths": ["template/app/search/fixtures/"], "resources": [] } },
     { "order": 5, "mission": "D01", "step": "start", "repo": "kit", "priority": 2, "selection": null, "consumesCapacity": true, "holds": { "paths": ["runtime/core/records/"], "resources": [] } },
     { "order": 6, "mission": "G01", "step": "start", "repo": "kit", "priority": 3, "selection": null, "consumesCapacity": true, "holds": { "paths": ["CHANGELOG.md"], "resources": ["kit:version"] } }
   ],
@@ -220,7 +222,7 @@ Invariants : IDs de mission stables ; sélection par mission inchangée aux repr
 
 - **Fraîcheur** : pas d’option `--now` ; l’outil reste sans horloge, déterministe. L’orchestrateur réconcilie avant chaque cycle, recalcule après chaque mutation et est seul juge de la fraîcheur de `reconciledAt`.
 - **Emplacements** : plan public versionné à `docs/planning/plan.json` (dépôt de l’application ou du kit) ; état privé **hors dépôt**, à côté du registre `cursor-agents`, jamais commité.
-- **Distribution** : les cinq ressources (`PLANNING.md`, `planning-plan.schema.json`, `planning-state.schema.json`, `examples/planning-plan.json`, `examples/planning-state.json`) sont distribuées avec le dossier par `lite adopt`. Leur référencement depuis `SKILL.md`/`CONTRACT.md` et l’ajustement de `check-kit`, `bin/lite.mjs` et des tests du kit (liste des fichiers gérés) relèvent de l’intégration P4, pas de ce contrat.
+- **Distribution** : les cinq ressources (`PLANNING.md`, `planning-plan.schema.json`, `planning-state.schema.json`, `examples/planning-plan.json`, `examples/planning-state.json`) et `scripts/plan-missions.mjs` sont distribués avec le dossier par `lite create`/`lite adopt` ; `check-kit` et les tests du kit les vérifient (exemples valides, rapport §5 reproduit, copies exactes dans une application générée). Le référencement depuis `SKILL.md`/`CONTRACT.md` suit la prochaine mise à jour de ces fichiers.
 - **Réservations** : tenues jusqu’à l’intégration (ou clôture/annulation) ; aucune libération à `delivered`, aucune option par mission.
 - **Collisions** : chemins par dépôt (`mission.repo`), ressources sémantiques globales au plan.
 - **Historique** : `status:"historical"` avec le seul jalon prouvé ; aucun modèle, agent, run, place, réservation ni proposition inventés.

@@ -8,17 +8,21 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createApp, doctor, adopt, inspectOrchestration, orchestrationSources, orchestrationGenerated, renderDiscovery, skillFrontmatter, orchestrationDir, orchestrationManifest, orchestrationRule, orchestrationDiscovery } from '../bin/lite.mjs';
 
-// P3 — distribution et découverte du standard. Les ressources P1/P2 (PLANNING.md, schémas, exemples, plan-missions.mjs) ne sont pas
-// sur cette branche : les fichiers ci-dessous sont des FIXTURES de distribution, identifiées comme telles, qui n'implémentent aucun format.
+// P3 — distribution et découverte du standard, composé (P4) avec les vraies ressources P1 (PLANNING.md, schémas, exemples) et P2 (plan-missions.mjs).
+// Les fichiers `fixtures` ci-dessous simulent une ressource FUTURE ajoutée au dossier canonique : noms clairement fictifs, aucun format implémenté,
+// aucune collision avec une ressource réelle (la propriété testée est « ajouter un fichier suffit », pas le contenu).
 const root = fileURLToPath(new URL('../', import.meta.url));
-const FIXTURE_NOTE = 'FIXTURE P3 (test de distribution) — remplaçant provisoire sans valeur contractuelle ; les vrais fichiers P1/P2 remplaceront ce contenu.';
+const FIXTURE_NOTE = 'FIXTURE P3 (test de distribution) — ressource future simulée, sans valeur contractuelle.';
 const fixtures = {
-  'PLANNING.md': `# ${FIXTURE_NOTE}\n`,
-  'planning-plan.schema.json': JSON.stringify({ $comment: FIXTURE_NOTE }, null, 2) + '\n',
-  'examples/planning-plan.json': JSON.stringify({ $comment: FIXTURE_NOTE }, null, 2) + '\n',
-  'scripts/plan-missions.mjs': `// ${FIXTURE_NOTE}\nconsole.log(JSON.stringify({ fixture: 'P3', argv: process.argv.slice(2) }));\n`,
+  'FIXTURE-FUTURE.md': `# ${FIXTURE_NOTE}\n`,
+  'fixture-future.schema.json': JSON.stringify({ $comment: FIXTURE_NOTE }, null, 2) + '\n',
+  'examples/fixture-future.json': JSON.stringify({ $comment: FIXTURE_NOTE }, null, 2) + '\n',
+  'scripts/fixture-future.mjs': `// ${FIXTURE_NOTE}\nconsole.log(JSON.stringify({ fixture: 'P3', argv: process.argv.slice(2) }));\n`,
 };
 const fixturePaths = Object.keys(fixtures).map(f => `${orchestrationDir}/${f}`).sort();
+// Les cinq ressources du contrat de planification (P1) et l’outil (P2), réellement distribués depuis le dossier canonique.
+const planningResources = ['PLANNING.md', 'planning-plan.schema.json', 'planning-state.schema.json', 'examples/planning-plan.json', 'examples/planning-state.json'].map(f => `${orchestrationDir}/${f}`);
+const planTool = `${orchestrationDir}/scripts/plan-missions.mjs`;
 const PRIVATE = /bc-[0-9a-f]{8}-[0-9a-f]{4}|run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}|\/home\/|\/Users\/|[A-Z]:\\|key_[A-Za-z0-9]{20}|sk-[A-Za-z0-9]{20}/;
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const childEnv = { PATH: process.env.PATH };
@@ -68,11 +72,16 @@ test('the discovery file is derived from the canonical skill, lists every distri
   assert.ok(listed.includes(orchestrationManifest) && discovery.includes('adopt --app'), 'copie gérée, procédure de mise à jour indiquée');
   assert.doesNotMatch(discovery, PRIVATE);
   assert.ok((await orchestrationGenerated())[orchestrationDiscovery].equals(generated[orchestrationDiscovery]), 'rendu déterministe');
+  // Les ressources réelles P1/P2 sont classées dans la bonne section : références (contrat, schémas, exemples) et scripts (plan-missions).
+  const [references, scripts] = discovery.split('## Scripts distribués');
+  for (const path of planningResources) assert.ok(references.includes(`\`${path}\``), `référence : ${path}`);
+  assert.ok(scripts.includes(`\`node ${planTool}\``) && scripts.includes(`\`node ${orchestrationDir}/scripts/cursor-agents.mjs\``));
+  assert.ok(!scripts.includes(`\`${orchestrationDir}/PLANNING.md\``) && !references.includes(planTool));
   // Pure fonction : une ressource future (référence ou script) apparaît dans la bonne section sans autre code.
-  const future = renderDiscovery(canonical, [...Object.keys(sources), `${orchestrationDir}/PLANNING.md`, `${orchestrationDir}/examples/planning-plan.json`, `${orchestrationDir}/scripts/plan-missions.mjs`]);
-  const [references, scripts] = future.split('## Scripts distribués');
-  assert.ok(references.includes(`\`${orchestrationDir}/PLANNING.md\``) && references.includes(`\`${orchestrationDir}/examples/planning-plan.json\``));
-  assert.ok(scripts.includes(`\`node ${orchestrationDir}/scripts/plan-missions.mjs\``) && scripts.includes(`\`node ${orchestrationDir}/scripts/cursor-agents.mjs\``));
+  const future = renderDiscovery(canonical, [...Object.keys(sources), ...fixturePaths]);
+  const [futureReferences, futureScripts] = future.split('## Scripts distribués');
+  assert.ok(futureReferences.includes(`\`${orchestrationDir}/FIXTURE-FUTURE.md\``) && futureReferences.includes(`\`${orchestrationDir}/examples/fixture-future.json\``));
+  assert.ok(futureScripts.includes(`\`node ${orchestrationDir}/scripts/fixture-future.mjs\``) && !futureReferences.includes('fixture-future.mjs'));
   assert.throws(() => skillFrontmatter('---\nname: x\n---\nbody'), /description/);
   assert.throws(() => skillFrontmatter('pas de frontmatter'), /frontmatter/);
 });
@@ -88,7 +97,7 @@ test('a generated application resolves the skill through the documented Codex an
     assert.equal(codex[0].description, cursor[0].description);
     const discovery = await readFile(join(app, orchestrationDiscovery), 'utf8');
     const referenced = backticked(discovery).filter(p => p.startsWith('.cursor/'));
-    assert.ok(referenced.length >= 5);
+    for (const path of [...planningResources, planTool]) assert.ok(referenced.includes(path), `découverte : ${path}`);
     for (const path of referenced) { const info = await lstat(join(app, path)); assert.ok(info.isFile() && !info.isSymbolicLink(), `${path} doit être un vrai fichier de l’application`); }
     const manifest = JSON.parse(await readFile(join(app, orchestrationManifest), 'utf8'));
     assert.deepEqual(manifest.generated, { [orchestrationDiscovery]: sha(await readFile(join(app, orchestrationDiscovery))) });
@@ -225,12 +234,12 @@ test('a resource added to the canonical folder (P1 fixture) is distributed by cr
     }
     const discovery = await readFile(join(app, orchestrationDiscovery), 'utf8'), listed = backticked(discovery);
     for (const path of fixturePaths) assert.ok(listed.includes(path), `découverte : ${path}`);
-    assert.ok(listed.includes(`node ${orchestrationDir}/scripts/plan-missions.mjs`));
+    assert.ok(listed.includes(`node ${orchestrationDir}/scripts/fixture-future.mjs`) && listed.includes(`node ${planTool}`), 'le script fixture s’ajoute aux scripts réels, sans les remplacer');
     assert.equal(manifest.generated[orchestrationDiscovery], sha(discovery));
     assert.equal((await discoverSkills(app, '.agents/skills')).length, 1);
-    const run = spawnSync(process.execPath, [`${orchestrationDir}/scripts/plan-missions.mjs`, 'validate', '--plan', 'plan.json'], { encoding: 'utf8', cwd: app, env: childEnv });
+    const run = spawnSync(process.execPath, [`${orchestrationDir}/scripts/fixture-future.mjs`, 'validate', '--plan', 'plan.json'], { encoding: 'utf8', cwd: app, env: childEnv });
     assert.equal(run.status, 0, run.stderr); assert.deepEqual(JSON.parse(run.stdout), { fixture: 'P3', argv: ['validate', '--plan', 'plan.json'] });
-    assert.doesNotMatch(await readFile(join(kit, orchestrationDir, 'PLANNING.md'), 'utf8'), PRIVATE);
+    for (const path of [...planningResources, planTool]) assert.ok((await readFile(join(app, path))).equals(await readFile(join(root, path))), `ressource réelle intacte à côté de la fixture : ${path}`);
 
     // Application générée par le kit actuel : adopt depuis le kit enrichi ajoute exactement les nouvelles ressources et régénère la découverte.
     const existing = join(temp, 'app-existing');
@@ -259,5 +268,70 @@ test('a resource added to the canonical folder (P1 fixture) is distributed by cr
     assert.deepEqual(reversed.written, []); assert.deepEqual(reversed.writtenGenerated, [orchestrationDiscovery]);
     for (const [file, content] of Object.entries(fixtures)) assert.equal(await readFile(join(app, orchestrationDir, file), 'utf8'), content, 'ressource préservée');
     assert.equal((await adopt(app, true)).changed, false);
+  });
+});
+
+// P4 — recette composée : une application générée porte les cinq ressources P1 et l’outil P2 à l’octet ; le VRAI plan-missions distribué s’exécute
+// hors kit, depuis l’application, sur ses propres exemples et reproduit l’oracle §5 de sa copie de PLANNING.md ; les ressources de planification sont
+// gérées comme les autres (adoption idempotente, conflit local refusé sans écriture, règles et AGENTS.md de l’application intacts).
+// Preuve de découverte statique et d’exécution du script : ce n’est pas une invocation réelle par un client Codex ou Cursor.
+test('the real distributed plan-missions runs from a generated application on its own examples and reproduces the PLANNING oracle; planning resources are managed copies', async () => {
+  await withTemp('lite-dist-composed-', async (temp) => {
+    const app = join(temp, 'app');
+    await createApp({ out: app, spec: join(root, 'examples/services.json') });
+    const manifest = JSON.parse(await readFile(join(app, orchestrationManifest), 'utf8'));
+    for (const path of [...planningResources, planTool]) {
+      const copy = await readFile(join(app, path));
+      assert.ok(copy.equals(await readFile(join(root, path))), `copie exacte : ${path}`);
+      assert.equal(manifest.files[path], sha(copy), `empreinte du manifeste : ${path}`);
+    }
+    // Hors kit : seules les copies de l’application, sans bin/ ni runtime ; le script tourne depuis la racine du projet, en lecture seule, sans réseau.
+    const standalone = join(temp, 'standalone');
+    for (const dir of ['.cursor', '.agents']) await cp(join(app, dir), join(standalone, dir), { recursive: true });
+    const planFile = `${orchestrationDir}/examples/planning-plan.json`, stateFile = `${orchestrationDir}/examples/planning-state.json`;
+    const tool = (...args) => spawnSync(process.execPath, [planTool, ...args], { encoding: 'utf8', cwd: standalone, env: childEnv });
+    const before = await snapshot(standalone);
+    const validated = tool('validate', '--plan', planFile, '--state', stateFile);
+    assert.equal(validated.status, 0, validated.stderr); assert.equal(validated.stderr, '');
+    const validation = JSON.parse(validated.stdout);
+    assert.equal(validation.command, 'validate'); assert.equal(validation.valid, true); assert.deepEqual(validation.errors, []); assert.deepEqual(validation.warnings, []);
+    assert.deepEqual(validation.summary, { missions: 15, byKind: { dev: 14, review: 1 }, byStatus: { active: 1, closed: 1, delivered: 2, historical: 1, integrated: 1, pending: 9 } });
+    const ready = tool('ready', '--plan', planFile, '--state', stateFile);
+    assert.equal(ready.status, 0, ready.stderr); assert.equal(ready.stdout.trim().split('\n').length, 1);
+    const report = JSON.parse(ready.stdout);
+    const oracle = JSON.parse((await readFile(join(standalone, orchestrationDir, 'PLANNING.md'), 'utf8')).match(/```json\n([\s\S]*?)\n```/)[1]);
+    assert.deepEqual(report, oracle, 'le rapport du script distribué est exactement l’oracle §5 du contrat distribué');
+    assert.equal(report.reliable, true); assert.equal(report.proposals.length, 6); assert.deepEqual(report.proposals.map(p => `${p.mission}:${p.step}`), ['J01:integrate', 'Z00:publish', 'A01:resume', 'C01:start', 'D01:start', 'G01:start']);
+    const { maxActiveRuns, active, proposed, free, providerQuotaVerified, reviewBacklog } = report.capacity;
+    assert.deepEqual({ maxActiveRuns, active, proposed, free, providerQuotaVerified, reviewBacklog }, { maxActiveRuns: 5, active: 1, proposed: 4, free: 0, providerQuotaVerified: false, reviewBacklog: { count: 2, max: 3 } });
+    assert.equal(tool('ready', '--plan', planFile, '--state', stateFile).stdout, ready.stdout, 'déterministe');
+    const examplesState = JSON.parse(await readFile(join(standalone, stateFile), 'utf8'));
+    await writeFile(join(temp, 'null-capacity.json'), JSON.stringify({ ...examplesState, capacity: { ...examplesState.capacity, maxActiveRuns: null } }));
+    const unreliable = tool('ready', '--plan', planFile, '--state', join(temp, 'null-capacity.json'));
+    assert.equal(unreliable.status, 3); assert.equal(JSON.parse(unreliable.stdout).reliable, false); assert.deepEqual(JSON.parse(unreliable.stdout).proposals, []);
+    await writeFile(join(temp, 'foreign.json'), JSON.stringify({ ...examplesState, missions: { ...examplesState.missions, ZZZ: { status: 'pending' } } }));
+    const invalid = tool('validate', '--plan', planFile, '--state', join(temp, 'foreign.json'));
+    assert.equal(invalid.status, 2); assert.deepEqual(JSON.parse(invalid.stdout).errors.map(e => e.code), ['state_mission_unknown']);
+    assert.deepEqual(await snapshot(standalone), before, 'aucune écriture par l’outil');
+    assert.doesNotMatch(await readFile(join(standalone, orchestrationDir, 'PLANNING.md'), 'utf8'), PRIVATE);
+    assert.doesNotMatch(ready.stdout, PRIVATE);
+
+    // Ressources de planification gérées comme les autres : adoption idempotente, conflit local refusé sans écriture, règles de l’application intactes.
+    const localRule = '---\ndescription: règle métier locale\nalwaysApply: true\n---\nRègle métier.\n'; await writeFile(join(app, '.cursor/rules/metier.mdc'), localRule);
+    const localAgents = await readFile(join(app, 'AGENTS.md'), 'utf8');
+    const again = await adopt(app, true);
+    assert.equal(again.applied, false); assert.equal(again.changed, false); assert.equal(again.status, 'current');
+    const planningCopy = join(app, orchestrationDir, 'PLANNING.md'), original = await readFile(planningCopy, 'utf8');
+    await writeFile(planningCopy, original + '\nNote locale non autorisée.\n');
+    const conflict = await adopt(app);
+    assert.equal(conflict.status, 'conflict'); assert.deepEqual(conflict.conflicts, [`${orchestrationDir}/PLANNING.md`]);
+    const cursorBefore = await snapshot(join(app, '.cursor'));
+    await assert.rejects(adopt(app, true), /Conflit local sur \.cursor\/skills\/lite-orchestration\/PLANNING\.md.*Aucune modification effectuée/);
+    assert.deepEqual(await snapshot(join(app, '.cursor')), cursorBefore);
+    assert.deepEqual((await doctor(app)).orchestration.conflicts, [`${orchestrationDir}/PLANNING.md`]);
+    await writeFile(planningCopy, original);
+    assert.equal((await adopt(app, true)).changed, false);
+    assert.equal(await readFile(join(app, '.cursor/rules/metier.mdc'), 'utf8'), localRule); assert.equal(await readFile(join(app, 'AGENTS.md'), 'utf8'), localAgents);
+    assert.equal((await doctor(app)).orchestration.status, 'current');
   });
 });

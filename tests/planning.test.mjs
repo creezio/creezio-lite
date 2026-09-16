@@ -52,13 +52,14 @@ test('the two contract examples validate and ready reproduces the business oracl
   assert.deepEqual(v.report.summary, { missions: 15, byKind: { dev: 14, review: 1 }, byStatus: { active: 1, closed: 1, delivered: 2, historical: 1, integrated: 1, pending: 9 } });
   const oracle = JSON.parse((await readFile(join(skillDir, 'PLANNING.md'), 'utf8')).match(/```json\n([\s\S]*?)\n```/)[1]);
   const { code, report } = ready(p, s); assert.equal(code, exitCodes.ok);
-  // L’oracle est un extrait du contrat ; trois détails y sont recopiés en abrégé : le rapport doit refléter les fichiers d’exemple eux-mêmes.
-  assert.equal(report.capacity.source, s.capacity.source);
-  const c01 = report.proposals.find(x => x.mission === 'C01'); assert.deepEqual(c01.holds, { paths: p.missions.find(m => m.id === 'C01').reserves.paths, resources: [] });
+  // L’oracle du contrat est le rapport complet attendu sur les fichiers d’exemple : aucune retouche, aucune abréviation tolérée.
+  assert.deepEqual(report, oracle);
+  assert.equal(report.capacity.source, s.capacity.source, 'la provenance du plafond est celle de l’état, non abrégée');
+  assert.deepEqual(report.proposals.find(x => x.mission === 'C01').holds, { paths: ['template/app/search/fixtures/'], resources: [] });
   assert.deepEqual(report.summary, v.report.summary);
-  const actual = { ...report }; delete actual.summary;
-  const expected = structuredClone(oracle); expected.capacity.source = s.capacity.source; expected.proposals.find(x => x.mission === 'C01').holds.paths = c01.holds.paths;
-  assert.deepEqual(actual, expected);
+  assert.deepEqual(report.proposals.map(x => `${x.mission}:${x.step}`), ['J01:integrate', 'Z00:publish', 'A01:resume', 'C01:start', 'D01:start', 'G01:start']);
+  assert.deepEqual(report.blocked.map(b => b.mission), ['E01', 'F01', 'I01', 'K01']);
+  assert.deepEqual(Object.entries(report.missions).filter(([, m]) => m.outcome === 'waiting').map(([id]) => id), ['H01', 'L01']);
   assertEveryNonProposalExplained(report);
 });
 
