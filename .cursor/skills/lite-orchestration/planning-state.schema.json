@@ -151,6 +151,17 @@
         "chosenAt": { "$ref": "#/$defs/dateTime" }
       }
     },
+    "legacySelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "requestedAt", "evidence"],
+      "description": "Provenance d’un lot lancé avant le standard (POST de création sans champ model, ou sélection non relevée) : la sélection effective est inconnue et n’est jamais reconstituée — pas de modelId par défaut. Alternative exclusive à selection, admise seulement sur un jalon terminal prouvé (delivered, integrated, published pour dev ; delivered, closed pour review/investigation). Une mission ainsi documentée ne reçoit jamais start ni resume : toute correction est une mission corrective distincte avec sélection choisie à l’attribution.",
+      "properties": {
+        "reason": { "const": "model_omitted" },
+        "requestedAt": { "$ref": "#/$defs/dateTime", "description": "Instant de la requête de création (registre, réponse API ou réception), sans modèle." },
+        "evidence": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Preuve publique de la provenance : réception, PR, entrée de registre datée ; jamais un secret ni un nom de modèle supposé." }
+      }
+    },
     "missionState": {
       "type": "object",
       "additionalProperties": false,
@@ -162,6 +173,7 @@
         },
         "historical": { "$ref": "#/$defs/historical" },
         "selection": { "$ref": "#/$defs/selection" },
+        "legacySelection": { "$ref": "#/$defs/legacySelection" },
         "branch": { "$ref": "#/$defs/ref" },
         "base": { "$ref": "#/$defs/sha", "description": "SHA validé de départ (Base du brief)." },
         "agentId": { "$ref": "#/$defs/providerId" },
@@ -220,24 +232,30 @@
         },
         { "if": { "properties": { "status": { "const": "active" } } }, "then": { "required": ["selection", "branch", "base", "agentId", "launch", "assignedAt"] } },
         {
+          "if": { "properties": { "status": { "enum": ["delivered", "integrated", "published", "closed"] } } },
+          "then": { "oneOf": [{ "required": ["selection"] }, { "required": ["legacySelection"] }] },
+          "else": { "properties": { "legacySelection": false } }
+        },
+        {
           "if": { "properties": { "status": { "const": "delivered" } } },
           "then": {
-            "required": ["selection", "branch", "base", "agentId", "launch", "runStatus", "prUrl", "headSha", "assignedAt", "deliveredAt"],
+            "required": ["branch", "base", "agentId", "launch", "runStatus", "prUrl", "headSha", "assignedAt", "deliveredAt"],
             "properties": {
               "launch": { "enum": ["launched", "reconciled"] },
               "runStatus": { "$ref": "#/$defs/terminalRunStatus" }
             }
           }
         },
-        { "if": { "properties": { "status": { "const": "integrated" } } }, "then": { "required": ["selection", "prUrl", "headSha", "deliveredAt", "integratedAt"] } },
-        { "if": { "properties": { "status": { "const": "published" } } }, "then": { "required": ["selection", "prUrl", "headSha", "integratedAt", "publishedAt"] } },
-        { "if": { "properties": { "status": { "const": "closed" } } }, "then": { "required": ["selection", "deliveredAt", "closedAt"] } },
+        { "if": { "properties": { "status": { "const": "integrated" } } }, "then": { "required": ["prUrl", "headSha", "deliveredAt", "integratedAt"] } },
+        { "if": { "properties": { "status": { "const": "published" } } }, "then": { "required": ["prUrl", "headSha", "integratedAt", "publishedAt"] } },
+        { "if": { "properties": { "status": { "const": "closed" } } }, "then": { "required": ["deliveredAt", "closedAt"] } },
         {
           "if": { "properties": { "status": { "const": "historical" } } },
           "then": {
             "required": ["historical"],
             "properties": {
               "selection": false,
+              "legacySelection": false,
               "agentId": false,
               "runId": false,
               "runStatus": false,

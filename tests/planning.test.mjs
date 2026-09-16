@@ -289,6 +289,69 @@ test('state invariants: pending never carries an uncertain, launched or historic
   assert.equal(cancelledClean.code, exitCodes.ok); assert.equal(cancelledClean.report.missions.A.outcome, 'cancelled');
 });
 
+test('legacySelection (model omitted) documents a delivered lot without inventing a model: integrate and publish proposed, holds and backlog kept, no place, never resume', () => {
+  const LEGACY = { reason: 'model_omitted', requestedAt: '2026-09-14T09:00:00Z', evidence: 'https://github.com/example/kit/pull/12#reception : création sans champ model avant le standard' };
+  const legacy = (id, status, extra = {}) => { const entry = engaged(id, status, { legacySelection: LEGACY, ...extra }); delete entry.selection; return entry; };
+  const p = plan([mission('L', { priority: 1, reserves: { paths: ['legacy/'], resources: ['kit:version'] } }), mission('N', { priority: 2, reserves: { paths: ['legacy/x.ts'] } }), mission('K', { priority: 3, reserves: { resources: ['kit:version'] } }), mission('F', { priority: 4 }), mission('RV', { kind: 'review' })]);
+  // delivered sans correction : intégration proposée, réservations tenues, backlog compté, aucune place, cycle fiable, aucun modelId dans le rapport.
+  const delivered = ready(p, state({ L: legacy('L', 'delivered') }, { capacity: { ...state().capacity, maxActiveRuns: 1, maxReviewBacklog: 1 } }));
+  assert.equal(delivered.code, exitCodes.ok); assert.deepEqual(delivered.report.errors, []); assert.equal(delivered.report.reliable, true);
+  assert.deepEqual(proposedSteps(delivered.report), ['L:integrate', 'RV:start']);
+  assert.deepEqual(delivered.report.missions.L, { status: 'delivered', outcome: 'proposed', step: 'integrate', reasons: [] });
+  assert.deepEqual(delivered.report.missions.N.reasons, [{ code: 'reservation_conflict', with: 'L', path: 'legacy/', holderStatus: 'delivered' }]);
+  assert.deepEqual(delivered.report.missions.K.reasons, [{ code: 'reservation_conflict', with: 'L', resource: 'kit:version', holderStatus: 'delivered' }]);
+  assert.deepEqual(delivered.report.missions.F.reasons, [{ code: 'review_backlog_full' }], 'le lot legacy compte dans le backlog de revue jusqu’à sa fusion');
+  assert.deepEqual(delivered.report.capacity.reviewBacklog, { count: 1, max: 1 }); assert.equal(delivered.report.capacity.active, 0); assert.deepEqual(delivered.report.active, []);
+  assert.equal(JSON.stringify(delivered.report).includes('modelId'), false, 'aucun modèle reconstitué');
+  assert.equal(JSON.stringify(delivered.report).includes('claude-fable-5-1'), false);
+  assertEveryNonProposalExplained(delivered.report);
+  // Correction demandée : resume refusé localement (selection_unknown), sans pause, aucune sélection proposée ; l’intégration reste retenue.
+  const correction = { requested: true, reason: 'Revue : écart à corriger', at: T };
+  const corrected = ready(p, state({ L: legacy('L', 'delivered', { correction }) }, { capacity: { ...state().capacity, maxActiveRuns: 9 } }));
+  assert.equal(corrected.code, exitCodes.ok);
+  assert.deepEqual(corrected.report.missions.L, { status: 'delivered', outcome: 'blocked', step: 'resume', reasons: [{ code: 'correction_pending', step: 'integrate' }, { code: 'selection_unknown', provenance: 'model_omitted', nextAction: 'corrective_mission' }] });
+  assert.ok(!corrected.report.proposals.some(x => x.mission === 'L')); assert.deepEqual(corrected.report.blocked.find(b => b.mission === 'L').reasons.map(r => r.code), ['selection_unknown']);
+  assert.deepEqual(corrected.report.missions.N.reasons[0].code, 'reservation_conflict', 'réservations toujours tenues pendant la correction');
+  assertEveryNonProposalExplained(corrected.report);
+  // Progression terminale légitime : integrated ⇒ publish proposé sans sélection ; published / closed ⇒ done.
+  const integrated = ready(p, state({ L: legacy('L', 'integrated') })).report;
+  assert.deepEqual(integrated.missions.L, { status: 'integrated', outcome: 'proposed', step: 'publish', reasons: [] }); assert.deepEqual(integrated.proposals[0], { order: 1, mission: 'L', step: 'publish', repo: 'kit', covers: ['L'], consumesCapacity: false });
+  assert.equal(integrated.missions.N.outcome, 'proposed', 'réservations libérées à l’intégration');
+  assert.equal(ready(p, state({ L: legacy('L', 'published') })).report.missions.L.outcome, 'done');
+  const closedReview = legacy('RV', 'closed'); const closed = ready(p, state({ RV: closedReview }));
+  assert.equal(closed.code, exitCodes.ok); assert.equal(closed.report.missions.RV.outcome, 'done');
+  // Schéma : exclusivité, aucune provenance ⇒ invalide (jamais un modelId par défaut), statuts non terminaux refusés, reason fermée, champs requis.
+  const invalid = (entry, label) => { const r = ready(p, state({ L: entry })); assert.equal(r.code, exitCodes.invalid, label); assert.equal(r.report.errors[0].code, 'schema_invalid', label); assert.equal(r.report.errors[0].file, 'state'); assert.deepEqual(r.report.proposals, []); return r.report.errors; };
+  invalid(engaged('L', 'delivered', { legacySelection: LEGACY }), 'selection et legacySelection ensemble');
+  const none = engaged('L', 'delivered'); delete none.selection; invalid(none, 'delivered sans aucune provenance');
+  const noneIntegrated = engaged('L', 'integrated'); delete noneIntegrated.selection; invalid(noneIntegrated, 'integrated sans aucune provenance');
+  const legacyActive = engaged('L', 'active', { legacySelection: LEGACY }); delete legacyActive.selection; invalid(legacyActive, 'active avec legacySelection');
+  invalid(engaged('L', 'active', { legacySelection: LEGACY }), 'active avec les deux');
+  invalid({ status: 'pending', legacySelection: LEGACY }, 'pending avec legacySelection');
+  invalid({ status: 'historical', historical: { step: 'integrated', evidence: 'e', at: T }, legacySelection: LEGACY }, 'historical avec legacySelection');
+  invalid(legacy('L', 'delivered', { legacySelection: { ...LEGACY, reason: 'unknown' } }), 'reason hors model_omitted');
+  invalid(legacy('L', 'delivered', { legacySelection: { reason: 'model_omitted', requestedAt: LEGACY.requestedAt } }), 'evidence requise');
+  invalid(legacy('L', 'delivered', { legacySelection: { ...LEGACY, modelId: 'claude-fable-5-1' } }), 'aucun modelId dans la provenance legacy');
+  invalid(legacy('L', 'delivered', { launch: 'uncertain' }), 'delivered legacy exige un lancement réconcilié');
+  invalid(legacy('L', 'delivered', { runStatus: 'RUNNING' }), 'delivered legacy exige un run terminal');
+  const legacyReview = ready(plan([mission('R', { kind: 'review' })]), state({ R: legacy('R', 'integrated') }));
+  assert.ok(legacyReview.report.errors.some(e => e.code === 'state_inconsistent' && e.field === 'status'), 'selon kind : integrated sur review reste incohérent avec une provenance legacy');
+});
+
+test('an active mission whose last run is already terminal stays counted and held but is labelled run_terminal_unreconciled, never run_active', () => {
+  const p = plan([mission('A', { reserves: { paths: ['a/'] } }), mission('B', { reserves: { paths: ['a/b.ts'] } })]);
+  for (const runStatus of ['FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED']) {
+    const r = ready(p, state({ A: engaged('A', 'active', { runStatus }) }));
+    assert.equal(r.code, exitCodes.ok, runStatus);
+    assert.deepEqual(r.report.missions.A, { status: 'active', outcome: 'active', step: null, reasons: [{ code: 'run_terminal_unreconciled', runStatus, nextAction: 'reconcile' }] });
+    assert.deepEqual(r.report.active, [{ mission: 'A', kind: 'dev', runStatus, launch: 'launched', counted: true }]); assert.equal(r.report.capacity.active, 1);
+    assert.deepEqual(r.report.missions.B.reasons, [{ code: 'reservation_conflict', with: 'A', path: 'a/', holderStatus: 'active' }]);
+  }
+  for (const runStatus of ['CREATING', 'RUNNING']) assert.deepEqual(ready(p, state({ A: engaged('A', 'active', { runStatus }) })).report.missions.A.reasons, [{ code: 'run_active', runStatus }]);
+  const uncertainTerminal = ready(p, state({ A: engaged('A', 'active', { runStatus: 'FINISHED', launch: 'uncertain', runId: null }) })).report;
+  assert.deepEqual(uncertainTerminal.missions.A.reasons, [{ code: 'launch_uncertain', nextAction: 'reconcile' }], 'l’incertitude du POST prime sur le statut du run lu');
+});
+
 test('active missions count, hold and are never relaunched; an uncertain POST asks for reconcile; observed runs raise the count to the maximum', () => {
   const p = plan([mission('A', { priority: 1, reserves: { paths: ['a/'] } }), mission('B', { priority: 2, reserves: { paths: ['a/x.ts'] } }), mission('C', { priority: 3 }), mission('D', { priority: 4 })]);
   const uncertain = { status: 'active', selection: SELECTION, branch: 'agents/a', base: SHA('1'), agentId: 'bc-test-a', runId: null, runStatus: 'UNKNOWN', launch: 'uncertain', assignedAt: T };

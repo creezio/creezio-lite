@@ -199,13 +199,23 @@ export function decide(plan, state) {
   const active = []; const report = {}; const candidates = [];
   for (const mission of missions) {
     const entry = entryOf(mission.id); const { status } = entry; const base = { status, mission, entry };
-    if (status === 'active') { const uncertain = ['pending', 'uncertain'].includes(entry.launch); active.push({ mission: mission.id, kind: mission.kind, runStatus: entry.runStatus ?? null, launch: entry.launch, counted: true }); report[mission.id] = { status, outcome: 'active', step: null, reasons: [uncertain ? { code: 'launch_uncertain', nextAction: 'reconcile' } : { code: 'run_active', runStatus: entry.runStatus ?? null }] }; continue; }
+    if (status === 'active') {
+      // Toujours comptée et réservée. Libellé honnête : POST incertain ⇒ launch_uncertain ; run déjà terminal mais non reclassé ⇒ run_terminal_unreconciled (jamais « run_active ») ; sinon run_active.
+      const uncertain = ['pending', 'uncertain'].includes(entry.launch); const runStatus = entry.runStatus ?? null;
+      active.push({ mission: mission.id, kind: mission.kind, runStatus, launch: entry.launch, counted: true });
+      const reason = uncertain ? { code: 'launch_uncertain', nextAction: 'reconcile' } : TERMINAL_RUN.has(runStatus) ? { code: 'run_terminal_unreconciled', runStatus, nextAction: 'reconcile' } : { code: 'run_active', runStatus };
+      report[mission.id] = { status, outcome: 'active', step: null, reasons: [reason] }; continue;
+    }
     if (status === 'cancelled') { report[mission.id] = { status, outcome: 'cancelled', step: null, reasons: [] }; continue; }
     if (status === 'unknown') { report[mission.id] = { status, outcome: 'unknown', step: null, reasons: [{ code: 'status_unknown' }] }; continue; }
     if (['published', 'closed', 'historical'].includes(status) || (status === 'delivered' && mission.kind !== 'dev' && !entry.correction?.requested)) { report[mission.id] = { status, outcome: 'done', step: null, reasons: [] }; continue; }
     let step, blocking, context = [];
     if (status === 'pending') { step = 'start'; blocking = [...dependencyReasons(mission.dependencies.start ?? []), ...pauseReasons(mission, state.pauses), ...collisions(mission, holds)]; }
-    else if (status === 'delivered' && entry.correction?.requested) { step = 'resume'; context = [{ code: 'correction_pending', step: 'integrate' }]; blocking = [...pauseReasons(mission, state.pauses), ...(TERMINAL_RUN.has(entry.runStatus) ? [] : [{ code: 'run_active', runStatus: entry.runStatus ?? null }])]; }
+    else if (status === 'delivered' && entry.correction?.requested) {
+      // Reprise seulement avec la sélection choisie à l’attribution : une provenance legacySelection (modèle omis) n’autorise ni resume ni modèle inventé — mission corrective distincte.
+      step = 'resume'; context = [{ code: 'correction_pending', step: 'integrate' }];
+      blocking = [...(own(entry, 'selection') ? [] : [{ code: 'selection_unknown', provenance: entry.legacySelection?.reason ?? null, nextAction: 'corrective_mission' }]), ...pauseReasons(mission, state.pauses), ...(TERMINAL_RUN.has(entry.runStatus) ? [] : [{ code: 'run_active', runStatus: entry.runStatus ?? null }])];
+    }
     else if (status === 'delivered') { step = 'integrate'; blocking = dependencyReasons(mission.dependencies.integrate ?? []); }
     else { step = 'publish'; blocking = dependencyReasons(mission.dependencies.publish ?? []); }
     if (blocking.length) { report[mission.id] = { status, outcome: 'blocked', step, reasons: [...context, ...blocking] }; candidates.push({ ...base, step, outcome: 'blocked', blocking }); continue; }
