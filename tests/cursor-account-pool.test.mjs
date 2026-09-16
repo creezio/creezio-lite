@@ -110,29 +110,61 @@ test('credentials: resolved from CURSOR_CREDENTIALS_FILE then LOCALAPPDATA, pars
   await assert.rejects(pool.loadCredentials({}), error => error.code === 'credentials_missing');
 });
 
-test('dpapi decryptor: SecureString hex by stdin, ConvertTo-SecureString (DPAPI CurrentUser) then clear text by stdout, never by argv; refused outside Windows (mocks do not prove DPAPI)', async () => {
+test('dpapi decryptor: SecureString hex by stdin ($input first: the -Command host consumes stdin), ConvertTo-SecureString (DPAPI CurrentUser), raw UTF-8 bytes by stdout, -EncodedCommand (no argv quoting), one constant stage per exit code, never a secret; refused outside Windows (mocks do not prove DPAPI)', async () => {
   await assert.rejects(pool.dpapiUnprotectCurrentUser(BLOB_A, { platform: 'linux' }), error => error.code === 'dpapi_unavailable');
   assert.ok(pool.isSecureStringHex(BLOB_A) && BLOB_A.length === 716, 'fixture de même forme que le coffre réel');
   assert.ok(!pool.isSecureStringHex(Buffer.from('x').toString('base64')) && !pool.isSecureStringHex('abc') && !pool.isSecureStringHex(BLOB_A + 'g'));
   let spawnedBad = 0;
-  await assert.rejects(pool.dpapiUnprotectCurrentUser('not-hex', { platform: 'win32', spawnImpl: () => { spawnedBad++; throw new Error('should not spawn'); } }), error => error.code === 'credentials_invalid');
+  await assert.rejects(pool.dpapiUnprotectCurrentUser('not-hex', { platform: 'win32', spawnImpl: () => { spawnedBad++; throw new Error('should not spawn'); } }), error => error.code === 'credentials_invalid' && error.stage === 'precheck');
   assert.equal(spawnedBad, 0, 'aucun déchiffreur lancé pour une chaîne non hexadécimale');
-  assert.match(pool.dpapiPowershellScript, /ConvertTo-SecureString -String \$hex/); assert.doesNotMatch(pool.dpapiPowershellScript, /-Key|-SecureKey|FromBase64String|ProtectedData/, 'DPAPI CurrentUser implicite, format SecureString, pas de blob base64');
-  assert.match(pool.dpapiPowershellScript, /NetworkCredential\]::new\('',\$secure\)\.Password/); assert.match(pool.dpapiPowershellScript, /OutputEncoding=\[Text\.Encoding\]::UTF8/); assert.match(pool.dpapiPowershellScript, /\[Console\]::In\.ReadToEnd\(\)/);
+  const script = pool.dpapiPowershellScript;
+  assert.match(script, /ConvertTo-SecureString -String \$hex/); assert.doesNotMatch(script, /-Key|-SecureKey|FromBase64String|ProtectedData/, 'DPAPI CurrentUser implicite, format SecureString, pas de blob base64');
+  assert.match(script, /New-Object System\.Net\.NetworkCredential\('',\$secure\)\)\.Password/); assert.match(script, /@\(\$input\)/, 'l’hôte -Command consomme stdin dans $input : lue en premier');
+  assert.match(script, /\[Console\]::In\.ReadToEnd\(\)/); assert.match(script, /OpenStandardInput\(\)/); assert.match(script, /OpenStandardOutput\(\)/);
+  assert.doesNotMatch(script, /OutputEncoding/, 'jamais [Console]::OutputEncoding : « The handle is invalid » sans console visible'); assert.doesNotMatch(script, /Write-Host|Write-Error|Write-Output|Console\]::Out\.Write/, 'rien d’autre que les octets du clair sur stdout');
+  for (const [code, stage] of [[3, 'stdin_empty'], [4, 'stdin_format'], [5, 'dpapi_unprotect'], [6, 'extract'], [7, 'stdout_write']]) { assert.ok(script.includes(`exit ${code}`)); assert.equal(pool.dpapiExitStages[code], stage); }
+  assert.equal(Buffer.from(pool.dpapiEncodedCommand, 'base64').toString('utf16le'), script, '-EncodedCommand : UTF-16LE en base64');
+  assert.deepEqual([...pool.dpapiPowershellArgs], ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-InputFormat', 'Text', '-OutputFormat', 'Text', '-EncodedCommand', pool.dpapiEncodedCommand]);
   const spawned = [];
-  const fakeSpawn = (exitCode, output) => (command, args, options) => {
+  const fakeSpawn = (exitCode, output, { stderr = '', error = false } = {}) => (command, args, options) => {
     const child = new EventEmitter(); child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.kill = () => {};
-    const written = []; child.stdin.on('data', chunk => written.push(chunk)); child.stdin.on('finish', () => { spawned.push({ command, args, options, stdin: Buffer.concat(written).toString('utf8') }); if (output) child.stdout.write(output); child.stdout.end(); setImmediate(() => child.emit('close', exitCode)); });
+    const written = []; child.stdin.on('data', chunk => written.push(chunk));
+    child.stdin.on('finish', () => { spawned.push({ command, args, options, stdin: Buffer.concat(written).toString('utf8') }); if (error) return child.emit('error', new Error('ENOENT')); if (stderr) child.stderr.write(stderr); child.stderr.end(); if (output) child.stdout.write(output); child.stdout.end(); setImmediate(() => child.emit('close', exitCode)); });
     return child;
   };
   const clear = await pool.dpapiUnprotectCurrentUser(BLOB_A, { platform: 'win32', spawnImpl: fakeSpawn(0, KEY_A) });
   assert.equal(clear, KEY_A);
   assert.equal(spawned[0].command, 'powershell.exe'); assert.equal(spawned[0].stdin, BLOB_A); assert.ok(spawned[0].args.every(a => !a.includes(BLOB_A) && !a.includes(KEY_A)), 'aucun secret ni blob sur la ligne de commande');
-  assert.deepEqual(spawned[0].options.stdio, ['pipe', 'pipe', 'pipe']); assert.deepEqual(spawned[0].args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']); assert.equal(spawned[0].args[3], pool.dpapiPowershellScript);
-  let failure; try { await pool.dpapiUnprotectCurrentUser(BLOB_A, { platform: 'win32', spawnImpl: fakeSpawn(1, '') }); } catch (error) { failure = error; }
-  assert.equal(failure.code, 'decrypt_failed'); assertNoSecret(failure); assert.match(failure.message, /autre utilisateur|altérée|session/);
-  let rejected; try { await pool.dpapiUnprotectCurrentUser(BLOB_A, { platform: 'win32', spawnImpl: fakeSpawn(3, '') }); } catch (error) { rejected = error; }
-  assert.equal(rejected.code, 'decrypt_failed'); assert.match(rejected.message, /format/); assertNoSecret(rejected);
+  assert.deepEqual(spawned[0].options.stdio, ['pipe', 'pipe', 'pipe']); assert.equal(spawned[0].options.windowsHide, true); assert.deepEqual(spawned[0].args, [...pool.dpapiPowershellArgs]);
+  const failing = async spawnImpl => { try { await pool.dpapiUnprotectCurrentUser(BLOB_A, { platform: 'win32', spawnImpl }); } catch (error) { return error; } throw new Error('attendu : échec'); };
+  const generic = await failing(fakeSpawn(1, '', { stderr: `Exception ${KEY_A} ${BLOB_A}` }));
+  assert.equal(generic.code, 'decrypt_failed'); assert.equal(generic.stage, 'powershell_exit'); assert.equal(generic.exitCode, 1); assert.ok(generic.stderrBytes > 0); assertNoSecret(generic); assert.ok(!JSON.stringify({ ...generic, message: generic.message }).includes(BLOB_A), 'stderr jamais recopiée');
+  for (const [code, stage, pattern] of [[3, 'stdin_empty', /aucune donnée/], [4, 'stdin_format', /non hexadécimales/], [5, 'dpapi_unprotect', /ConvertTo-SecureString a refusé/], [6, 'extract', /Extraction/], [7, 'stdout_write', /Écriture/]]) {
+    const error = await failing(fakeSpawn(code, '')); assert.equal(error.code, 'decrypt_failed'); assert.equal(error.stage, stage); assert.equal(error.exitCode, code); assert.match(error.message, pattern); assertNoSecret(error);
+  }
+  const missing = await failing(fakeSpawn(0, '', { error: true })); assert.equal(missing.stage, 'spawn'); assert.match(missing.message, /powershell\.exe/);
+  const slow = await (async () => { try { await pool.dpapiUnprotectCurrentUser(BLOB_A, { platform: 'win32', timeoutMs: 20, spawnImpl: () => { const child = new EventEmitter(); child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.kill = () => {}; return child; } }); } catch (error) { return error; } })();
+  assert.equal(slow.stage, 'timeout'); assert.equal(slow.code, 'decrypt_failed');
+  // Recette sans secret : hors Windows, refus constant ; avec un PowerShell simulé, fixture publique → déchiffreur → comparaison, étapes nommées, aucun secret.
+  assert.deepEqual((await pool.dpapiSelfTest({ platform: 'linux' })).stage, 'platform');
+  const marker = pool.dpapiSelfTestMarker; const fixtureHex = fakeSecureHex('selftest-fixture');
+  const simulated = (behaviour) => (command, args, options) => {
+    const child = new EventEmitter(); child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.kill = () => {};
+    const isFixture = options.stdio[0] === 'ignore';
+    const run = () => { const [code, output] = behaviour(isFixture); if (output) child.stdout.write(output); child.stdout.end(); setImmediate(() => child.emit('close', code)); };
+    if (isFixture) setImmediate(run); else { const written = []; child.stdin.on('data', c => written.push(c)); child.stdin.on('finish', () => { assert.equal(Buffer.concat(written).toString(), fixtureHex); run(); }); }
+    return child;
+  };
+  const good = await pool.dpapiSelfTest({ platform: 'win32', spawnImpl: simulated(isFixture => (isFixture ? [0, fixtureHex] : [0, marker])) });
+  assert.equal(good.status, 'ok'); assert.deepEqual(good.stages.map(s => s.stage), ['fixture', 'precheck', 'decrypt']); assertNoSecret(good);
+  const badDecrypt = await pool.dpapiSelfTest({ platform: 'win32', spawnImpl: simulated(isFixture => (isFixture ? [0, fixtureHex] : [5, ''])) });
+  assert.equal(badDecrypt.status, 'unavailable'); assert.equal(badDecrypt.stage, 'dpapi_unprotect'); assert.equal(badDecrypt.exitCode, 5);
+  const wrongClear = await pool.dpapiSelfTest({ platform: 'win32', spawnImpl: simulated(isFixture => (isFixture ? [0, fixtureHex] : [0, 'other'])) });
+  assert.equal(wrongClear.stage, 'compare'); assert.equal(wrongClear.clearLength, 5); assert.ok(!JSON.stringify(wrongClear).includes('other'), 'le clair restitué n’est jamais rapporté');
+  const noFixture = await pool.dpapiSelfTest({ platform: 'win32', spawnImpl: simulated(isFixture => (isFixture ? [1, ''] : [0, marker])) });
+  assert.equal(noFixture.stage, 'fixture_exit'); assert.equal(noFixture.exitCode, 1);
+  const lines = []; const code = await pool.poolCli(['selftest'], { platform: 'linux', log: l => lines.push(l) });
+  assert.equal(code, 3); assert.equal(JSON.parse(lines[0]).stage, 'platform');
 });
 
 test('pool state: created once from the vault, unknown fields/accounts/order preserved, revision monotonic, concurrent edits and foreign locks refused', async () => {

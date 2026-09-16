@@ -6,6 +6,7 @@
 import { readFile, writeFile, rename, open, unlink } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export class PoolError extends Error { constructor(code, message, extra = {}) { super(message); this.name = 'PoolError'; this.code = code; Object.assign(this, extra); } }
 
@@ -55,24 +56,85 @@ export function parseCredentials(raw) {
 }
 
 // Déchiffrement DPAPI CurrentUser par PowerShell : la chaîne SecureString hexadécimale (sortie de ConvertFrom-SecureString) arrive par l’entrée standard,
-// ConvertTo-SecureString sans -Key la déchiffre pour l’utilisateur courant, le texte clair sort par la sortie standard en UTF-8. Rien sur la ligne de commande,
-// rien dans les erreurs (stderr ignorée). Windows uniquement ; les mocks Linux ne prouvent pas DPAPI.
-export const dpapiPowershellScript = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; $hex=[Console]::In.ReadToEnd().Trim(); if($hex -notmatch '^(?:[0-9A-Fa-f]{2})+$'){exit 3}; $secure=ConvertTo-SecureString -String $hex; $clear=[System.Net.NetworkCredential]::new('',$secure).Password; [Console]::Out.Write($clear)";
+// ConvertTo-SecureString sans -Key la déchiffre pour l’utilisateur courant, le texte clair sort en octets UTF-8 bruts par la sortie standard.
+// Invocation durcie après la recette Windows échouée (cfde3a7) : (1) avec -Command et une entrée redirigée, l’hôte Windows PowerShell consomme lui-même stdin pour
+// alimenter $input, donc [Console]::In.ReadToEnd() rend une chaîne vide ⇒ on lit $input d’abord, puis Console.In, puis le flux brut ; (2) [Console]::OutputEncoding=…
+// lève « The handle is invalid » quand l’enfant n’a pas de console visible ⇒ on n’y touche plus et on écrit les octets directement ; (3) le script passe par
+// -EncodedCommand (aucune citation de ligne de commande à interpréter). Chaque étape a son code de sortie : rien d’autre que le clair ne sort sur stdout,
+// stderr est ignorée, aucune donnée dans les erreurs. Windows uniquement ; les mocks Linux ne prouvent pas DPAPI.
+export const dpapiExitStages = Object.freeze({ 3: 'stdin_empty', 4: 'stdin_format', 5: 'dpapi_unprotect', 6: 'extract', 7: 'stdout_write' });
+export const dpapiPowershellScript = [
+  "$ErrorActionPreference='Stop'",
+  "$hex=''",
+  "try { $hex=(@($input) | ForEach-Object { [string]$_ }) -join '' } catch { $hex='' }",
+  "if (-not $hex) { try { $hex=[Console]::In.ReadToEnd() } catch { $hex='' } }",
+  "if (-not $hex) { try { $s=[Console]::OpenStandardInput(); $ms=New-Object System.IO.MemoryStream; $s.CopyTo($ms); $hex=[System.Text.Encoding]::ASCII.GetString($ms.ToArray()) } catch { $hex='' } }",
+  "$hex=($hex -replace '\\s','')",
+  'if (-not $hex) { exit 3 }',
+  "if ($hex -notmatch '^(?:[0-9A-Fa-f]{2})+$') { exit 4 }",
+  'try { $secure=ConvertTo-SecureString -String $hex } catch { exit 5 }',
+  "try { $clear=(New-Object System.Net.NetworkCredential('',$secure)).Password } catch { exit 6 }",
+  'try { $bytes=[System.Text.Encoding]::UTF8.GetBytes($clear); $out=[Console]::OpenStandardOutput(); $out.Write($bytes,0,$bytes.Length); $out.Flush() } catch { exit 7 }',
+  'exit 0',
+].join('\n');
+export const dpapiEncodedCommand = Buffer.from(dpapiPowershellScript, 'utf16le').toString('base64');
+export const dpapiPowershellArgs = Object.freeze(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-InputFormat', 'Text', '-OutputFormat', 'Text', '-EncodedCommand', dpapiEncodedCommand]);
+// Exécute le déchiffreur sur une chaîne hexadécimale ; erreurs constantes par étape (stage), sans contenu : spawn, timeout, stdin_empty, stdin_format, dpapi_unprotect, extract, stdout_write, powershell_exit.
+export function runDpapiChild(hex, { spawnImpl = spawn, timeoutMs = 15_000 } = {}) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawnImpl('powershell.exe', [...dpapiPowershellArgs], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const out = []; let stderrBytes = 0; let failed = false;
+    const fail = (code, message, extra) => { if (failed) return; failed = true; clearTimeout(timer); reject(new PoolError(code, message, extra)); };
+    const timer = setTimeout(() => { try { child.kill(); } catch { /* déjà terminé */ } fail('decrypt_failed', 'Déchiffrement DPAPI interrompu (délai).', { stage: 'timeout' }); }, timeoutMs);
+    child.on('error', () => fail('decrypt_failed', 'Déchiffreur DPAPI introuvable ou non exécutable (powershell.exe).', { stage: 'spawn' }));
+    child.stdout.on('data', chunk => out.push(chunk));
+    child.stderr.on('data', chunk => { stderrBytes += chunk.length; });
+    child.on('close', code => {
+      clearTimeout(timer); if (failed) return;
+      if (code === 0) return resolvePromise({ clear: Buffer.concat(out).toString('utf8'), stderrBytes });
+      const stage = dpapiExitStages[code] ?? 'powershell_exit';
+      const messages = { stdin_empty: 'Le déchiffreur n’a reçu aucune donnée sur son entrée standard.', stdin_format: 'Données reçues par le déchiffreur non hexadécimales (encodage ou transport altéré).', dpapi_unprotect: 'ConvertTo-SecureString a refusé la chaîne (autre utilisateur, autre session, chaîne altérée ou protection non DPAPI).', extract: 'Extraction du clair depuis la SecureString impossible.', stdout_write: 'Écriture du clair vers le tube impossible.', powershell_exit: 'PowerShell s’est terminé avec un code inattendu.' };
+      fail('decrypt_failed', messages[stage], { stage, exitCode: code, stderrBytes });
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(hex, 'ascii');
+  });
+}
 export async function dpapiUnprotectCurrentUser(secretDpapi, { platform = process.platform, spawnImpl = spawn, timeoutMs = 15_000 } = {}) {
   if (platform !== 'win32') throw new PoolError('dpapi_unavailable', 'Déchiffrement DPAPI disponible seulement sous Windows (session de l’utilisateur courant).');
-  if (!isSecureStringHex(secretDpapi)) throw new PoolError('credentials_invalid', 'Chaîne SecureString hexadécimale attendue ; aucun déchiffreur lancé.');
-  return new Promise((resolvePromise, reject) => {
-    const child = spawnImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', dpapiPowershellScript], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-    const out = []; let failed = false;
-    const fail = (code, message) => { if (failed) return; failed = true; clearTimeout(timer); reject(new PoolError(code, message)); };
-    const timer = setTimeout(() => { child.kill(); fail('decrypt_failed', 'Déchiffrement DPAPI interrompu (délai).'); }, timeoutMs);
-    child.on('error', () => fail('decrypt_failed', 'Déchiffreur DPAPI introuvable ou non exécutable.'));
+  if (!isSecureStringHex(secretDpapi)) throw new PoolError('credentials_invalid', 'Chaîne SecureString hexadécimale attendue ; aucun déchiffreur lancé.', { stage: 'precheck' });
+  const { clear } = await runDpapiChild(secretDpapi, { spawnImpl, timeoutMs });
+  return clear;
+}
+// Recette Windows sans secret : PowerShell chiffre une valeur publique connue (DPAPI CurrentUser, ConvertFrom-SecureString), puis le même déchiffreur que le pool
+// doit la restituer. Chaque échec est constant et nommé (stage) ; rien de secret n’entre en jeu. Ne prouve rien hors Windows.
+export const dpapiSelfTestMarker = 'CREEZIO-DPAPI-SELFTEST-PUBLIC-MARKER';
+export async function dpapiSelfTest({ platform = process.platform, spawnImpl = spawn, timeoutMs = 15_000 } = {}) {
+  const report = { command: 'selftest', platform, marker: dpapiSelfTestMarker, stages: [] };
+  if (platform !== 'win32') return { ...report, status: 'unavailable', stage: 'platform', message: 'Recette DPAPI possible seulement sous Windows.' };
+  const fixtureScript = `$ErrorActionPreference='Stop'; $s=ConvertTo-SecureString -String '${dpapiSelfTestMarker}' -AsPlainText -Force; $h=ConvertFrom-SecureString -SecureString $s; $b=[System.Text.Encoding]::ASCII.GetBytes($h); $o=[Console]::OpenStandardOutput(); $o.Write($b,0,$b.Length); $o.Flush()`;
+  const fixture = await new Promise((resolvePromise) => {
+    const child = spawnImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(fixtureScript, 'utf16le').toString('base64')], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const out = []; let done = false;
+    const finish = value => { if (!done) { done = true; clearTimeout(timer); resolvePromise(value); } };
+    const timer = setTimeout(() => { try { child.kill(); } catch { /* déjà terminé */ } finish({ stage: 'fixture_timeout' }); }, timeoutMs);
+    child.on('error', () => finish({ stage: 'spawn' }));
     child.stdout.on('data', chunk => out.push(chunk));
     child.stderr.on('data', () => {});
-    child.on('close', code => { clearTimeout(timer); if (failed) return; if (code !== 0) return fail('decrypt_failed', code === 3 ? 'Chaîne SecureString rejetée par le déchiffreur (format).' : 'Déchiffrement DPAPI refusé (autre utilisateur, chaîne altérée ou session différente).'); resolvePromise(Buffer.concat(out).toString('utf8')); });
-    child.stdin.on('error', () => {});
-    child.stdin.end(secretDpapi);
+    child.on('close', code => finish(code === 0 ? { hex: Buffer.concat(out).toString('ascii').trim() } : { stage: 'fixture_exit', exitCode: code }));
   });
+  if (!fixture.hex) return { ...report, status: 'unavailable', stage: fixture.stage, ...(fixture.exitCode !== undefined ? { exitCode: fixture.exitCode } : {}), message: 'PowerShell n’a pas pu produire la chaîne SecureString de recette.' };
+  report.stages.push({ stage: 'fixture', ok: true, hexLength: fixture.hex.length });
+  if (!isSecureStringHex(fixture.hex)) return { ...report, status: 'unavailable', stage: 'fixture_format', message: 'La sortie de ConvertFrom-SecureString n’est pas la chaîne hexadécimale attendue.' };
+  report.stages.push({ stage: 'precheck', ok: true });
+  try {
+    const { clear, stderrBytes } = await runDpapiChild(fixture.hex, { spawnImpl, timeoutMs });
+    report.stages.push({ stage: 'decrypt', ok: true, stderrBytes });
+    if (clear !== dpapiSelfTestMarker) return { ...report, status: 'unavailable', stage: 'compare', clearLength: clear.length, message: 'Le clair restitué diffère du marqueur public (encodage de sortie).' };
+    return { ...report, status: 'ok', stage: 'done', message: 'Déchiffreur DPAPI opérationnel pour l’utilisateur courant (marqueur public restitué).' };
+  } catch (error) {
+    return { ...report, status: 'unavailable', stage: error.stage ?? 'decrypt', ...(error.exitCode !== undefined ? { exitCode: error.exitCode } : {}), ...(error.stderrBytes !== undefined ? { stderrBytes: error.stderrBytes } : {}), message: String(error.message) };
+  }
 }
 function validKey(value) { return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= 512 && !/[\s\x00-\x1f\x7f]/.test(value.trim()) ? value.trim() : null; }
 
@@ -323,4 +385,28 @@ export async function openAccountPool({ env = process.env, decrypt, now = isoNow
     record: (accountId, evidence, { activate = false } = {}) => withPoolState(paths, state => { const summary = applyEvidence(state, accountId, { ...evidence, at: evidence.at ?? now() }); if (activate && evidence.classification === 'accepted') state.activeAccountId = accountId; return { changed: true, value: summary }; }, options),
   };
   return pool;
+}
+
+// Recette locale sans secret (Windows) : `node cursor-account-pool.mjs selftest` distingue spawn / stdin / format / DPAPI / extraction sur un marqueur public ;
+// `node cursor-account-pool.mjs vault-check` déchiffre chaque compte du coffre configuré et ne rapporte que ok/échec avec l’étape, jamais une clé ni un blob.
+export async function poolCli(argv = process.argv.slice(2), { env = process.env, platform = process.platform, spawnImpl = spawn, log = line => console.log(line) } = {}) {
+  const [command, ...rest] = argv;
+  if (command === 'selftest') { const report = await dpapiSelfTest({ platform, spawnImpl }); log(JSON.stringify(report)); return report.status === 'ok' ? 0 : 3; }
+  if (command === 'vault-check') {
+    const fileIndex = rest.indexOf('--file'); const file = fileIndex >= 0 ? rest[fileIndex + 1] : credentialsPath(env);
+    const report = { command: 'vault-check', file: file ?? null, accounts: [] };
+    let credentials;
+    try { credentials = await loadCredentials({ file, decrypt: blob => dpapiUnprotectCurrentUser(blob, { platform, spawnImpl }) }); }
+    catch (error) { log(JSON.stringify({ ...report, status: 'unavailable', code: error.code ?? 'error', stage: error.stage ?? 'load', message: String(error.message) })); return 3; }
+    for (const id of credentials.ids) {
+      try { await credentials.keyFor(id); report.accounts.push({ id, ok: true }); }
+      catch (error) { report.accounts.push({ id, ok: false, code: error.code ?? 'error', ...(error.stage ? { stage: error.stage } : {}), ...(error.exitCode !== undefined ? { exitCode: error.exitCode } : {}), ...(error.stderrBytes !== undefined ? { stderrBytes: error.stderrBytes } : {}), message: String(error.message) }); }
+    }
+    const ok = report.accounts.every(a => a.ok);
+    log(JSON.stringify({ ...report, status: ok ? 'ok' : 'unavailable' })); return ok ? 0 : 3;
+  }
+  log('cursor-account-pool — recette locale : selftest | vault-check [--file credentials.json]'); return command ? 4 : 0;
+}
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  poolCli().then(code => { process.exitCode = code; }).catch(error => { console.error(String(error?.code ?? error?.name ?? 'erreur')); process.exitCode = 4; });
 }
