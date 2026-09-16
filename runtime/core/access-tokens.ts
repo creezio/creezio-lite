@@ -1,10 +1,13 @@
-import type { ApiContext, Identity, Workspace } from './types.ts';
+import type { ApiContext, CredentialContext, Identity, Workspace } from './types.ts';
 import { fail, requireRole } from './validation.ts';
 import { hash, inviteToken, json, readJson } from './http.ts';
+import { tokenCredential } from './scope.ts';
 import type { Operation } from './operations.ts';
 
+/** `id` is the API key row for resolveToken and the OAuth grant row for resolveOAuthToken; `credential` disambiguates. */
 export type TokenAccess = {id:string;workspaceId:string;mode:'read'|'write'};
-export async function resolveToken(request:Request,context:ApiContext):Promise<{identity:Identity;access:TokenAccess}|null>{
+export type ResolvedCredential = {identity:Identity;access:TokenAccess;credential:CredentialContext};
+export async function resolveToken(request:Request,context:ApiContext):Promise<ResolvedCredential|null>{
   const authorization=request.headers.get('authorization');if(!authorization)return null;
   if(!/^Bearer lite_[a-f0-9]{64}$/.test(authorization))fail(401,'invalid_token','Clé API invalide.');
   const origin=request.headers.get('origin');
@@ -13,7 +16,7 @@ export async function resolveToken(request:Request,context:ApiContext):Promise<{
     FROM lite_access_tokens t JOIN lite_users u ON u.id=t.user_id JOIN lite_members m ON m.org_id=t.org_id AND m.user_id=t.user_id
     WHERE t.token_hash=? AND t.revoked_at IS NULL AND t.expires_at>?`).bind(await hash(authorization.slice(7)),new Date().toISOString()).first<{id:string;org_id:string;mode:'read'|'write';user_id:string;email:string;name:string}>();
   if(!token)fail(401,'invalid_token','Clé expirée, révoquée ou sans accès à cet espace.');
-  return {identity:{userId:token.user_id,email:token.email,displayName:token.name},access:{id:token.id,workspaceId:token.org_id,mode:token.mode}};
+  return {identity:{userId:token.user_id,email:token.email,displayName:token.name},access:{id:token.id,workspaceId:token.org_id,mode:token.mode},credential:tokenCredential({tokenId:token.id,workspaceId:token.org_id,mode:token.mode})};
 }
 
 /** Machine credentials grant only the data API, never account/admin operations. */

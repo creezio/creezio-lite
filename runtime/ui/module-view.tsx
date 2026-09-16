@@ -30,7 +30,8 @@ export function ModuleView({module,api,role,revision,onMutation}:{module:Module;
   const router=useRouter(),selectedId=useSearchParams().get('record');
   const [query,setQuery]=useState(''),[search,setSearch]=useState(''),[offset,setOffset]=useState(0),[filter,setFilter]=useState('all');
   const [editing,setEditing]=useState<RecordData|null|undefined>(undefined),[archiving,setArchiving]=useState<RecordData|null>(null),[busy,setBusy]=useState(false);
-  const statusField=module.fields.find(f=>f.type==='select'),canWrite=(module.writeRoles??['owner','admin','member']).includes(role);
+  // Entities and collections are only written through declared commands: the generic page shows reads only.
+  const statusField=module.fields.find(f=>f.type==='select'),canWrite=(module.kind??'module')==='module'&&(module.writeRoles??['owner','admin','member']).includes(role);
   useEffect(()=>{const t=setTimeout(()=>{setSearch(query);setOffset(0);},250);return()=>clearTimeout(t);},[query]);
   const params=new URLSearchParams({q:search,offset:String(offset),limit:'30'});if(filter!=='all'&&statusField){params.set('field',statusField.key);params.set('value',filter);}
   const {data,error,loading}=useLoad<{items:RecordData[];total:number}>(()=>api(`modules/${module.id}/records?${params}`),[api,module.id,search,offset,filter,revision]);
@@ -46,7 +47,14 @@ export function ModuleView({module,api,role,revision,onMutation}:{module:Module;
   </section>;
 }
 
+/** A collection record links to its declared parent through the real parentField; no URL is built without a valid parent id. */
+export function parentHref(module:Module,data:Record<string,unknown>):string|null{
+  if(module.kind!=='collection'||!module.parent||!module.parentField)return null;
+  const parentId=data[module.parentField];
+  return typeof parentId==='string'&&parentId&&!/[\/\\]/.test(parentId)?`/${module.parent}?record=${encodeURIComponent(parentId)}`:null;
+}
 function RecordDetail({module,api,id,revision,onClose,onEdit}:{module:Module;api:Api;id:string;revision:number;onClose:()=>void;onEdit?:(record:RecordData)=>void}){
   const {data,error,loading}=useLoad<{record:RecordData}>(()=>api(`modules/${module.id}/records/${encodeURIComponent(id)}`),[api,module.id,id,revision]);
-  return <Dialog open onOpenChange={open=>{if(!open)onClose();}}><DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{data?String(data.record.data[module.titleField]):module.singular}</DialogTitle><DialogDescription>{module.name}</DialogDescription></DialogHeader><State error={error} loading={loading}/>{data?<><dl className="grid grid-cols-1 sm:grid-cols-2 gap-5">{module.fields.map(field=><div key={field.key} className={field.type==='textarea'?'sm:col-span-2':''}><dt className="text-sm text-muted-foreground">{field.label}</dt><dd className="whitespace-pre-wrap break-words mt-1">{format(data.record.data[field.key],field)}</dd></div>)}</dl>{onEdit?<div className="flex justify-end"><Button onClick={()=>onEdit(data.record)}><Pencil size={15}/>Modifier</Button></div>:null}</>:null}</DialogContent></Dialog>;
+  const parent=data?parentHref(module,data.record.data):null;
+  return <Dialog open onOpenChange={open=>{if(!open)onClose();}}><DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{data?String(data.record.data[module.titleField]):module.singular}</DialogTitle><DialogDescription>{module.name}</DialogDescription></DialogHeader><State error={error} loading={loading}/>{data?<><dl className="grid grid-cols-1 sm:grid-cols-2 gap-5">{module.fields.map(field=><div key={field.key} className={field.type==='textarea'?'sm:col-span-2':''}><dt className="text-sm text-muted-foreground">{field.label}</dt><dd className="whitespace-pre-wrap break-words mt-1">{field.key===module.parentField&&parent?<a className="underline" href={parent}>{format(data.record.data[field.key],field)}</a>:format(data.record.data[field.key],field)}</dd></div>)}</dl>{onEdit?<div className="flex justify-end"><Button onClick={()=>onEdit(data.record)}><Pencil size={15}/>Modifier</Button></div>:null}</>:null}</DialogContent></Dialog>;
 }

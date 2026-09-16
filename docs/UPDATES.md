@@ -80,3 +80,13 @@ Pour un Site sans dépôt GitHub applicatif, enregistrer la source et le respons
 Après la mise à jour habituelle du runtime, intégrer explicitement `template/scripts/migrate-local.mjs` du kit dans `scripts/migrate-local.mjs` de l’application. L’upgrade du runtime ne copie pas ce script. Conserver les adaptations métier et tous les fichiers SQL déjà appliqués à l’octet.
 
 Construire l’application, puis exécuter `pnpm db:local` pour valider la base locale. Les triggers restent des instructions complètes ; chaque migration et son marqueur sont appliqués ensemble. Les marqueurs existants sont conservés : les migrations déjà appliquées ne rejouent pas. Ce correctif utilise Miniflare fourni par Wrangler déjà verrouillé, sans nouvelle dépendance. Il ne modifie ni les migrations ni la base du Site publié.
+
+## Migration 0.10.2 vers 0.11.0 — opérations et portée
+
+Le runtime ajoute le registre module/entity/collection, les déclarations command/read et le ScopeProvider. Un module sans kind conserve son CRUD. Les entity/collection exposent des lectures ; leurs mutations doivent passer par des commandes déclarées. Aucun schéma ni migration SQL n'est ajouté par cette version.
+
+Pour une application qui adopte ces ports, définir ses extensions avec le catalogue complet de @lite/sites-adapter/catalog, puis transmettre ces extensions au dispatcher existant. Lire docs/contracts/domain-extension.md et les exemples/tests D01. Les politiques métier restent propres à l'application ; l'absence de provider conserve la portée native de l'espace et ne remplace pas une politique obligatoire.
+
+Vérifier les schémas déclarés au démarrage : les contraintes non supportées sont maintenant refusées plutôt qu'ignorées. Les schémas des commandes sont stricts ; les dates facultatives du CRUD natif restent effaçables. Adapter le traitement des erreurs structurées (code, message, requestId, details facultatif), sans utiliser les erreurs inconnues comme détails publics.
+
+Tester sessions, clés lecture/écriture, OAuth, révocations, recherche/fichiers et les refus sans écriture. Les références credential sont un instantané vérifié, pas une garde de commit. Cette release ne livre pas encore un moteur générique d'idempotence, de relations, d'outbox ou de grants par ressource.

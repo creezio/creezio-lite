@@ -1,13 +1,15 @@
 import type { D1Database } from "@cloudflare/workers-types";
-import type { ApiContext, BeforeWrite, Identity, Module, Role, Workspace } from './types.ts';
-import { ApiError, boundedInteger, fail, requireModuleRole, requireRole, roles, validateData } from './validation.ts';
+import type { ApiContext, AppExtensions, Identity, Principal, Role, ScopeAction, ScopeProvider, Workspace } from './types.ts';
+import { ApiError, boundedInteger, errorBody, fail, moduleNavigable, moduleWritable, requireModuleRole, requireRole, roles, validateData } from './validation.ts';
 import { checkOrigin, hash, inviteToken, json, readBytes, readJson } from './http.ts';
 import { searchRoute, searchSelection } from './search.ts';
 import { businessModule } from './registry.ts';
 import { accessTokenRoute } from './access-tokens.ts';
 import { coreOperations, matchOperation, assertOperationAllowed, canReadModule } from './operations.ts';
+import { fileScope, principalOf, recordScope, resolveScope, sessionCredential } from './scope.ts';
 
 type Row = { id: string; module_id: string; data: string; version: number; created_at: string; updated_at: string };
+type Scoped = { scope: ScopeProvider; principal: Principal };
 const unpack = (row: Row) => ({ ...row, data: JSON.parse(row.data) as Record<string, unknown> });
 const timestamp = () => new Date().toISOString();
 const uuid = () => crypto.randomUUID();
@@ -28,16 +30,20 @@ export async function workspace(db: D1Database, user: Identity, id: string | nul
   if (!row) fail(id ? 404 : 409, id ? 'workspace_not_found' : 'setup_required', id ? 'Espace introuvable.' : 'Initialisez votre espace.');
   return {id:row.id,name:row.name,role:row.role,operationPolicies:JSON.parse(row.policies_json)};
 }
-async function getRecord(db: D1Database, org: string, mod: string, id: string) {
-  const row = await db.prepare('SELECT id,module_id,data,version,created_at,updated_at FROM lite_records WHERE id=? AND org_id=? AND module_id=? AND deleted_at IS NULL').bind(id,org,mod).first<Row>();
+const recordRef={alias:'r',idColumn:'id',moduleColumn:'module_id'},fileRef={alias:'f',idColumn:'id'};
+/** Scope is applied inside the statement, before any row is returned. Out of scope reads as not found. */
+async function getRecord(db: D1Database, org: string, mod: string, id: string, scoped: Scoped, action: ScopeAction = 'read') {
+  const filter=recordScope(scoped.scope,scoped.principal,recordRef,action);
+  const row = await db.prepare(`SELECT r.id,r.module_id,r.data,r.version,r.created_at,r.updated_at FROM lite_records r WHERE r.id=? AND r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL AND ${filter.sql}`).bind(id,org,mod,...filter.bindings).first<Row>();
   if (!row) fail(404,'record_not_found','Document introuvable.');
   return unpack(row);
 }
 
 /** Identity MUST come from the trusted Sites dispatcher via getChatGPTUser().
  * This function deliberately never authenticates caller-provided headers itself. */
-export async function handleApi(request: Request, context: ApiContext, options: { beforeWrite?: BeforeWrite } = {}): Promise<Response> {
-  const requestId = uuid(),started=performance.now();
+export async function handleApi(request: Request, context: ApiContext, options: AppExtensions = {}): Promise<Response> {
+  // The dispatcher correlation id is reused verbatim; a direct call without dispatcher still gets one id per request.
+  const requestId = context.requestId ?? uuid(),started=performance.now();
   try {
     const url = new URL(request.url);
     const path = url.pathname.replace(/^\/api\/v1\/?/, '').replace(/\/$/,'');
@@ -45,7 +51,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     if (path === 'health' && request.method === 'GET') {
       if (!context.env.DB) fail(503,'database_unavailable','Base de données indisponible.');
       await context.env.DB.prepare('SELECT id FROM lite_orgs LIMIT 1').first();
-      return json({ok:true,kit:'lite',version:'0.10.2',database:'ready'});
+      return json({ok:true,kit:'lite',version:'0.11.0',database:'ready'});
     }
     const user = context.identity;
     if (!user?.userId || !user.email) fail(401,'authentication_required','Connectez-vous pour continuer.');
@@ -95,7 +101,9 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     const org = context.workspace??await workspace(db,user,url.searchParams.get('workspace'));
     const declared=matchOperation(context.operations??coreOperations(context.app),request.method,url.pathname);
     if(declared)assertOperationAllowed(declared,org);
-    const searchResponse=await searchRoute(request,db,context.app,org,user);if(searchResponse){searchResponse.headers.set('Server-Timing',`app;dur=${(performance.now()-started).toFixed(1)}`);return searchResponse;}
+    const credential=context.credential??sessionCredential;
+    const scoped:Scoped={scope:resolveScope(options.scope),principal:principalOf(user,org,credential)};
+    const searchResponse=await searchRoute(request,db,context.app,org,user,scoped);if(searchResponse){searchResponse.headers.set('Server-Timing',`app;dur=${(performance.now()-started).toFixed(1)}`);return searchResponse;}
     const tokenResponse=await accessTokenRoute(request,context,org);if(tokenResponse)return tokenResponse;
     if (path === 'workspaces/current' && request.method === 'PATCH') {
       requireRole(org.role,['owner','admin']); const body=await readJson(request); const name=label(body.name);
@@ -104,8 +112,10 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     }
     if (path === 'modules' && request.method === 'GET') return json({modules:context.app.modules.filter(m=>(m.readRoles??roles).includes(org.role)&&canReadModule(org,m.id)),workspace:org});
     if (path === 'dashboard' && request.method === 'GET') {
-      const visible=context.app.modules.filter(m=>(m.readRoles??roles).includes(org.role)&&canReadModule(org,m.id));
-      const counts=await Promise.all(visible.map(async m=>({id:m.id,name:m.name,count:(await db.prepare('SELECT COUNT(*) AS n FROM lite_records WHERE org_id=? AND module_id=? AND deleted_at IS NULL').bind(org.id,m.id).first<{n:number}>())?.n??0})));
+      // Counters exist for navigable modules only and apply the read scope before COUNT.
+      const visible=context.app.modules.filter(m=>moduleNavigable(m)&&(m.readRoles??roles).includes(org.role)&&canReadModule(org,m.id));
+      const filter=recordScope(scoped.scope,scoped.principal,recordRef,'read');
+      const counts=await Promise.all(visible.map(async m=>({id:m.id,name:m.name,count:(await db.prepare(`SELECT COUNT(*) AS n FROM lite_records r WHERE r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL AND ${filter.sql}`).bind(org.id,m.id,...filter.bindings).first<{n:number}>())?.n??0})));
       return json({modules:counts,workspace:org});
     }
     const systemRecord=path.match(/^(members|audit)\/([^/]+)$/);
@@ -160,24 +170,29 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     const recordMatch=path.match(/^modules\/([a-z][a-z0-9-]*)\/records(?:\/([^/]+))?$/);
     if (recordMatch) {
       const mod=businessModule(context.app,recordMatch[1]); if(!mod) fail(404,'module_not_found','Module introuvable.');
+      requireModuleRole(mod,org.role,false);
+      // Defence in depth: entities and collections never accept generic writes, even on direct handleApi access.
+      if(request.method!=='GET'&&!moduleWritable(mod)) fail(405,'command_required','Ce module ne se modifie que par une commande déclarée.');
       requireModuleRole(mod,org.role,request.method!=='GET');
       const id=recordMatch[2];
-      if(request.method==='GET' && id) return json({record:await getRecord(db,org.id,mod.id,id)});
+      if(request.method==='GET' && id) return json({record:await getRecord(db,org.id,mod.id,id,scoped)});
       if(request.method==='GET') {
         const limit=boundedInteger(url.searchParams.get('limit'),30,100); if(!limit) fail(400,'invalid_pagination','La limite doit être positive.');
         const offset=boundedInteger(url.searchParams.get('offset'),0,100000);
         const q=url.searchParams.get('q')??''; if(q.length>120) fail(400,'query_too_long','Recherche trop longue.');
-        const terms:unknown[]=[org.id,mod.id]; let where='org_id=? AND module_id=? AND deleted_at IS NULL';
+        const terms:unknown[]=[org.id,mod.id]; let where='r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL';
         let indexing=false;
-        if(q){const selection=await searchSelection(db,context.app,org,q,{moduleId:mod.id});indexing=selection.indexing;
-          where+=` AND id IN (${selection.cte} SELECT d.record_id FROM ranked r JOIN lite_search_documents d ON d.id=r.id)`;
+        if(q){const selection=await searchSelection(db,context.app,org,q,{moduleId:mod.id,...scoped});indexing=selection.indexing;
+          where+=` AND r.id IN (${selection.cte} SELECT d.record_id FROM ranked x JOIN lite_search_documents d ON d.id=x.id)`;
           terms.push(...selection.bindings);
         }
         const filterField=url.searchParams.get('field'),filterValue=url.searchParams.get('value');
-        if(filterField){if(!mod.fields.some(f=>f.key===filterField) || filterValue===null || filterValue.length>300) fail(400,'invalid_filter','Filtre invalide.'); where+=' AND CAST(json_extract(data,?) AS TEXT)=?';terms.push('$.'+filterField,filterValue);}
+        if(filterField){if(!mod.fields.some(f=>f.key===filterField) || filterValue===null || filterValue.length>300) fail(400,'invalid_filter','Filtre invalide.'); where+=' AND CAST(json_extract(r.data,?) AS TEXT)=?';terms.push('$.'+filterField,filterValue);}
+        // The scope predicate is part of the statement: it precedes pagination and the total alike.
+        const filter=recordScope(scoped.scope,scoped.principal,recordRef,'read');where+=` AND ${filter.sql}`;terms.push(...filter.bindings);
         const [items,count]=await db.batch([
-          db.prepare(`SELECT id,module_id,data,version,created_at,updated_at FROM lite_records WHERE ${where} ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?`).bind(...terms,limit,offset),
-          db.prepare(`SELECT COUNT(*) AS total FROM lite_records WHERE ${where}`).bind(...terms),
+          db.prepare(`SELECT r.id,r.module_id,r.data,r.version,r.created_at,r.updated_at FROM lite_records r WHERE ${where} ORDER BY r.updated_at DESC,r.id DESC LIMIT ? OFFSET ?`).bind(...terms,limit,offset),
+          db.prepare(`SELECT COUNT(*) AS total FROM lite_records r WHERE ${where}`).bind(...terms),
         ]);
         return json({items:(items.results as Row[]).map(unpack),total:(count.results[0] as {total:number}|undefined)?.total??0,limit,offset,searchEngine:'d1-fts5',indexing});
       }
@@ -188,25 +203,28 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         await db.batch([
           db.prepare('INSERT INTO lite_records(id,org_id,module_id,data,search_text,version,created_by,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?,?)').bind(recordId,org.id,mod.id,JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),user.userId,now,now),
           audit(db,org.id,user.userId,`${mod.id}.create`,recordId),
-        ]);return json({record:await getRecord(db,org.id,mod.id,recordId)},201);
+        ]);return json({record:await getRecord(db,org.id,mod.id,recordId,scoped)},201);
       }
       if(request.method==='PATCH' && id) {
-        const body=await readJson(request),expected=version(body.version),previous=await getRecord(db,org.id,mod.id,id);
+        // A read grant never suffices for a write: the target must be in write scope.
+        const body=await readJson(request),expected=version(body.version),previous=await getRecord(db,org.id,mod.id,id,scoped,'write');
         if(previous.version!==expected) fail(409,'version_conflict','Ce document a été modifié. Rechargez-le avant d’enregistrer.');
         const data=validateData(mod,body.data);
         await options.beforeWrite?.({module:mod,data,previous:previous.data,workspace:org,identity:user});
+        const writeFilter=recordScope(scoped.scope,scoped.principal,recordRef,'write');
         const result=await db.batch([
-          db.prepare('UPDATE lite_records SET data=?,search_text=?,version=version+1,updated_at=? WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL').bind(JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),timestamp(),id,org.id,mod.id,expected),
+          db.prepare(`UPDATE lite_records SET data=?,search_text=?,version=version+1,updated_at=? WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM lite_records r WHERE r.id=lite_records.id AND ${writeFilter.sql})`).bind(JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),timestamp(),id,org.id,mod.id,expected,...writeFilter.bindings),
           audit(db,org.id,user.userId,`${mod.id}.update`,id,{},'WHERE changes()=1'),
         ]);
         if(!result[0].meta.changes) fail(409,'version_conflict','Ce document a été modifié. Rechargez-le.');
-        return json({record:await getRecord(db,org.id,mod.id,id)});
+        return json({record:await getRecord(db,org.id,mod.id,id,scoped)});
       }
       if(request.method==='DELETE' && id) {
         const body=await readJson(request),expected=version(body.version);
-        await getRecord(db,org.id,mod.id,id);
+        await getRecord(db,org.id,mod.id,id,scoped,'write');
+        const writeFilter=recordScope(scoped.scope,scoped.principal,recordRef,'write');
         const result=await db.batch([
-          db.prepare('UPDATE lite_records SET deleted_at=?,version=version+1 WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL').bind(timestamp(),id,org.id,mod.id,expected),
+          db.prepare(`UPDATE lite_records SET deleted_at=?,version=version+1 WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM lite_records r WHERE r.id=lite_records.id AND ${writeFilter.sql})`).bind(timestamp(),id,org.id,mod.id,expected,...writeFilter.bindings),
           audit(db,org.id,user.userId,`${mod.id}.archive`,id,{},'WHERE changes()=1'),
         ]);if(!result[0].meta.changes) fail(409,'version_conflict','Ce document a été modifié. Rechargez-le.');
         return json({ok:true});
@@ -216,7 +234,8 @@ export async function handleApi(request: Request, context: ApiContext, options: 
 
     if (path==='files' && request.method==='GET') {
       const offset=boundedInteger(url.searchParams.get('offset'),0,100000);
-      const rows=await db.prepare('SELECT id,name,size,content_type,created_at FROM lite_files WHERE org_id=? AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 50 OFFSET ?').bind(org.id,offset).all();
+      const filter=fileScope(scoped.scope,scoped.principal,fileRef,'read');
+      const rows=await db.prepare(`SELECT f.id,f.name,f.size,f.content_type,f.created_at FROM lite_files f WHERE f.org_id=? AND f.deleted_at IS NULL AND ${filter.sql} ORDER BY f.created_at DESC,f.id DESC LIMIT 50 OFFSET ?`).bind(org.id,...filter.bindings,offset).all();
       return json({items:rows.results,offset});
     }
     if(path==='files' && request.method==='POST') {
@@ -232,27 +251,39 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     }
     const metadataMatch=path.match(/^files\/([^/]+)\/metadata$/);
     if(metadataMatch&&request.method==='GET'){
-      const item=await db.prepare('SELECT id,name,size,content_type,created_at FROM lite_files WHERE id=? AND org_id=? AND deleted_at IS NULL').bind(metadataMatch[1],org.id).first();
+      const filter=fileScope(scoped.scope,scoped.principal,fileRef,'read');
+      const item=await db.prepare(`SELECT f.id,f.name,f.size,f.content_type,f.created_at FROM lite_files f WHERE f.id=? AND f.org_id=? AND f.deleted_at IS NULL AND ${filter.sql}`).bind(metadataMatch[1],org.id,...filter.bindings).first();
       if(!item)fail(404,'file_not_found','Fichier introuvable.');return json({file:item});
     }
     const fileMatch=path.match(/^files\/([^/]+)$/);
     if(fileMatch && ['GET','DELETE'].includes(request.method)) {
+      if(request.method==='DELETE')requireRole(org.role,['owner','admin','member']);
       // Keep tombstoned metadata addressable only for DELETE so failed R2 cleanup can be retried.
-      const file=await db.prepare('SELECT id,name,object_key,size,content_type FROM lite_files WHERE id=? AND org_id=?'+(request.method==='GET'?' AND deleted_at IS NULL':'')).bind(fileMatch[1],org.id).first<{id:string;name:string;object_key:string;size:number;content_type:string}>();
+      // Download needs the read scope; deletion needs the write scope. Tombstones are never downloadable.
+      const filter=fileScope(scoped.scope,scoped.principal,fileRef,request.method==='GET'?'read':'write');
+      const file=await db.prepare(`SELECT f.id,f.name,f.object_key,f.size,f.content_type FROM lite_files f WHERE f.id=? AND f.org_id=?${request.method==='GET'?' AND f.deleted_at IS NULL':''} AND ${filter.sql}`).bind(fileMatch[1],org.id,...filter.bindings).first<{id:string;name:string;object_key:string;size:number;content_type:string}>();
       if(!file)fail(404,'file_not_found','Fichier introuvable.');
+      if(request.method==='DELETE'&&scoped.scope.deleteFile){
+        // The configured policy owns every native deletion of this workspace after the access checks above.
+        // The kit performs neither tombstone nor bucket.delete here, in parallel or as a fallback.
+        const deferred:Promise<unknown>[]=[];
+        const result=await scoped.scope.deleteFile({db,env:context.env,principal:scoped.principal,credential,workspace:org,fileId:file.id,requestId,now:timestamp(),defer:p=>{if(context.defer)context.defer(p);else deferred.push(p.catch(()=>{}));}});
+        if(deferred.length)await Promise.all(deferred);
+        if(!result||!['queued','complete'].includes(result.cleanup))fail(503,'service_unavailable','La politique de suppression n’a pas confirmé le résultat.');
+        return json({ok:true,cleanup:result.cleanup});
+      }
       const bucket=context.env.BUCKET;if(!bucket)fail(503,'files_unavailable','Le stockage de fichiers est indisponible.');
       if(request.method==='DELETE'){
-        requireRole(org.role,['owner','admin','member']);
         await db.batch([db.prepare('UPDATE lite_files SET deleted_at=? WHERE id=? AND org_id=? AND deleted_at IS NULL').bind(timestamp(),file.id,org.id),audit(db,org.id,user.userId,'file.delete',file.id,{},'WHERE changes()=1')]);
         // D1/R2 do not share a transaction. Metadata is revoked first; an orphan is never downloadable.
-        await bucket.delete(file.object_key);return json({ok:true});
+        await bucket.delete(file.object_key);return json({ok:true,cleanup:'complete'});
       }
       const object=await bucket.get(file.object_key);if(!object)fail(404,'file_not_found','Le contenu du fichier est indisponible.');
       return new Response(object.body as BodyInit,{headers:{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(file.name).replace(/['()*]/g,c=>'%'+c.charCodeAt(0).toString(16))}`,'Content-Length':String(file.size),'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox"}});
     }
     fail(404,'not_found','Route introuvable.');
   } catch(error) {
-    if(error instanceof ApiError) return json({error:{code:error.code,message:error.message,requestId}},error.status);
+    if(error instanceof ApiError) return json(errorBody(error,requestId),error.status);
     // Do not log user payloads, invitation tokens, credentials or SQL bindings.
     console.error(JSON.stringify({event:'lite.api-error',requestId,type:error instanceof Error?error.name:'UnknownError'}));
     return json({error:{code:'service_unavailable',message:'Le service est momentanément indisponible. Vos modifications n’ont pas été confirmées.',requestId}},503);

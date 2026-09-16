@@ -1,5 +1,5 @@
-import type { AppDefinition, Field, Role, Workspace } from './types.ts';
-import { roles, fail } from './validation.ts';
+import type { AppDefinition, AppOperationDefinition, Field, Role, Workspace } from './types.ts';
+import { roles, fail, idPattern, moduleWritable } from './validation.ts';
 
 export type JsonSchema = Record<string, any>;
 export type Operation = {
@@ -8,6 +8,8 @@ export type Operation = {
   essential?:boolean; tokenAllowed:boolean; mcp:boolean; mcpReason?:string;
   toolName:string; inputSchema:JsonSchema; bodySchema?:JsonSchema; querySchema?:JsonSchema;
   responseType?:'json'|'file'; requestType?:'json'|'file';
+  /** Explicit transport marker: 'app' operations run their declared handler through the generic executor. */
+  source?:'core'|'native'|'app';
 };
 export type OperationPolicy = {operationId:string;effect:'allow'|'deny'};
 export const objectSchema=(properties:JsonSchema={},required:string[]=[])=>({type:'object',properties,required,additionalProperties:false});
@@ -15,7 +17,7 @@ export const stringSchema={type:'string',maxLength:300};
 export const idSchema={type:'string',minLength:1,maxLength:160};
 export const paging={limit:{type:'integer',minimum:1,maximum:100},offset:{type:'integer',minimum:0,maximum:100000},q:{type:'string',maxLength:120}};
 const admin:Role[]=['owner','admin'],writers:Role[]=['owner','admin','member'];
-export function fieldSchema(f:Field):JsonSchema{return {type:f.type==='number'?'number':f.type==='boolean'?'boolean':'string',description:f.label,...(f.type==='select'?{enum:f.options}:{}),...(f.type==='email'?{format:'email'}:{}),...(f.type==='date'?{format:'date'}:{}),...(f.maxLength?{maxLength:f.maxLength}:{}),...(f.min!==undefined?{minimum:f.min}:{}),...(f.max!==undefined?{maximum:f.max}:{})};}
+export function fieldSchema(f:Field):JsonSchema{if(f.type==='date'&&!f.required)return {description:f.label,anyOf:[fieldSchema({...f,required:true}),{type:'string',enum:['']},{type:'null'}]};return {type:f.type==='number'?'number':f.type==='boolean'?'boolean':'string',description:f.label,...(f.type==='select'?{enum:f.options}:{}),...(f.type==='email'?{format:'email'}:{}),...(f.type==='date'?{format:'date'}:{}),...(f.maxLength?{maxLength:f.maxLength}:{}),...(f.min!==undefined?{minimum:f.min}:{}),...(f.max!==undefined?{maximum:f.max}:{})};}
 export function operation(value:Omit<Operation,'kind'|'inputSchema'|'toolName'|'tokenAllowed'|'mcp'> & Partial<Pick<Operation,'kind'|'inputSchema'|'toolName'|'tokenAllowed'|'mcp'>>):Operation {
   const params=Object.fromEntries([...value.path.matchAll(/:([A-Za-z0-9_]+)/g)].map(m=>[m[1],idSchema]));
   const properties={...params,...(value.querySchema?{query:value.querySchema}:{}),...(value.bodySchema?{body:value.bodySchema}:{})};
@@ -112,7 +114,9 @@ export function coreOperations(app:AppDefinition):Operation[]{
   ] as const)add(`assistant.${id}`,method,`assistant/${path}`,'assistant','Assistant',description,{...personalAssistant,...(id==='transcribe'?{requestType:'file' as const}:method==='POST'||method==='PATCH'?{bodySchema:{type:'object',additionalProperties:true}}:{})});
   for(const module of app.modules){
     const data=objectSchema(Object.fromEntries(module.fields.map(f=>[f.key,fieldSchema(f)])),module.fields.filter(f=>f.required).map(f=>f.key));
-    for(const [action,method,suffix] of [['list','GET',''],['get','GET','/:id'],['create','POST',''],['update','PATCH','/:id'],['archive','DELETE','/:id']] as const){
+    // Entities and collections expose reads only; every mutation is a declared command.
+    const actions=([['list','GET',''],['get','GET','/:id'],['create','POST',''],['update','PATCH','/:id'],['archive','DELETE','/:id']] as const).filter(([,method])=>method==='GET'||moduleWritable(module));
+    for(const [action,method,suffix] of actions){
       add(`module.${module.id}.${action}`,method,`modules/${module.id}/records${suffix}`,module.id,module.name,`${module.name} : ${action}`,{kind:'business',roles:method==='GET'?(module.readRoles??roles):(module.writeRoles??writers),toolName:`lite_${module.id.replaceAll('-','_')}_${action}`,
         ...(action==='list'?{querySchema:objectSchema({...paging,field:stringSchema,value:stringSchema})}:{}),
         ...(action==='create'?{bodySchema:objectSchema({data},['data'])}:{}),
@@ -121,6 +125,147 @@ export function coreOperations(app:AppDefinition):Operation[]{
     }
   }
   return list;
+}
+const operationIdPattern=/^[a-z][a-z0-9_.-]{0,119}$/,methods=['GET','POST','PUT','PATCH','DELETE'];
+/** Stable diagnostics for catalogue construction failures: the code and the operations involved never vary between requests. */
+export type OperationCatalogErrorCode='duplicate_operation'|'duplicate_route'|'duplicate_tool'|'invalid_schema';
+export class OperationCatalogError extends Error{
+  readonly code:OperationCatalogErrorCode;
+  readonly operations:string[];
+  constructor(code:OperationCatalogErrorCode,message:string,operations:string[]=[]){super(message);this.name='OperationCatalogError';this.code=code;this.operations=operations;}
+}
+const schemaTypes=['object','array','string','number','integer','boolean','null'];
+const patternCache=new Map<string,RegExp>();
+/** Compile a declared JSON Schema pattern once; an invalid expression is a declaration error, never a skipped check. */
+export function schemaPattern(pattern:unknown,label='schema'):RegExp{
+  if(typeof pattern!=='string'||!pattern||pattern.length>512)throw new OperationCatalogError('invalid_schema',`Schéma invalide (${label}) : pattern doit être une expression régulière de 1 à 512 caractères.`);
+  let compiled=patternCache.get(pattern);
+  if(!compiled){try{compiled=new RegExp(pattern,'u');}catch{throw new OperationCatalogError('invalid_schema',`Schéma invalide (${label}) : pattern non compilable.`);}patternCache.set(pattern,compiled);}
+  return compiled;
+}
+/**
+ * Closed JSON Schema subset of the kit. Every keyword listed here is enforced by validateSchema (tools.ts) on
+ * each HTTP, MCP, WebMCP and assistant entry; every other keyword is refused at declaration so that no
+ * declared constraint is ever silently ignored.
+ *
+ * - annotations (never validated): description, title, readOnly, writeOnly, deprecated
+ * - any type: type (one of object, array, string, number, integer, boolean, null), enum (scalars),
+ *   anyOf (non-empty list of sub-schemas; no validating sibling keyword allowed next to it)
+ * - string: minLength, maxLength, pattern (ECMAScript, flag u), format ∈ email, date, date-time, uri
+ * - number / integer: minimum, maximum
+ * - array: items, minItems, maxItems
+ * - object: properties (own, safe names), required (each name declared when additionalProperties is false),
+ *   additionalProperties (boolean, or a sub-schema applied to every undeclared property)
+ *
+ * The property names __proto__, constructor and prototype are refused in declarations and in values.
+ */
+export const SCHEMA_KEYWORDS={
+  annotations:['description','title','readOnly','writeOnly','deprecated'],
+  any:['type','enum','anyOf'],
+  string:['minLength','maxLength','pattern','format'],
+  number:['minimum','maximum'],
+  array:['items','minItems','maxItems'],
+  object:['properties','required','additionalProperties'],
+} as const;
+export const SCHEMA_FORMATS=['email','date','date-time','uri'] as const;
+/** Names that reach Object.prototype through a lookup or a spread; never a declared or accepted property. */
+export const UNSAFE_PROPERTY_NAMES=['__proto__','constructor','prototype'] as const;
+const propertyName=/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+const familyOf=(type:unknown)=>type==='string'?'string':type==='number'||type==='integer'?'number':type==='array'?'array':type==='object'?'object':undefined;
+/** Refuse at declaration every schema outside the closed subset above: the validator then enforces everything that was declared. */
+export function assertJsonSchema(schema:unknown,label:string,depth=0):void{
+  const bad=(reason:string)=>{throw new OperationCatalogError('invalid_schema',`Schéma invalide (${label}) : ${reason}.`);};
+  if(!schema||typeof schema!=='object'||Array.isArray(schema))bad('objet de schéma attendu');
+  if(depth>16)bad('profondeur excessive');
+  const s=schema as JsonSchema,keys=Object.keys(s);
+  const known:readonly string[]=[...SCHEMA_KEYWORDS.annotations,...SCHEMA_KEYWORDS.any,...SCHEMA_KEYWORDS.string,...SCHEMA_KEYWORDS.number,...SCHEMA_KEYWORDS.array,...SCHEMA_KEYWORDS.object];
+  for(const key of keys)if(!known.includes(key))bad(`mot-clé non pris en charge : ${key}`);
+  if(s.type!==undefined&&(typeof s.type!=='string'||!schemaTypes.includes(s.type)))bad(`type non pris en charge : ${String(s.type)}`);
+  const family=familyOf(s.type);
+  for(const [name,list] of Object.entries({string:SCHEMA_KEYWORDS.string,number:SCHEMA_KEYWORDS.number,array:SCHEMA_KEYWORDS.array,object:SCHEMA_KEYWORDS.object}))
+    for(const key of list)if(s[key]!==undefined&&family!==name)bad(`${key} exige type ${name==='number'?'number ou integer':name}`);
+  if(s.anyOf!==undefined){
+    if(!Array.isArray(s.anyOf)||!s.anyOf.length)bad('anyOf doit être une liste non vide');
+    const siblings=keys.filter(key=>key!=='anyOf'&&!(SCHEMA_KEYWORDS.annotations as readonly string[]).includes(key));
+    if(siblings.length)bad(`anyOf ne se combine pas avec ${siblings.join(', ')} ; placer ces contraintes dans chaque branche`);
+    s.anyOf.forEach((option:unknown,i:number)=>assertJsonSchema(option,`${label}.anyOf[${i}]`,depth+1));
+  }
+  if(s.enum!==undefined&&(!Array.isArray(s.enum)||!s.enum.length||!s.enum.every((v:unknown)=>v===null||['string','number','boolean'].includes(typeof v))))bad('enum doit lister des valeurs scalaires');
+  if(s.pattern!==undefined)schemaPattern(s.pattern,label);
+  for(const key of ['minLength','maxLength','minItems','maxItems'])if(s[key]!==undefined&&(!Number.isInteger(s[key])||s[key]<0))bad(`${key} doit être un entier positif`);
+  for(const key of ['minimum','maximum'])if(s[key]!==undefined&&(typeof s[key]!=='number'||!Number.isFinite(s[key])))bad(`${key} doit être un nombre`);
+  if(s.minLength!==undefined&&s.maxLength!==undefined&&s.minLength>s.maxLength)bad('minLength dépasse maxLength');
+  if(s.minItems!==undefined&&s.maxItems!==undefined&&s.minItems>s.maxItems)bad('minItems dépasse maxItems');
+  if(s.minimum!==undefined&&s.maximum!==undefined&&s.minimum>s.maximum)bad('minimum dépasse maximum');
+  if(s.format!==undefined&&!(SCHEMA_FORMATS as readonly string[]).includes(s.format))bad(`format non pris en charge : ${String(s.format)}`);
+  for(const key of ['description','title'])if(s[key]!==undefined&&(typeof s[key]!=='string'||s[key].length>2000))bad(`${key} doit être un texte de 2000 caractères au plus`);
+  for(const key of ['readOnly','writeOnly','deprecated'])if(s[key]!==undefined&&typeof s[key]!=='boolean')bad(`${key} doit être un booléen`);
+  if(s.properties!==undefined){
+    if(!s.properties||typeof s.properties!=='object'||Array.isArray(s.properties))bad('properties doit être un objet');
+    if(Object.getPrototypeOf(s.properties)!==Object.prototype&&Object.getPrototypeOf(s.properties)!==null)bad('properties doit être un objet simple');
+    for(const [key,child] of Object.entries(s.properties)){if(!propertyName.test(key)||(UNSAFE_PROPERTY_NAMES as readonly string[]).includes(key))bad(`nom de propriété refusé : ${key}`);assertJsonSchema(child,`${label}.${key}`,depth+1);}
+  }
+  if(s.required!==undefined){
+    if(!Array.isArray(s.required)||!s.required.every((k:unknown)=>typeof k==='string'))bad('required doit lister des noms');
+    for(const key of s.required)if((UNSAFE_PROPERTY_NAMES as readonly string[]).includes(key))bad(`nom de propriété refusé : ${key}`);
+    if(s.additionalProperties===false)for(const key of s.required)if(!s.properties||!Object.hasOwn(s.properties,key))bad(`champ requis non déclaré : ${key}`);
+  }
+  if(s.additionalProperties!==undefined&&typeof s.additionalProperties!=='boolean'){
+    if(typeof s.additionalProperties!=='object'||!s.additionalProperties||Array.isArray(s.additionalProperties))bad('additionalProperties doit être un booléen ou un schéma');
+    assertJsonSchema(s.additionalProperties,`${label}.*`,depth+1);
+  }
+  if(s.items!==undefined)assertJsonSchema(s.items,`${label}[]`,depth+1);
+}
+/** Two routes are equivalent when they differ only by the name of a parameter: /records/:id and /records/:recordId share one key. */
+export function routeKey(method:string,path:string):string{return `${method} ${path.replace(/\/$/,'').replace(/:[A-Za-z0-9_]+/g,':*')}`;}
+/**
+ * Validate application operations and mark them for the generic executor.
+ * Business operations belong to a declared module and never exceed its read roles;
+ * system descriptors (jobs…) use an explicit moduleId that is not a business module.
+ */
+export function appOperations(app:AppDefinition,definitions:AppOperationDefinition[]=[]):Operation[]{
+  const result:Operation[]=[],ids=new Set<string>();
+  for(const definition of definitions){
+    if(!definition||typeof definition!=='object'||typeof definition.handle!=='function'||!definition.operation||typeof definition.operation!=='object')throw new Error('Une opération applicative déclare une Operation et un handler.');
+    const op=definition.operation;
+    if(!operationIdPattern.test(op.id)||ids.has(op.id))throw new Error(`Identifiant d’opération applicative invalide ou dupliqué : ${String(op.id)}.`);
+    if(!methods.includes(op.method))throw new Error(`Méthode HTTP non prise en charge pour ${op.id}.`);
+    for(const path of [op.path,...(op.aliases??[])])if(typeof path!=='string'||!path.startsWith('/api/v1/')||/\/\/|\s/.test(path))throw new Error(`Chemin invalide pour ${op.id} : chaque route commence par /api/v1/.`);
+    if(typeof op.description!=='string'||!op.description.trim()||typeof op.moduleName!=='string'||!op.moduleName.trim())throw new Error(`Description et nom de module requis pour ${op.id}.`);
+    if(!idPattern.test(op.moduleId))throw new Error(`moduleId invalide pour ${op.id}.`);
+    const module=app.modules.find(m=>m.id===op.moduleId);
+    if(op.kind==='business'&&!module)throw new Error(`L’opération ${op.id} référence un module absent de l’application : ${op.moduleId}.`);
+    if(op.kind!=='business'&&module)throw new Error(`Le descripteur système ${op.id} ne peut pas réutiliser le module métier ${op.moduleId}.`);
+    if(!Array.isArray(op.roles)||!op.roles.length||!op.roles.every(r=>roles.includes(r))||new Set(op.roles).size!==op.roles.length)throw new Error(`Rôles invalides pour ${op.id}.`);
+    if(op.method==='GET'&&op.bodySchema)throw new Error(`L’opération GET ${op.id} n’accepte pas de corps métier.`);
+    if(op.essential)throw new Error(`Une opération applicative ne peut pas être déclarée indispensable : ${op.id}.`);
+    if(typeof op.toolName!=='string'||!/^[a-z][a-z0-9_]{1,80}$/.test(op.toolName))throw new Error(`Nom d’outil invalide pour ${op.id}.`);
+    if(!op.inputSchema||typeof op.inputSchema!=='object')throw new Error(`inputSchema requis pour ${op.id}.`);
+    assertJsonSchema(op.inputSchema,`${op.id}.inputSchema`);
+    if(op.bodySchema!==undefined)assertJsonSchema(op.bodySchema,`${op.id}.bodySchema`);
+    if(op.querySchema!==undefined)assertJsonSchema(op.querySchema,`${op.id}.querySchema`);
+    const readers=module?(module.readRoles??roles):roles;
+    const allowed=op.roles.filter(r=>readers.includes(r));
+    if(!allowed.length)throw new Error(`Aucun rôle de ${op.id} ne peut lire le module ${op.moduleId}.`);
+    ids.add(op.id);
+    result.push({...op,roles:allowed,source:'app'});
+  }
+  return result;
+}
+/**
+ * Refuse duplicate IDs, method/path/alias routes and tool names across the whole catalogue.
+ * Routes are compared by shape: parameter names never distinguish two routes, so an application
+ * operation can never be silently masked by a native one that differs only by :id/:recordId.
+ */
+export function assertUniqueOperations(operations:Operation[]):Operation[]{
+  const ids=new Map<string,string>(),routes=new Map<string,string>(),tools=new Map<string,string>();
+  const collide=(code:OperationCatalogErrorCode,label:string,key:string,previous:string,current:string)=>{throw new OperationCatalogError(code,`${label}: ${key} (${previous}, ${current})`,[previous,current]);};
+  for(const op of operations){
+    const previous=ids.get(op.id);if(previous!==undefined)collide('duplicate_operation','Duplicate operation',op.id,previous,op.id);ids.set(op.id,op.id);
+    for(const path of [op.path,...(op.aliases??[])]){const key=routeKey(op.method,path);const owner=routes.get(key);if(owner!==undefined)collide('duplicate_route','Duplicate route',key,owner,op.id);routes.set(key,op.id);}
+    const tool=tools.get(op.toolName);if(tool!==undefined)collide('duplicate_tool','Duplicate tool',op.toolName,tool,op.id);tools.set(op.toolName,op.id);
+  }
+  return operations;
 }
 export function operationAllowed(op:Operation,org:Workspace):boolean {
   if(!op.roles.includes(org.role))return false;
@@ -132,8 +277,25 @@ export function canReadModule(org:Workspace,id:string):boolean {
   const identifiers=[`module:${id}`,`module.${id}.list`,`module.${id}.get`,`${id}.list`,`${id}.get`,`${id}.detail`,...(id==='files'?['files.download']:[])];
   return !(org.operationPolicies??[]).some(p=>identifiers.includes(p.operationId)&&p.effect==='deny');
 }
+const routeMatches=(route:string,pathname:string)=>{
+  const pattern=route.replace(/\/$/,'').split('/'),actual=pathname.split('/');
+  return pattern.length===actual.length&&pattern.every((segment,i)=>segment.startsWith(':')?actual[i].length>0:segment===actual[i]);
+};
+/**
+ * Resolve a request to one operation. Literal segments beat parameters; on an exact tie of shape
+ * (impossible after assertUniqueOperations) an application operation is preferred, so a native
+ * route keeps its priority only when no extension claims it.
+ */
 export function matchOperation(operations:Operation[],method:string,path:string):Operation|undefined {
   const normalized=path.replace(/\/$/,'');
-  return [...operations].sort((a,b)=>(a.path.match(/:/g)?.length??0)-(b.path.match(/:/g)?.length??0)).find(op=>op.method===method&&[op.path,...(op.aliases??[])].some(route=>new RegExp('^'+route.split('/').map(p=>p.startsWith(':')?'[^/]+':p.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('/')+'$').test(normalized)));
+  const candidates:{op:Operation;shape:string;params:number}[]=[];
+  for(const op of operations){
+    if(op.method!==method)continue;
+    for(const route of [op.path,...(op.aliases??[])])if(routeMatches(route,normalized))candidates.push({op,shape:routeKey(method,route),params:(route.match(/\/:/g)?.length??0)});
+  }
+  // Literal beats parameter at the first differing segment; two matching literals are always equal.
+  const specificity=(a:string,b:string)=>{const x=a.split('/'),y=b.split('/');for(let i=0;i<x.length;i++){if(x[i]===y[i])continue;return x[i]===':*'?1:-1;}return 0;};
+  candidates.sort((a,b)=>a.params-b.params||specificity(a.shape,b.shape)||(a.op.source==='app'?0:1)-(b.op.source==='app'?0:1));
+  return candidates[0]?.op;
 }
 export function assertOperationAllowed(op:Operation,org:Workspace){if(!operationAllowed(op,org))fail(403,'operation_forbidden','Votre groupe n’a pas accès à cette opération.');}

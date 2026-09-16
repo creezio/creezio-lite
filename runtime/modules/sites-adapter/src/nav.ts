@@ -24,7 +24,8 @@ export function nativeEntries(app: AppDefinition): NavCatalogEntry[] {
     extra('os.access','/admin/access','Groupes et accès','Shield',78,'admin'),
     extra('os.integrations','/admin/integrations','Intégrations','KeyRound',78.5,'admin'),
     extra('os.connections','/admin/connections','Clés et connexions','KeyRound',79,'admin'),
-    ...moduleRegistry(app).filter(m=>m.kind==='business').map((m,i):NavCatalogEntry=>({id:`module.${m.id}`,href:m.href,label:m.name,icon:'FileText',group:'brand',order:40+i,source:'module',available:true,defaultVisible:true,permission:`module.${m.id}.read`}))];
+    // Collections and entities declared navigation:false own no entry; their permission stays explicit.
+    ...moduleRegistry(app).filter(m=>m.kind==='business'&&m.navigation).map((m,i):NavCatalogEntry=>({id:`module.${m.id}`,href:m.href,label:m.name,icon:'FileText',group:'brand',order:40+i,source:'module',available:true,defaultVisible:true,permission:`module.${m.id}.read`}))];
 }
 export function permissions(c:NativeContext,app:AppDefinition):string[] {
   return [...(['owner','admin'].includes(c.workspace.role)?['platform.access.manage','platform.users.manage']:[]),

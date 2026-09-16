@@ -1,5 +1,7 @@
-import type { ApiContext, BeforeWrite, Workspace } from '@lite/core';
+import type { ApiContext, AppExtensions, CredentialContext, Workspace } from '@lite/core';
 import { handleApi } from '@lite/core';
+import { executeAppOperation } from '@lite/core/commands';
+import { principalOf, sessionCredential } from '@lite/core/scope';
 import { mailRoute, mailInboundRoute } from '@lite/core/mail';
 import { integrationsRoute } from '@lite/core/integrations';
 import { assistantRoute } from '@lite/core/assistant';
@@ -11,13 +13,13 @@ import { dataTools } from '@lite/core/tools';
 import { toolBindings, mcpAdminRoute } from '@lite/core/mcp-admin';
 import { accessRoute, openApiDocument } from '@lite/core/access';
 import { matchOperation, assertOperationAllowed } from '@lite/core/operations';
-import { ApiError, fail } from '@lite/core/validation';
+import { ApiError, errorBody, fail, publicDetails } from '@lite/core/validation';
 import { checkOrigin, json, readJson } from '@lite/core/http';
 import { observabilityRoute, persistRequestLog, newRequestTrace, jsonrpcLabel, UNKNOWN_TOOL, REQUEST_ID_HEADER } from '@lite/core/observability';
 import { handleNativeApi, workspaceCookie } from './index';
 import { operationCatalog } from './catalog';
 
-export async function dispatchRequest(request:Request,context:ApiContext,options:{beforeWrite?:BeforeWrite}={}):Promise<Response>{
+export async function dispatchRequest(request:Request,context:ApiContext,options:AppExtensions={}):Promise<Response>{
   const started=performance.now();let logContext:ApiContext|undefined,logOrg:Workspace|undefined;
   const source=new URL(request.url).pathname==='/api/mcp'?'mcp':'api';
   // The request log only receives this trace: catalogue identifiers, neutral labels and a server-generated correlation id. Bodies, queries and tool arguments never enter it.
@@ -34,7 +36,9 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
     const inbound=await mailInboundRoute(request,context);if(inbound)return inbound;
     const oauth=await resolveOAuthToken(request,context),credential=oauth??await resolveToken(request,context);
     trace.credential=oauth?'oauth':credential?'api_key':'session';
-    const trusted=credential?{...context,identity:credential.identity}:context;
+    // The verified, non-secret credential reference and the correlation id travel with the context to every handler.
+    const credentialContext:CredentialContext=credential?.credential??sessionCredential;
+    const trusted:ApiContext=credential?{...context,identity:credential.identity,credential:credentialContext,requestId:trace.correlationId}:{...context,credential:credentialContext,requestId:trace.correlationId};
     const orgFor=async(req:Request)=>workspace(context.env.DB,trusted.identity!,credential?.access.workspaceId??new URL(req.url).searchParams.get('workspace')??workspaceCookie(req));
     // Each resolved operation is recorded by catalogue id: the first one names the request, nested ones (WebMCP proxy, MCP tools, assistant tools) are listed as sub-calls with their status.
     const invoke=async(incoming:Request,fixedOrg?:Workspace):Promise<Response>=>{
@@ -51,7 +55,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       if(!credential)checkOrigin(current);
       if(credential&&url.searchParams.has('workspace')&&url.searchParams.get('workspace')!==credential.access.workspaceId)fail(403,'token_workspace','Cette clé appartient à un autre espace.');
       const org=fixedOrg??await orgFor(current);
-      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app);
+      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app,options.operations);
       const op=matchOperation(operations,current.method,url.pathname);
       logOrg=org;logContext={...trusted,operations};
       if(!op)fail(404,'not_found','Route introuvable.');
@@ -60,12 +64,17 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       assertOperationAllowed(op,org);
       url=new URL(current.url);url.searchParams.set('workspace',org.id);current=new Request(url,current);
       const scoped={...trusted,workspace:org,operations};
+      if(op.source==='app'){
+        // Application handlers run after identity, workspace, role, policy, credential and origin checks, before the native kernel.
+        const definition=options.operations?.find(d=>d.operation.id===op.id);if(!definition)fail(404,'not_found','Route introuvable.');
+        return await executeAppOperation(current,definition,{app:context.app,env:context.env,identity:trusted.identity,workspace:org,principal:principalOf(trusted.identity,org,credentialContext),credential:credentialContext,scope:options.scope,requestId:trace.correlationId,defer:context.defer});
+      }
       if(path==='admin/endpoints')return json({generatedAt:new Date().toISOString(),source:'operation-registry',openapiUrl:'/api/v1/openapi.json',endpoints:operations.flatMap(o=>[o.path,...(o.aliases??[])].map(path=>({...o,path,documented:true,summary:o.description,tags:[o.moduleName]})))});
       if(path==='openapi.json')return json(openApiDocument(operations,context.app,org));
       const call=async(path:string,init:{method?:string;body?:string}={})=>{
         const target=new URL('/api/v1/'+path,request.url);target.searchParams.set('workspace',org.id);
         const result=await invoke(new Request(target,{method:init.method??'GET',headers:{origin:target.origin,...(init.body?{'content-type':'application/json'}:{})},body:init.body}),org);
-        const data=await result.json() as any;if(!result.ok)throw new ApiError(result.status,data.error?.code??data.code??'api_error',typeof data.error==='string'?data.error:data.error?.message??'Opération impossible.');return data;
+        const data=await result.json() as any;if(!result.ok)throw Object.assign(new ApiError(result.status,data.error?.code??data.code??'api_error',typeof data.error==='string'?data.error:data.error?.message??'Opération impossible.',publicDetails(data.error?.details)),{requestId:trace.correlationId});return data;
       };
       if(path==='mcp/tools'||path==='mcp/call'){
         const tools=dataTools(context.app,org.role,call,credential?.access.mode!=='read',{operations,workspace:org,bindings:await toolBindings(scoped,org,operations),machine:Boolean(credential)});
@@ -76,12 +85,12 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       }
       const assistant=await assistantRoute(current,scoped,org,{tools:async()=>{
         // Re-read membership, group policies and MCP switches before each tool call.
-        const liveOrg=await orgFor(current),liveOps=operationCatalog({db:context.env.DB,user:trusted.identity!,workspace:liveOrg},context.app);
+        const liveOrg=await orgFor(current),liveOps=operationCatalog({db:context.env.DB,user:trusted.identity!,workspace:liveOrg},context.app,options.operations);
         const assistantOp=liveOps.find(o=>o.id==='assistant.chat')!;assertOperationAllowed(assistantOp,liveOrg);
         const liveCall=async(path:string,init:{method?:string;body?:string}={})=>{
           const target=new URL('/api/v1/'+path,request.url);target.searchParams.set('workspace',org.id);
           const response=await invoke(new Request(target,{method:init.method??'GET',headers:{origin:target.origin,...(init.body?{'content-type':'application/json'}:{})},body:init.body}));
-          const data=await response.json() as any;if(!response.ok)throw new ApiError(response.status,data.error?.code??'tool_error',data.error?.message??'Opération refusée.');return data;
+          const data=await response.json() as any;if(!response.ok)throw Object.assign(new ApiError(response.status,data.error?.code??'tool_error',data.error?.message??'Opération refusée.',publicDetails(data.error?.details)),{requestId:trace.correlationId});return data;
         };
         return dataTools(context.app,liveOrg.role,liveCall,true,{operations:liveOps,workspace:liveOrg,bindings:await toolBindings({...scoped,workspace:liveOrg},liveOrg,liveOps)});
       }});
@@ -94,14 +103,14 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       const requestedWorkspace=new URL(request.url).searchParams.get('workspace');
       if(credential&&requestedWorkspace&&requestedWorkspace!==credential.access.workspaceId)fail(403,'token_workspace','Cette connexion appartient à un autre espace.');
       const org=await orgFor(request);
-      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app),scoped={...trusted,workspace:org,operations};
+      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app,options.operations),scoped={...trusted,workspace:org,operations};
       logOrg=org;logContext={...trusted,operations};
       let requestedTool:string|undefined;
       if(request.method==='POST'){const b=await readJson(request.clone()).catch(()=>({})) as any;trace.jsonrpcMethod=jsonrpcLabel(b.method);requestedTool=typeof b.params?.name==='string'?b.params.name:undefined;}
       const api=async(path:string,init:{method?:string;body?:string}={})=>{
         const target=new URL('/api/v1/'+path,request.url);target.searchParams.set('workspace',org.id);
         const response=await invoke(new Request(target,{method:init.method??'GET',headers:{origin:target.origin,...(init.body?{'content-type':'application/json'}:{})},body:init.body}),org);
-        const data=await response.json() as any;if(!response.ok)throw new ApiError(response.status,data.error?.code??data.code??'api_error',typeof data.error==='string'?data.error:data.error?.message??'Opération impossible.');return data;
+        const data=await response.json() as any;if(!response.ok)throw Object.assign(new ApiError(response.status,data.error?.code??data.code??'api_error',typeof data.error==='string'?data.error:data.error?.message??'Opération impossible.',publicDetails(data.error?.details)),{requestId:trace.correlationId});return data;
       };
       // A tool name is only logged once it matches an authorised binding; anything else is a neutral label.
       const resolveTools=async()=>{const tools=dataTools(context.app,org.role,api,credential?.access.mode!=='read',{operations,workspace:org,bindings:await toolBindings(scoped,org,operations),machine:Boolean(credential)});
@@ -109,5 +118,5 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       return await finish(await handleMcp(request,context.app,org.role,api,credential?.access.mode!=='read',resolveTools));
     }
     return await finish(await invoke(request));
-  }catch(e){const response=e instanceof ApiError?json({error:{code:e.code,message:e.message}},e.status):json({error:{code:'service_unavailable',message:'Service indisponible.'}},503);if(!(e instanceof ApiError))console.error('API dispatch failed',e instanceof Error?e.name:'Error');return await finish(response);}
+  }catch(e){const response=e instanceof ApiError?json(errorBody(e,trace.correlationId),e.status):json({error:{code:'service_unavailable',message:'Service indisponible.',requestId:trace.correlationId}},503);if(!(e instanceof ApiError))console.error('API dispatch failed',e instanceof Error?e.name:'Error');return await finish(response);}
 }
