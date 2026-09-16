@@ -67,7 +67,7 @@ Ajoute les transports purs Cursor/xAI, sans raccordement applicatif automatique.
 
 ## Notifications de nouvelles versions (depuis 0.10.1)
 
-Le responsable du kit publie une release GitHub après revue et CI réussie sur le commit exact de main. Le workflow de chaque application vérifie les releases stables toutes les 30 minutes, à la demande et lorsque `lite.lock.json` change sur main. GitHub peut retarder un horaire : ce délai est une cadence de contrôle, pas une garantie de livraison.
+Le responsable du kit publie une release GitHub après revue et CI réussie sur le commit exact de main. Le responsable du kit notifie les pilotes et déclenche leur workflow lors de la réception d’une nouvelle release. Le workflow est aussi exécutable à la demande et lorsque le verrou change sur main. Aucun schedule/cron n’est installé dans les applications.
 
 Les nouvelles applications reçoivent `.github/workflows/lite-update.yml` et `scripts/check-lite-update.mjs`. Dans une application existante, intégrer explicitement ces deux fichiers depuis la version validée du kit, activer Actions et Issues et adapter le nom de branche si nécessaire. Aucun jeton personnel ou secret inter-dépôts n’est requis : `GITHUB_TOKEN` lit le kit public et écrit seulement les issues de l’application. Aucun code applicatif ni installation de dépendance n’est exécuté par la veille.
 

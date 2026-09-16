@@ -1,7 +1,5 @@
 name: Veille Creezio Lite
 on:
-  schedule:
-    - cron: '13,43 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
