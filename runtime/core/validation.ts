@@ -31,6 +31,8 @@ export class ApiError extends Error {
   status: number; code: string;
   /** Validated public details, or undefined when none were given or they failed publicDetails. */
   details?: PublicDetails;
+  /** Correlation id of the request that produced this error, set by the dispatcher when it converts an internal response. */
+  requestId?: string;
   constructor(status: number, code: string, message: string, details?: unknown) {
     super(message); this.status = status; this.code = code;
     if (details !== undefined) { const checked = publicDetails(details); if (checked) this.details = checked; else console.error(JSON.stringify({ event: 'lite.error-details-rejected', code })); }
@@ -38,7 +40,7 @@ export class ApiError extends Error {
 }
 export function fail(status: number, code: string, message: string, details?: unknown): never { throw new ApiError(status, code, message, details); }
 /** The public error body shared by every executor: code, message, request id and validated details only. */
-export function errorBody(error: ApiError, requestId?: string): { error: { code: string; message: string; requestId?: string; details?: PublicDetails } } {
+export function errorBody(error: ApiError, requestId: string | undefined = error.requestId): { error: { code: string; message: string; requestId?: string; details?: PublicDetails } } {
   return { error: { code: error.code, message: error.message, ...(requestId ? { requestId } : {}), ...(error.details ? { details: error.details } : {}) } };
 }
 export const roles: Role[] = ['owner', 'admin', 'member', 'viewer'];

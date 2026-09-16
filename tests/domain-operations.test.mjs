@@ -2,10 +2,11 @@ import './register-native-loader.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { alice, bob, eve, client, boot, localDb, fakeBucket } from './helpers.mjs';
-import { command, read, defineExtensions, defineApp, openScope } from '../runtime/core/index.ts';
+import { command, read, defineExtensions, defineApp, openScope, publicDetails, ApiError } from '../runtime/core/index.ts';
 import { objectSchema, operation } from '../runtime/core/operations.ts';
 import { fail } from '../runtime/core/validation.ts';
 import { hash } from '../runtime/core/http.ts';
+import { REQUEST_ID_HEADER } from '../runtime/core/observability.ts';
 const { dispatchRequest } = await import('../runtime/modules/sites-adapter/src/dispatch.ts');
 
 const text=(key,label,extra={})=>({key,label,type:'text',...extra});
@@ -99,14 +100,15 @@ function extensions(scope){
     {operation:operation({kind:'system',id:'jobs.get',moduleId:'fixture-jobs',moduleName:'Traitements',method:'GET',path:'/api/v1/jobs/:id',description:'Lire un traitement',roles:['owner','admin']}),async handle(ctx){return {body:{job:{id:ctx.params.id,workspace:ctx.workspace.id}}};}},
   ]});
 }
-async function oauthToken(db,org,userId,scope='crm:read crm:write'){
+async function oauthConnection(db,org,userId,scope='crm:read crm:write'){
   const raw=`mcp_at_${Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('')}`,later=new Date(Date.now()+3600000).toISOString();
   db.raw.prepare("INSERT OR IGNORE INTO lite_oauth_clients(id,name,redirects_json,auth_method,created_at) VALUES('fx-client','Fixture','[]','none',?)").run(now());
-  const grantId=crypto.randomUUID();
+  const grantId=crypto.randomUUID(),tokenId=crypto.randomUUID(),accessHash=await hash(raw);
   db.raw.prepare('INSERT INTO lite_oauth_grants(id,client_id,org_id,user_id,scope,resource,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?)').run(grantId,'fx-client',org,userId,scope,'https://test.example/api/mcp',now(),later);
-  db.raw.prepare('INSERT INTO lite_oauth_tokens(id,grant_id,scope,access_hash,refresh_hash,access_expires_at,refresh_expires_at) VALUES(?,?,?,?,?,?,?)').run(crypto.randomUUID(),grantId,scope,await hash(raw),await hash(raw+'r'),later,later);
-  return raw;
+  db.raw.prepare('INSERT INTO lite_oauth_tokens(id,grant_id,scope,access_hash,refresh_hash,access_expires_at,refresh_expires_at) VALUES(?,?,?,?,?,?,?)').run(tokenId,grantId,scope,accessHash,await hash(raw+'r'),later,later);
+  return {raw,grantId,tokenId,clientId:'fx-client',accessHash};
 }
+const oauthToken=async(db,org,userId,scope)=>(await oauthConnection(db,org,userId,scope)).raw;
 
 test('declared reads and commands join the catalogue, OpenAPI, access matrix, MCP tools and WebMCP with validated schemas',async()=>{
   const db=await localDb();try{
@@ -392,6 +394,97 @@ test('declared patterns are enforced on every entry and invalid schemas are refu
     assert.throws(declare({code:{type:'weird'}}),/type non pris en charge/);
     assert.throws(declare({code:{type:'string',minLength:5,maxLength:2}}),/minLength/);
     assert.throws(()=>defineExtensions(domainApp,{operations:[read({moduleId:'dossiers',moduleName:'Dossiers',name:'bad',description:'d',querySchema:{type:'object',properties:{q:{type:'string'}},required:['missing'],additionalProperties:false},async handle(){return {body:{}};}})]}),/champ requis non déclaré/);
+  }finally{db.close();}
+});
+
+test('server context: verified credential reference (session, API key, OAuth token and grant), dispatcher correlation id and bounded public error details on HTTP, MCP, WebMCP and file deletion',async()=>{
+  const db=await localDb();const bucket=fakeBucket();try{
+    fixtureTables(db);
+    const seen=[],deletions=[];
+    const capturingScope={...grantScope,async deleteFile(ctx){deletions.push({requestId:ctx.requestId,credential:ctx.credential,principal:ctx.principal});await ctx.db.prepare('UPDATE lite_files SET deleted_at=? WHERE id=? AND org_id=?').bind(ctx.now,ctx.fileId,ctx.workspace.id).run();return {cleanup:'queued'};}};
+    const ext=defineExtensions(domainApp,{scope:capturingScope,operations:[
+      command({moduleId:'dossiers',moduleName:'Dossiers',name:'inspect',description:'Observer le contexte',target:'module',idempotencyKey:'none',fields:{note:{type:'string',maxLength:20}},async handle(ctx){
+        seen.push(ctx);
+        return {body:{requestId:ctx.requestId,credential:ctx.credential,principal:ctx.principal,frozen:[Object.isFrozen(ctx),Object.isFrozen(ctx.credential),Object.isFrozen(ctx.principal),Object.isFrozen(ctx.body)]}};
+      }}),
+      command({moduleId:'dossiers',moduleName:'Dossiers',name:'conflict',description:'Conflit avec détails publics',target:'module',idempotencyKey:'none',async handle(){fail(409,'version_conflict','Version attendue différente.',{current:3,expected:1,targets:['a','b']});}}),
+      command({moduleId:'dossiers',moduleName:'Dossiers',name:'leaky',description:'Détails refusés',target:'module',idempotencyKey:'none',async handle(){throw new ApiError(409,'version_conflict','Conflit.',{cause:new Error('SQLITE_CONSTRAINT secret-table'),nested:{a:1},token_hash:'abc'});}}),
+      command({moduleId:'dossiers',moduleName:'Dossiers',name:'lookalike',description:'Erreur non ApiError avec status/code/details',target:'module',idempotencyKey:'none',async handle(){throw Object.assign(new Error('secret-message'),{status:409,code:'forged_code',details:{secret:'x'}});}}),
+      command({moduleId:'dossiers',moduleName:'Dossiers',name:'plain',description:'Objet jeté',target:'module',idempotencyKey:'none',async handle(){throw {status:200,body:{ok:true},message:'secret-object'};}}),
+    ]});
+    const org=await boot(client(db,alice));await boot(client(db,bob));db.raw.prepare('INSERT INTO lite_members(org_id,user_id,role) VALUES(?,?,?)').run(org,bob.userId,'admin');
+    const owner=caller(db,alice,org,ext,domainApp,undefined,bucket),admin=caller(db,bob,org,ext,domainApp,undefined,bucket);
+    const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    // Session: the context is frozen, the credential carries no machine reference, the request id is the dispatcher header.
+    const session=await owner('modules/dossiers/commands/inspect',{method:'POST',body:{}});
+    assert.equal(session.status,200,JSON.stringify(session.body));
+    assert.deepEqual(session.body.credential,{kind:'session'});assert.deepEqual(session.body.frozen,[true,true,true,true]);
+    assert.match(session.body.requestId,uuid);assert.equal(session.body.requestId,session.headers.get(REQUEST_ID_HEADER),'same correlation id in the context and the response header');
+    assert.equal(session.body.principal.credential,'session');
+    assert.throws(()=>{seen[0].credential.kind='oauth';},TypeError);assert.throws(()=>{seen[0].principal.role='owner';},TypeError);assert.throws(()=>{seen[0].requestId='x';},TypeError);
+    // Error envelope: same request id in header and body, validated details only.
+    const conflict=await owner('modules/dossiers/commands/conflict',{method:'POST',body:{}});
+    assert.equal(conflict.status,409);assert.deepEqual(conflict.body,{error:{code:'version_conflict',message:'Version attendue différente.',requestId:conflict.headers.get(REQUEST_ID_HEADER),details:{current:3,expected:1,targets:['a','b']}}});
+    const leaky=await owner('modules/dossiers/commands/leaky',{method:'POST',body:{}});
+    assert.equal(leaky.status,409);assert.equal(leaky.body.error.details,undefined,'an invalid detail set is dropped as a whole');assert.equal(JSON.stringify(leaky.body).includes('SQLITE'),false);
+    for(const name of ['lookalike','plain']){
+      const r=await owner(`modules/dossiers/commands/${name}`,{method:'POST',body:{}});
+      assert.equal(r.status,503,name);assert.equal(r.body.error.code,'service_unavailable');assert.equal(r.body.error.details,undefined);assert.equal(r.body.error.requestId,r.headers.get(REQUEST_ID_HEADER));
+      assert.equal(/secret|forged/.test(JSON.stringify(r.body)),false,'unknown throwables never leak message, code or details');
+    }
+    // Validation errors expose the offending field; a body cannot forge the server context.
+    const forged=await owner('modules/dossiers/commands/inspect',{method:'POST',body:{principal:{role:'owner'}}});
+    assert.equal(forged.status,400);assert.deepEqual(forged.body.error.details,{field:'body.principal'});
+    for(const name of ['credential','principal','workspace','requestId','identity'])assert.throws(()=>command({moduleId:'dossiers',name:'x',description:'d',fields:{[name]:{type:'string'}},async handle(){}}),/refusé/,name);
+    assert.equal(seen.length,1,'the handler never ran for forged or invalid bodies');
+    // API key: the context references the key row, workspace and verified mode; a read key never reaches the handler on a mutation.
+    const created=await admin('access-tokens',{method:'POST',body:{name:'écriture',mode:'write',days:7}});
+    const rawKey=created.body.token,keyRow=db.raw.prepare("SELECT id,token_hash FROM lite_access_tokens WHERE name='écriture'").get();
+    const byKey=await caller(db,null,org,ext,domainApp,rawKey,bucket)('modules/dossiers/commands/inspect',{method:'POST',body:{}});
+    assert.equal(byKey.status,200,JSON.stringify(byKey.body));
+    assert.deepEqual(byKey.body.credential,{kind:'token',tokenId:keyRow.id,workspaceId:org,mode:'write'});assert.equal(byKey.body.principal.credential,'token');
+    assert.equal(byKey.body.requestId,byKey.headers.get(REQUEST_ID_HEADER));
+    const readRaw=(await admin('access-tokens',{method:'POST',body:{name:'lecture',mode:'read',days:7}})).body.token;
+    const readKey=caller(db,null,org,ext,domainApp,readRaw,bucket);
+    const refused=await readKey('modules/dossiers/commands/inspect',{method:'POST',body:{}});
+    assert.equal(refused.status,403);assert.equal(refused.body.error.code,'read_only_token');assert.equal(seen.length,2,'the read key never reached the handler');
+    assert.equal(refused.body.error.requestId,refused.headers.get(REQUEST_ID_HEADER));
+    // OAuth: token row and grant row are distinct references; the client is carried; mode follows the scope.
+    const connection=await oauthConnection(db,org,bob.userId);
+    const oauth=caller(db,null,org,ext,domainApp,connection.raw,bucket);
+    const viaMcp=await oauth('/api/mcp',{method:'POST',body:rpc('lite_command_dossiers_inspect',{body:{}})});
+    assert.equal(viaMcp.body.result.isError,undefined,JSON.stringify(viaMcp.body));
+    const mcpBody=viaMcp.body.result.structuredContent;
+    assert.deepEqual(mcpBody.credential,{kind:'oauth',tokenId:connection.tokenId,grantId:connection.grantId,clientId:'fx-client',workspaceId:org,mode:'write'});
+    assert.notEqual(mcpBody.credential.tokenId,mcpBody.credential.grantId);assert.equal(mcpBody.principal.credential,'oauth');
+    assert.equal(mcpBody.requestId,viaMcp.headers.get(REQUEST_ID_HEADER),'internal tool calls keep the dispatcher correlation id');
+    const readOnly=await oauthConnection(db,org,bob.userId,'crm:read');
+    const readMcp=await caller(db,null,org,ext,domainApp,readOnly.raw,bucket)('/api/mcp',{method:'POST',body:rpc('lite_command_dossiers_inspect',{body:{}})});
+    assert.equal(readMcp.body.error?.code,-32602,'a read-only connection does not even see the mutation tool');assert.equal(seen.length,3);
+    // MCP and WebMCP errors carry the same envelope: code, message, request id and validated details.
+    const mcpConflict=await oauth('/api/mcp',{method:'POST',body:rpc('lite_command_dossiers_conflict',{body:{}})});
+    assert.equal(mcpConflict.body.result.isError,true);
+    assert.deepEqual(mcpConflict.body.result.structuredContent,{error:{code:'version_conflict',message:'Version attendue différente.',requestId:mcpConflict.headers.get(REQUEST_ID_HEADER),details:{current:3,expected:1,targets:['a','b']}}});
+    const mcpUnknown=await oauth('/api/mcp',{method:'POST',body:rpc('lite_command_dossiers_lookalike',{body:{}})});
+    assert.equal(mcpUnknown.body.result.isError,true);assert.equal(/secret|forged/.test(JSON.stringify(mcpUnknown.body)),false);
+    const web=await owner('mcp/call',{method:'POST',body:{name:'lite_command_dossiers_conflict',arguments:{body:{}}}});
+    assert.equal(web.status,409);assert.deepEqual(web.body.error.details,{current:3,expected:1,targets:['a','b']});assert.equal(web.body.error.requestId,web.headers.get(REQUEST_ID_HEADER));
+    // File deletion: the policy receives the same correlation id and the credential reference of this request.
+    const upload=await owner('files',{method:'POST',body:new TextEncoder().encode('x'),headers:{'x-file-name':'a.txt'}});
+    const removed=await caller(db,null,org,ext,domainApp,rawKey,bucket)(`files/${upload.body.id}`,{method:'DELETE'});
+    assert.deepEqual(removed.body,{ok:true,cleanup:'queued'});
+    assert.equal(deletions.length,1);assert.equal(deletions[0].requestId,removed.headers.get(REQUEST_ID_HEADER));
+    assert.deepEqual(deletions[0].credential,{kind:'token',tokenId:keyRow.id,workspaceId:org,mode:'write'});assert.equal(deletions[0].principal.credential,'token');
+    // Anti-leak: no raw secret, Authorization value or hash in any context, response, audit row or request log.
+    const secrets=[rawKey,readRaw,keyRow.token_hash,connection.raw,connection.accessHash,readOnly.raw,readOnly.accessHash];
+    const surfaces=[JSON.stringify(seen.map(c=>({credential:c.credential,principal:c.principal,body:c.body,query:c.query,params:c.params}))),JSON.stringify(deletions),JSON.stringify([session.body,byKey.body,mcpBody,conflict.body,refused.body]),
+      JSON.stringify(db.raw.prepare('SELECT detail_json,path FROM lite_request_logs').all()),JSON.stringify(db.raw.prepare('SELECT action,details FROM lite_audit').all())];
+    for(const surface of surfaces)for(const secret of secrets)assert.equal(surface.includes(secret),false,'a secret reached a surface');
+    assert.equal(/Bearer /.test(surfaces.join('')),false);
+    assert.ok(db.raw.prepare('SELECT COUNT(*) AS n FROM lite_request_logs').get().n>0,'requests were logged');
+    // publicDetails is the explicit, documented boundary the adapter can pre-check.
+    assert.deepEqual(publicDetails({current:3,expected:1}),{current:3,expected:1});assert.ok(Object.isFrozen(publicDetails({a:1})));
+    for(const invalid of [undefined,null,[],'x',new Error('e'),{},{a:{b:1}},{a:'x'.repeat(201)},{a:Number.NaN},{'bad key':1},{password:'x'},{tokenId:'x'},{a:new Array(21).fill(1)},{a:[{}]},Object.fromEntries(Array.from({length:17},(_,i)=>[`k${i}`,i])),{a:'y'.repeat(190),b:'y'.repeat(190),c:'y'.repeat(190),d:'y'.repeat(190),e:'y'.repeat(190),f:'y'.repeat(190),g:'y'.repeat(190),h:'y'.repeat(190),i:'y'.repeat(190),j:'y'.repeat(190),k:'y'.repeat(190)}])assert.equal(publicDetails(invalid),undefined,JSON.stringify(invalid)?.slice(0,40));
   }finally{db.close();}
 });
 

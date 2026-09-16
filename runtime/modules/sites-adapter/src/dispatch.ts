@@ -74,7 +74,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       const call=async(path:string,init:{method?:string;body?:string}={})=>{
         const target=new URL('/api/v1/'+path,request.url);target.searchParams.set('workspace',org.id);
         const result=await invoke(new Request(target,{method:init.method??'GET',headers:{origin:target.origin,...(init.body?{'content-type':'application/json'}:{})},body:init.body}),org);
-        const data=await result.json() as any;if(!result.ok)throw new ApiError(result.status,data.error?.code??data.code??'api_error',typeof data.error==='string'?data.error:data.error?.message??'Opération impossible.',publicDetails(data.error?.details));return data;
+        const data=await result.json() as any;if(!result.ok)throw Object.assign(new ApiError(result.status,data.error?.code??data.code??'api_error',typeof data.error==='string'?data.error:data.error?.message??'Opération impossible.',publicDetails(data.error?.details)),{requestId:trace.correlationId});return data;
       };
       if(path==='mcp/tools'||path==='mcp/call'){
         const tools=dataTools(context.app,org.role,call,credential?.access.mode!=='read',{operations,workspace:org,bindings:await toolBindings(scoped,org,operations),machine:Boolean(credential)});
@@ -90,7 +90,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
         const liveCall=async(path:string,init:{method?:string;body?:string}={})=>{
           const target=new URL('/api/v1/'+path,request.url);target.searchParams.set('workspace',org.id);
           const response=await invoke(new Request(target,{method:init.method??'GET',headers:{origin:target.origin,...(init.body?{'content-type':'application/json'}:{})},body:init.body}));
-          const data=await response.json() as any;if(!response.ok)throw new ApiError(response.status,data.error?.code??'tool_error',data.error?.message??'Opération refusée.',publicDetails(data.error?.details));return data;
+          const data=await response.json() as any;if(!response.ok)throw Object.assign(new ApiError(response.status,data.error?.code??'tool_error',data.error?.message??'Opération refusée.',publicDetails(data.error?.details)),{requestId:trace.correlationId});return data;
         };
         return dataTools(context.app,liveOrg.role,liveCall,true,{operations:liveOps,workspace:liveOrg,bindings:await toolBindings({...scoped,workspace:liveOrg},liveOrg,liveOps)});
       }});
@@ -110,7 +110,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       const api=async(path:string,init:{method?:string;body?:string}={})=>{
         const target=new URL('/api/v1/'+path,request.url);target.searchParams.set('workspace',org.id);
         const response=await invoke(new Request(target,{method:init.method??'GET',headers:{origin:target.origin,...(init.body?{'content-type':'application/json'}:{})},body:init.body}),org);
-        const data=await response.json() as any;if(!response.ok)throw new ApiError(response.status,data.error?.code??data.code??'api_error',typeof data.error==='string'?data.error:data.error?.message??'Opération impossible.',publicDetails(data.error?.details));return data;
+        const data=await response.json() as any;if(!response.ok)throw Object.assign(new ApiError(response.status,data.error?.code??data.code??'api_error',typeof data.error==='string'?data.error:data.error?.message??'Opération impossible.',publicDetails(data.error?.details)),{requestId:trace.correlationId});return data;
       };
       // A tool name is only logged once it matches an authorised binding; anything else is a neutral label.
       const resolveTools=async()=>{const tools=dataTools(context.app,org.role,api,credential?.access.mode!=='read',{operations,workspace:org,bindings:await toolBindings(scoped,org,operations),machine:Boolean(credential)});
