@@ -29,6 +29,7 @@ Ouvrir ensuite le projet avec Sites et suivre son `AGENTS.md`. Ne pas publier le
 - [Recherche](docs/SEARCH.md)
 - [API et MCP](docs/API.md)
 - [Mises à jour](docs/UPDATES.md)
+- [Maintenance et notifications](docs/MAINTENANCE.md)
 - [Validation](docs/VALIDATION.md)
 
 La recherche textuelle est insensible à la casse et aux accents et accepte les préfixes. Elle n’effectue pas de correction orthographique ni d’OCR. Pour les pièces jointes, elle couvre les noms et métadonnées, pas leur contenu binaire. Une connexion ChatGPT à un serveur MCP distant dépend aussi des modes d’authentification pris en charge par le client ; aucun connecteur n’est automatiquement installé.

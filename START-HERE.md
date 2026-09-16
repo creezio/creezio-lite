@@ -24,3 +24,7 @@ Cette commande ajoute la déclaration à `brand.json`. La prochaine compilation 
 ## Mise à jour d’une application existante
 
 Lire [docs/UPDATES.md](docs/UPDATES.md). Ne jamais réinitialiser une application ni écraser ses migrations, son brief ou son identité Sites. Le numéro de version et les empreintes du runtime sont dans `lite.lock.json`.
+
+## Abonner l’application aux correctifs
+
+Publier son code dans son propre dépôt GitHub et activer Actions et Issues. Le template embarque la veille `.github/workflows/lite-update.yml` et son script : les nouvelles releases du kit créent une demande de mise à jour dans le dépôt applicatif. Le pilote traite cette demande par une branche testée, puis vérifie le Site existant. Lire [la procédure de maintenance](docs/MAINTENANCE.md).
