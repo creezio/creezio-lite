@@ -2,17 +2,29 @@
   "formatVersion": 2,
   "provider": "cursor",
   "api": "https://api.cursor.com/v1",
+  "catalogCheckedAt": "2026-09-16T18:25:18Z",
   "default": "fable",
   "selections": {
-    "fable": { "modelId": "claude-fable-5-1-thinking-high", "params": [], "use": "Habituel et conservateur : la majorité des missions." },
-    "opus": { "modelId": "claude-opus-5-thinking-high", "params": [], "use": "Dernière Claude Opus : seulement une mission clairement plus simple et bornée dès l’attribution." },
-    "grok": { "modelId": "cursor-grok-4.6-high", "params": [], "use": "Grok 4.6 : seulement une mission clairement plus simple et bornée dès l’attribution ; aucun contexte inventé." }
+    "fable": {
+      "modelId": "claude-fable-5-1",
+      "params": [{ "id": "thinking", "value": "true" }, { "id": "context", "value": "300k" }, { "id": "effort", "value": "high" }],
+      "use": "Habituel et conservateur : la majorité des missions."
+    },
+    "opus": {
+      "modelId": "claude-opus-5",
+      "params": [{ "id": "thinking", "value": "true" }, { "id": "context", "value": "300k" }, { "id": "effort", "value": "medium" }, { "id": "fast", "value": "false" }, { "id": "cyber", "value": "false" }],
+      "use": "Dernière Claude Opus : seulement une mission clairement plus simple et bornée dès l’attribution."
+    },
+    "grok": {
+      "modelId": "grok-4.6",
+      "params": [{ "id": "effort", "value": "medium" }, { "id": "fast", "value": "false" }],
+      "use": "Grok 4.6 : seulement une mission clairement plus simple et bornée dès l’attribution. Aucun paramètre de contexte exposé ; n’en inventer aucun."
+    }
   },
-  "disabledWhenExposed": { "fast": "false", "cyber": "false" },
   "rules": {
     "chosenOnceAtAttribution": true,
     "keptForFollowups": true,
     "fallback": "none"
   },
-  "catalogNote": "Identifiants à confirmer par le préflight authentifié GET /v1/models ; aucun alias présumé. Une variante complète du catalogue doit correspondre à la sélection."
+  "catalogNote": "Identifiants et paramètres relevés dans le catalogue authentifié du compte (GET /v1/models) et confirmés par le pilote connecté. Chaque combinaison est une variante complète du catalogue ; le préflight exige l’égalité exacte, sans complétion ni substitution. Toute évolution passe par une PR du kit."
 }

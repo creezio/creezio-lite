@@ -36,10 +36,8 @@ export function validateSelections(config) {
     selections[name] = { key: name, modelId: entry.modelId, params: paramsList(entry.params ?? [], `selections.${name}.params`) };
   }
   if (typeof config.default !== 'string' || !selections[config.default]) throw new UsageError('cursor-model.json : default doit désigner une sélection.');
-  const disabledWhenExposed = config.disabledWhenExposed ?? {};
-  if (typeof disabledWhenExposed !== 'object' || Object.values(disabledWhenExposed).some(v => typeof v !== 'string')) throw new UsageError('cursor-model.json : disabledWhenExposed invalide.');
   if (config.rules?.fallback !== 'none' || config.rules?.chosenOnceAtAttribution !== true || config.rules?.keptForFollowups !== true) throw new UsageError('cursor-model.json : rules {chosenOnceAtAttribution, keptForFollowups, fallback:none} imposées.');
-  return { default: config.default, selections, disabledWhenExposed: { ...disabledWhenExposed } };
+  return { default: config.default, selections, catalogCheckedAt: typeof config.catalogCheckedAt === 'string' ? config.catalogCheckedAt : null };
 }
 export async function loadSelections(file = selectionsFile) {
   let raw; try { raw = JSON.parse(await readFile(file, 'utf8')); } catch { throw new UsageError('cursor-model.json illisible.'); }
@@ -126,17 +124,8 @@ function parseModels(data) {
 }
 const paramKey = params => params.map(p => `${p.id}=${p.value}`).sort().join('&');
 
-// Paramètres complets envoyés : la sélection, plus les options désactivées par défaut (fast, cyber) lorsque le catalogue les expose.
-function completeParams(selection, model, disabledWhenExposed) {
-  const params = selection.params.map(p => ({ ...p }));
-  for (const [id, value] of Object.entries(disabledWhenExposed)) {
-    const exposed = model.parameters?.find(p => p.id === id);
-    if (exposed && !params.some(p => p.id === id) && exposed.values.includes(value)) params.push({ id, value });
-  }
-  return params;
-}
-// Préflight : catalogue authentifié et daté ; identifiant exact listé ; une variante complète du catalogue correspond. Aucun repli.
-export async function preflight({ selection, config, key, fetchImpl, timeoutMs } = {}) {
+// Préflight : catalogue authentifié et daté ; identifiant exact listé ; la combinaison complète de la sélection est égale à une variante du catalogue. Aucune complétion, aucun repli.
+export async function preflight({ selection, key, fetchImpl, timeoutMs } = {}) {
   const checkedAt = new Date().toISOString();
   const base = { command: 'preflight', selection: selection.key, requested: { modelId: selection.modelId, params: selection.params }, catalog: { checkedAt, validated: false }, fallback: 'none' };
   const result = await call({ path: '/v1/models', key, fetchImpl, timeoutMs });
@@ -150,11 +139,11 @@ export async function preflight({ selection, config, key, fetchImpl, timeoutMs }
     const family = selection.modelId.split(/[-.]/).find(part => /^[a-z]{3,}$/i.test(part) && !/^(claude|cursor|thinking|high|low|medium|fast)$/i.test(part));
     return { ...base, status: 'blocked', reason: 'model_absent', modelsListed: models.length, candidates: models.map(m => m.id).filter(id => family && id.toLowerCase().includes(family.toLowerCase())).slice(0, 10) };
   }
-  const params = completeParams(selection, exact, config?.disabledWhenExposed ?? {});
+  const params = selection.params;
   const variants = exact.variants ?? [];
   const variant = variants.length ? variants.find(v => paramKey(v.params) === paramKey(params)) : (params.length ? undefined : { displayName: exact.displayName, params: [] });
-  if (!variant) return { ...base, status: 'blocked', reason: 'variant_invalid', completeParams: params, variants: variants.map(v => ({ displayName: v.displayName, params: v.params, isDefault: v.isDefault })), modelsListed: models.length };
-  return { ...base, status: 'ok', catalog: { checkedAt, validated: true, displayName: exact.displayName, variant: variant.displayName, completeParams: params, modelsListed: models.length } };
+  if (!variant) return { ...base, status: 'blocked', reason: 'variant_invalid', variants: variants.map(v => ({ displayName: v.displayName, params: v.params, isDefault: v.isDefault })), modelsListed: models.length };
+  return { ...base, status: 'ok', catalog: { checkedAt, validated: true, displayName: exact.displayName, variant: variant.displayName, modelsListed: models.length } };
 }
 
 // Registre privé, hors dépôt : { formatVersion:1, missions:{ [mission]: entrée } }. Écriture atomique.
@@ -197,12 +186,13 @@ export async function launch({ mission, repo, ref, prUrl, promptText, name, auto
   const chosen = resolveSelection(config, select);
   const registry = await loadRegistry(registryFile);
   const existing = registry.missions[mission];
-  if (existing && activeStates.has(existing.state)) return { command: 'launch', status: 'deduplicated', mission, entry: existing, nextAction: existing.state === 'uncertain' ? 'reconcile' : 'followup ou nouvelle clé de mission' };
-  const check = await preflight({ selection: chosen, config, key, fetchImpl, timeoutMs });
+  // pending = POST interrompu avant enregistrement du résultat : l'agent existe peut-être ; reconcile, jamais un nouveau lancement ni une reprise aveugle.
+  if (existing && activeStates.has(existing.state)) return { command: 'launch', status: 'deduplicated', mission, entry: existing, nextAction: ['uncertain', 'pending'].includes(existing.state) ? 'reconcile' : 'followup ou nouvelle clé de mission' };
+  const check = await preflight({ selection: chosen, key, fetchImpl, timeoutMs });
   if (check.status !== 'ok') return { command: 'launch', status: check.status, mission, preflight: check };
   const agentId = missionAgentId(repoUrl, mission);
   // La sélection est fixée ici, une fois, et conservée pour toute la mission (reprises comprises).
-  const selection = { key: chosen.key, modelId: chosen.modelId, params: check.catalog.completeParams, catalog: { checkedAt: check.catalog.checkedAt, displayName: check.catalog.displayName, variant: check.catalog.variant } };
+  const selection = { key: chosen.key, modelId: chosen.modelId, params: chosen.params, catalog: { checkedAt: check.catalog.checkedAt, displayName: check.catalog.displayName, variant: check.catalog.variant } };
   const entry = { agentId, repo: repoUrl, ...(prUrl ? { prUrl } : { ref }), selection, state: 'pending', updatedAt: now() };
   registry.missions[mission] = entry; await saveRegistry(registryFile, registry);
   const body = { agentId, prompt: { text: promptText }, model: selection.params.length ? { id: selection.modelId, params: selection.params } : { id: selection.modelId }, repos: [prUrl ? { url: repoUrl, prUrl } : { url: repoUrl, startingRef: ref }], workOnCurrentBranch, autoCreatePR, ...(name ? { name: String(name).slice(0, 100) } : {}) };
@@ -291,7 +281,7 @@ export async function followup({ agentId, mission, registryFile, promptText, key
   let registry, entry;
   if (mission !== undefined) {
     ({ registry, entry } = await missionEntry({ mission, registryFile }));
-    if (!['launched', 'reconciled'].includes(entry.state)) throw new UsageError(`Mission en état ${entry.state} : reconcile ou launch avant toute reprise.`);
+    if (!['launched', 'reconciled'].includes(entry.state)) throw new UsageError(`Mission en état ${entry.state} : ${entry.state === 'not_created' || entry.state === 'failed' ? 'launch' : 'reconcile'} avant toute reprise.`);
     agentId ??= entry.agentId;
     if (agentId !== entry.agentId) throw new UsageError('L’agent indiqué n’est pas celui de la mission.');
   }
@@ -349,7 +339,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
   const key = readKey(env);
   if (!key) throw new UsageError('CURSOR_API_KEY absente ou invalide dans l’environnement ; aucun appel émis.');
   const emit = report => { log(JSON.stringify(report)); return exitCodeFor(report); };
-  if (command === 'preflight') { const config = await loadSelections(options['model-file']); return emit(await preflight({ selection: resolveSelection(config, options.select), config, key, fetchImpl })); }
+  if (command === 'preflight') { const config = await loadSelections(options['model-file']); return emit(await preflight({ selection: resolveSelection(config, options.select), key, fetchImpl })); }
   if (command === 'launch') {
     const config = await loadSelections(options['model-file']);
     if (!options['prompt-file']) throw new UsageError('--prompt-file requis.');

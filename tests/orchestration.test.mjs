@@ -15,7 +15,15 @@ const PROMPT_MARKER = 'BRIEF_PRIVATE_MARKER@example.test';
 const REPO = 'https://github.com/example-org/example-app';
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', ...headers } });
 const models = (items) => json({ items });
-const fable = { id: 'claude-fable-5-1-thinking-high', displayName: 'Claude Fable 5.1 (Thinking, high)', variants: [{ params: [], displayName: 'Claude Fable 5.1 (Thinking, high)', isDefault: true }] };
+// Fixtures représentatives du schéma réel du catalogue (identifiants canoniques et variantes complètes) ; le catalogue réel est relu par le pilote connecté.
+const values = (...list) => list.map(value => ({ value }));
+const P = (id, value) => ({ id, value });
+const fable = { id: 'claude-fable-5-1', displayName: 'Claude Fable 5.1', parameters: [{ id: 'thinking', values: values('true', 'false') }, { id: 'context', values: values('200k', '300k') }, { id: 'effort', values: values('low', 'medium', 'high') }],
+  variants: [{ params: [P('thinking', 'true'), P('context', '200k'), P('effort', 'high')], displayName: 'Fable 5.1 Thinking High', isDefault: true }, { params: [P('thinking', 'true'), P('context', '300k'), P('effort', 'high')], displayName: 'Fable 5.1 Thinking High 300k' }, { params: [P('thinking', 'false'), P('context', '200k'), P('effort', 'low')], displayName: 'Fable 5.1' }] };
+const opus = { id: 'claude-opus-5', displayName: 'Claude Opus 5', parameters: [{ id: 'thinking', values: values('true', 'false') }, { id: 'context', values: values('200k', '300k') }, { id: 'effort', values: values('low', 'medium', 'high') }, { id: 'fast', values: values('true', 'false') }, { id: 'cyber', values: values('true', 'false') }],
+  variants: [{ params: [P('thinking', 'true'), P('context', '300k'), P('effort', 'medium'), P('fast', 'false'), P('cyber', 'false')], displayName: 'Opus 5 Thinking Medium 300k' }, { params: [P('thinking', 'true'), P('context', '300k'), P('effort', 'medium'), P('fast', 'true'), P('cyber', 'false')], displayName: 'Opus 5 Thinking Medium 300k Fast', isDefault: true }] };
+const grok = { id: 'grok-4.6', displayName: 'Grok 4.6', parameters: [{ id: 'effort', values: values('low', 'medium', 'high') }, { id: 'fast', values: values('true', 'false') }],
+  variants: [{ params: [P('effort', 'medium'), P('fast', 'false')], displayName: 'Grok 4.6 Medium' }, { params: [P('effort', 'medium'), P('fast', 'true')], displayName: 'Grok 4.6 Medium Fast', isDefault: true }] };
 const other = { id: 'other-model', displayName: 'Other', aliases: ['other-latest'], parameters: [{ id: 'fast', values: [{ value: 'true' }, { value: 'false' }] }], variants: [{ params: [{ id: 'fast', value: 'true' }], displayName: 'Other fast', isDefault: true }, { params: [{ id: 'fast', value: 'false' }], displayName: 'Other' }] };
 const AGENT = agents.missionAgentId(REPO, 'O01');
 const RUN = 'run-00000000-0000-4000-8000-000000000001';
@@ -54,9 +62,11 @@ test('the canonical skill has a valid frontmatter, fixed selections without fall
   }
   const config = agents.validateSelections(JSON.parse(await readFile(sources[`${orchestrationDir}/cursor-model.json`], 'utf8')));
   assert.equal(config.default, 'fable'); assert.deepEqual(Object.keys(config.selections), ['fable', 'opus', 'grok']);
-  assert.equal(agents.resolveSelection(config).modelId, 'claude-fable-5-1-thinking-high'); assert.equal(agents.resolveSelection(config, 'opus').modelId, 'claude-opus-5-thinking-high'); assert.equal(agents.resolveSelection(config, 'grok').modelId, 'cursor-grok-4.6-high');
-  assert.ok(Object.values(config.selections).every(s => s.params.length === 0), 'aucun contexte ni effort inventé hors catalogue');
-  assert.deepEqual(config.disabledWhenExposed, { fast: 'false', cyber: 'false' });
+  assert.deepEqual(agents.resolveSelection(config), { key: 'fable', modelId: 'claude-fable-5-1', params: [P('thinking', 'true'), P('context', '300k'), P('effort', 'high')] });
+  assert.deepEqual(agents.resolveSelection(config, 'opus'), { key: 'opus', modelId: 'claude-opus-5', params: [P('thinking', 'true'), P('context', '300k'), P('effort', 'medium'), P('fast', 'false'), P('cyber', 'false')] });
+  assert.deepEqual(agents.resolveSelection(config, 'grok'), { key: 'grok', modelId: 'grok-4.6', params: [P('effort', 'medium'), P('fast', 'false')] }, 'aucun contexte Grok inventé');
+  assert.equal(config.catalogCheckedAt, '2026-09-16T18:25:18Z');
+  for (const key of ['fable', 'opus', 'grok']) { const sel = agents.resolveSelection(config, key); assert.ok(!sel.params.some(p => ['fast', 'cyber'].includes(p.id) && p.value !== 'false'), `${key} : fast/cyber désactivés`); }
   assert.throws(() => agents.resolveSelection(config, 'sonnet'), /Sélection inconnue/);
   assert.throws(() => agents.validateSelections({ formatVersion: 2, provider: 'cursor', default: 'a', selections: { a: { modelId: 'x' } }, rules: { chosenOnceAtAttribution: true, keptForFollowups: true, fallback: 'first-available' } }), /fallback:none/);
   const script = await readFile(sources[`${orchestrationDir}/scripts/cursor-agents.mjs`], 'utf8');
@@ -67,36 +77,39 @@ test('the canonical skill has a valid frontmatter, fixed selections without fall
 
 test('preflight validates the selection against a complete catalog variant, without fallback', async () => {
   const config = await selections(); const fableSel = agents.resolveSelection(config);
-  const ok = recorder({ 'GET /v1/models': () => models([other, fable]) });
-  const accepted = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: ok.fetchImpl });
+  const ok = recorder({ 'GET /v1/models': () => models([other, fable, opus, grok]) });
+  const accepted = await agents.preflight({ selection: fableSel, key: KEY, fetchImpl: ok.fetchImpl });
   assert.equal(accepted.status, 'ok'); assert.equal(accepted.selection, 'fable'); assert.equal(accepted.fallback, 'none');
-  assert.deepEqual(accepted.requested, { modelId: fableSel.modelId, params: [] });
-  assert.equal(accepted.catalog.validated, true); assert.equal(accepted.catalog.modelsListed, 2); assert.deepEqual(accepted.catalog.completeParams, []); assert.match(accepted.catalog.checkedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(accepted.requested, { modelId: 'claude-fable-5-1', params: fableSel.params });
+  assert.equal(accepted.catalog.validated, true); assert.equal(accepted.catalog.modelsListed, 4); assert.equal(accepted.catalog.variant, 'Fable 5.1 Thinking High 300k'); assert.match(accepted.catalog.checkedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(ok.calls.length, 1); assert.equal(ok.calls[0].headers.authorization, `Bearer ${KEY}`); assert.equal(ok.calls[0].redirect, 'manual'); assert.equal(ok.calls[0].url, 'https://api.cursor.com/v1/models');
   assertNoLeak(accepted);
+  for (const [key, variant] of [['opus', 'Opus 5 Thinking Medium 300k'], ['grok', 'Grok 4.6 Medium']]) {
+    const report = await agents.preflight({ selection: agents.resolveSelection(config, key), key: KEY, fetchImpl: ok.fetchImpl });
+    assert.equal(report.status, 'ok', key); assert.equal(report.catalog.variant, variant, 'variante non-fast retenue, pas la variante par défaut du catalogue');
+  }
 
-  const absent = recorder({ 'GET /v1/models': () => models([other, { id: 'claude-fable-5-1-thinking', displayName: 'Fable' }, { id: 'claude-fable-5-thinking-high', displayName: 'Fable 5' }]) });
-  const blocked = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: absent.fetchImpl });
-  assert.equal(blocked.status, 'blocked'); assert.equal(blocked.reason, 'model_absent'); assert.equal(blocked.catalog.validated, false); assert.deepEqual(blocked.candidates, ['claude-fable-5-1-thinking', 'claude-fable-5-thinking-high']);
+  // Les anciens slugs ne sont pas les identifiants canoniques : absent, sans repli, candidats informatifs seulement.
+  const absent = recorder({ 'GET /v1/models': () => models([other, { id: 'claude-fable-5-1-thinking-high', displayName: 'Fable (slug)' }, { id: 'claude-fable-5', displayName: 'Fable 5' }]) });
+  const blocked = await agents.preflight({ selection: fableSel, key: KEY, fetchImpl: absent.fetchImpl });
+  assert.equal(blocked.status, 'blocked'); assert.equal(blocked.reason, 'model_absent'); assert.equal(blocked.catalog.validated, false); assert.deepEqual(blocked.candidates, ['claude-fable-5-1-thinking-high', 'claude-fable-5']);
   assert.equal(absent.calls.length, 1, 'aucun second appel ni sélection de remplacement');
 
-  const alias = recorder({ 'GET /v1/models': () => models([{ id: 'claude-fable-5-1-thinking', displayName: 'Fable', aliases: [fableSel.modelId] }]) });
-  const aliased = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: alias.fetchImpl });
-  assert.equal(aliased.status, 'blocked'); assert.equal(aliased.reason, 'alias_only'); assert.equal(aliased.canonicalId, 'claude-fable-5-1-thinking');
+  const alias = recorder({ 'GET /v1/models': () => models([{ ...fable, id: 'claude-fable-5-1-latest', aliases: ['claude-fable-5-1'] }]) });
+  const aliased = await agents.preflight({ selection: fableSel, key: KEY, fetchImpl: alias.fetchImpl });
+  assert.equal(aliased.status, 'blocked'); assert.equal(aliased.reason, 'alias_only'); assert.equal(aliased.canonicalId, 'claude-fable-5-1-latest');
 
-  // Variante complète : fast exposé ⇒ désactivé par défaut, puis la combinaison doit exister dans le catalogue.
-  const fastExposed = { ...fable, parameters: other.parameters, variants: other.variants.map(v => ({ ...v, displayName: v.displayName.replace('Other', 'Fable') })) };
-  const disabled = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([fastExposed]) }).fetchImpl });
-  assert.equal(disabled.status, 'ok'); assert.deepEqual(disabled.catalog.completeParams, [{ id: 'fast', value: 'false' }]); assert.equal(disabled.catalog.variant, 'Fable');
-  const onlyFast = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([{ ...fastExposed, variants: [fastExposed.variants[0]] }]) }).fetchImpl });
-  assert.equal(onlyFast.status, 'blocked'); assert.equal(onlyFast.reason, 'variant_invalid'); assert.deepEqual(onlyFast.completeParams, [{ id: 'fast', value: 'false' }]); assert.equal(onlyFast.variants.length, 1, 'le catalogue est rapporté, aucune variante choisie à la place');
-  const grokSel = agents.resolveSelection(config, 'grok');
-  const grokCatalog = { id: grokSel.modelId, displayName: 'Grok 4.6', parameters: [{ id: 'fast', values: [{ value: 'true' }, { value: 'false' }] }, { id: 'context', values: [{ value: '1m' }] }], variants: [{ params: [{ id: 'fast', value: 'false' }], displayName: 'Grok 4.6' }, { params: [{ id: 'fast', value: 'true' }], displayName: 'Grok 4.6 fast', isDefault: true }] };
-  const grok = await agents.preflight({ selection: grokSel, config, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([grokCatalog]) }).fetchImpl });
-  assert.equal(grok.status, 'ok'); assert.equal(grok.catalog.variant, 'Grok 4.6'); assert.ok(!grok.catalog.completeParams.some(p => p.id === 'context'), 'aucun contexte Grok inventé');
-  const extraParam = await agents.preflight({ selection: { ...fableSel, params: [{ id: 'effort', value: 'max' }] }, config, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([fable]) }).fetchImpl });
-  assert.equal(extraParam.status, 'blocked'); assert.equal(extraParam.reason, 'variant_invalid');
-  const noVariants = await agents.preflight({ selection: fableSel, config, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([{ id: fableSel.modelId, displayName: 'Fable' }]) }).fetchImpl });
+  // Combinaison complète strictement égale : ni complétion, ni paramètre partiel, ni variante voisine.
+  const without300k = { ...fable, variants: fable.variants.filter(v => !v.params.some(p => p.value === '300k')) };
+  const invalid = await agents.preflight({ selection: fableSel, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([without300k]) }).fetchImpl });
+  assert.equal(invalid.status, 'blocked'); assert.equal(invalid.reason, 'variant_invalid'); assert.equal(invalid.variants.length, 2, 'le catalogue est rapporté, aucune variante choisie à la place');
+  const partial = await agents.preflight({ selection: { ...fableSel, params: fableSel.params.filter(p => p.id !== 'context') }, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([fable]) }).fetchImpl });
+  assert.equal(partial.status, 'blocked'); assert.equal(partial.reason, 'variant_invalid', 'aucune complétion automatique du contexte');
+  const grokContext = await agents.preflight({ selection: { ...agents.resolveSelection(config, 'grok'), params: [P('effort', 'medium'), P('fast', 'false'), P('context', '300k')] }, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([grok]) }).fetchImpl });
+  assert.equal(grokContext.status, 'blocked'); assert.equal(grokContext.reason, 'variant_invalid', 'un contexte Grok inventé est refusé');
+  const opusFastOnly = await agents.preflight({ selection: agents.resolveSelection(config, 'opus'), key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([{ ...opus, variants: [opus.variants[1]] }]) }).fetchImpl });
+  assert.equal(opusFastOnly.status, 'blocked'); assert.equal(opusFastOnly.reason, 'variant_invalid', 'fast=false exigé, la variante fast n’est pas prise à la place');
+  const noVariants = await agents.preflight({ selection: { ...fableSel, params: [] }, key: KEY, fetchImpl: recorder({ 'GET /v1/models': () => models([{ id: 'claude-fable-5-1', displayName: 'Fable' }]) }).fetchImpl });
   assert.equal(noVariants.status, 'ok'); assert.equal(noVariants.catalog.variant, 'Fable');
 });
 
@@ -114,18 +127,18 @@ test('an unavailable Cursor API blocks explicitly, never substitutes a model and
   ];
   for (const [handler, reason, httpStatus] of cases) {
     const r = recorder({ 'GET /v1/models': handler });
-    const report = await agents.preflight({ selection: p, config, key: KEY, fetchImpl: r.fetchImpl });
+    const report = await agents.preflight({ selection: p, key: KEY, fetchImpl: r.fetchImpl });
     assert.equal(report.status, 'unavailable', reason); assert.equal(report.reason, reason); assert.equal(report.httpStatus, httpStatus); assert.equal(report.requested.modelId, p.modelId); assert.equal(report.catalog.validated, false);
     if (reason === 'quota') assert.equal(report.retryAfterMs, 30_000);
     assert.equal(r.calls.length, 1, 'aucune redirection suivie, aucun renvoi');
     assertNoLeak(report);
   }
   const slow = { fetchImpl: (url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(new Error('aborted')))) };
-  const timedOut = await agents.preflight({ selection: p, config, key: KEY, fetchImpl: slow.fetchImpl, timeoutMs: 50 });
+  const timedOut = await agents.preflight({ selection: p, key: KEY, fetchImpl: slow.fetchImpl, timeoutMs: 50 });
   assert.equal(timedOut.status, 'unavailable'); assert.equal(timedOut.reason, 'timeout');
-  const big = await agents.preflight({ selection: p, config, key: KEY, fetchImpl: async () => new Response('x'.repeat(3_000_000), { status: 200, headers: { 'content-type': 'application/json', 'content-length': '3000000' } }) });
+  const big = await agents.preflight({ selection: p, key: KEY, fetchImpl: async () => new Response('x'.repeat(3_000_000), { status: 200, headers: { 'content-type': 'application/json', 'content-length': '3000000' } }) });
   assert.equal(big.status, 'unavailable'); assert.equal(big.reason, 'too_large');
-  const missing = await agents.preflight({ selection: p, config, key: null, fetchImpl: () => { throw new Error('ne doit pas être appelé'); } });
+  const missing = await agents.preflight({ selection: p, key: null, fetchImpl: () => { throw new Error('ne doit pas être appelé'); } });
   assert.equal(missing.status, 'unavailable'); assert.equal(missing.reason, 'credential_missing');
   assert.equal(agents.readKey({ CURSOR_API_KEY: ' bad key ' }), null); assert.equal(agents.readKey({}), null); assert.equal(agents.readKey({ CURSOR_API_KEY: KEY }), KEY);
 });
@@ -147,23 +160,27 @@ test('launch deduplicates missions, fixes the selection once in the payload and 
     const created = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': (request) => json({ agent: agentRecord(), run: runRecord() }) });
     const launched = await agents.launch({ ...base, fetchImpl: created.fetchImpl, name: 'O01 — standard' });
     assert.equal(launched.status, 'launched'); assert.equal(launched.agentId, AGENT); assert.equal(launched.runId, RUN);
-    assert.equal(launched.selection.key, 'fable'); assert.deepEqual(launched.selection.requested, { modelId: p.modelId, params: [] });
+    assert.equal(launched.selection.key, 'fable'); assert.deepEqual(launched.selection.requested, { modelId: p.modelId, params: p.params });
     assert.equal(launched.selection.createAccepted, true); assert.equal(launched.selection.runAccepted, false); assert.equal(launched.selection.modelObserved, null); assert.match(launched.selection.catalog.checkedAt, /^\d{4}-/); assert.match(launched.selection.note, /ne prouve pas/);
     const post = created.calls[1];
     assert.equal(post.method, 'POST'); assert.equal(post.url, 'https://api.cursor.com/v1/agents');
-    assert.deepEqual(post.body, { agentId: AGENT, prompt: { text: brief }, model: { id: p.modelId }, repos: [{ url: REPO, startingRef: 'agents/O01-standard' }], workOnCurrentBranch: true, autoCreatePR: false, name: 'O01 — standard' });
+    assert.deepEqual(post.body, { agentId: AGENT, prompt: { text: brief }, model: { id: 'claude-fable-5-1', params: p.params }, repos: [{ url: REPO, startingRef: 'agents/O01-standard' }], workOnCurrentBranch: true, autoCreatePR: false, name: 'O01 — standard' });
     assert.ok(!('envVars' in post.body) && !('mcpServers' in post.body));
     assertNoLeak(launched);
     let registry = await agents.loadRegistry(registryFile);
     assert.equal(registry.missions.O01.state, 'launched'); assert.equal(registry.missions.O01.runId, RUN); assertNoLeak(registry);
-    assert.deepEqual({ key: registry.missions.O01.selection.key, modelId: registry.missions.O01.selection.modelId, params: registry.missions.O01.selection.params }, { key: 'fable', modelId: p.modelId, params: [] }, 'sélection initiale conservée dans le registre');
+    assert.deepEqual({ key: registry.missions.O01.selection.key, modelId: registry.missions.O01.selection.modelId, params: registry.missions.O01.selection.params }, { key: 'fable', modelId: p.modelId, params: p.params }, 'sélection initiale conservée dans le registre');
 
     // Sélection explicite à l’attribution : opus/grok seulement pour une mission bornée ; fast désactivé quand exposé.
-    const grokCatalog = { id: 'cursor-grok-4.6-high', displayName: 'Grok 4.6', parameters: [{ id: 'fast', values: [{ value: 'true' }, { value: 'false' }] }], variants: [{ params: [{ id: 'fast', value: 'false' }], displayName: 'Grok 4.6' }, { params: [{ id: 'fast', value: 'true' }], displayName: 'Grok 4.6 fast', isDefault: true }] };
     const grokAgent = agents.missionAgentId(REPO, 'S02');
-    const simple = recorder({ 'GET /v1/models': () => models([fable, grokCatalog]), 'POST /v1/agents': () => json({ agent: agentRecord({ id: grokAgent }), run: runRecord({ agentId: grokAgent }) }) });
+    const simple = recorder({ 'GET /v1/models': () => models([fable, grok]), 'POST /v1/agents': () => json({ agent: agentRecord({ id: grokAgent }), run: runRecord({ agentId: grokAgent }) }) });
     const bounded = await agents.launch({ ...base, mission: 'S02', select: 'grok', fetchImpl: simple.fetchImpl });
-    assert.equal(bounded.status, 'launched'); assert.deepEqual(simple.calls[1].body.model, { id: 'cursor-grok-4.6-high', params: [{ id: 'fast', value: 'false' }] }); assert.equal(bounded.selection.catalog.variant, 'Grok 4.6');
+    assert.equal(bounded.status, 'launched'); assert.deepEqual(simple.calls[1].body.model, { id: 'grok-4.6', params: [P('effort', 'medium'), P('fast', 'false')] }); assert.equal(bounded.selection.catalog.variant, 'Grok 4.6 Medium');
+    // pending orphelin (POST interrompu) : reconcile conseillé, jamais une nouvelle mission ni une reprise aveugle.
+    await agents.saveRegistry(registryFile, { formatVersion: 1, missions: { O01: { agentId: AGENT, repo: REPO, ref: 'agents/O01-standard', state: 'pending', updatedAt: 'x' } } });
+    const orphan = await agents.launch({ ...base, fetchImpl: recorder({}).fetchImpl });
+    assert.equal(orphan.status, 'deduplicated'); assert.equal(orphan.nextAction, 'reconcile');
+    await assert.rejects(agents.followup({ mission: 'O01', registryFile, promptText: 'x', key: KEY, fetchImpl: recorder({}).fetchImpl }), /état pending : reconcile/);
     await assert.rejects(agents.launch({ ...base, mission: 'S03', select: 'sonnet', fetchImpl: recorder({}).fetchImpl }), /Sélection inconnue/);
 
     const again = recorder({});
@@ -280,7 +297,7 @@ test('the CLI refuses to run without the environment key and maps outcomes to ex
   await assert.rejects(agents.main(['preflight'], { env: {}, fetchImpl: () => { throw new Error('ne doit pas être appelé'); }, log: l => logs.push(l) }), /CURSOR_API_KEY/);
   assert.equal(await agents.main(['preflight'], { env: { CURSOR_API_KEY: KEY }, fetchImpl: recorder({ 'GET /v1/models': () => models([fable]) }).fetchImpl, log: l => logs.push(l) }), 0);
   assert.equal(await agents.main(['preflight'], { env: { CURSOR_API_KEY: KEY }, fetchImpl: recorder({ 'GET /v1/models': () => models([other]) }).fetchImpl, log: l => logs.push(l) }), 2);
-  assert.equal(await agents.main(['preflight', '--select', 'opus'], { env: { CURSOR_API_KEY: KEY }, fetchImpl: recorder({ 'GET /v1/models': () => models([{ id: 'claude-opus-5-thinking-high', displayName: 'Opus 5' }]) }).fetchImpl, log: l => logs.push(l) }), 0);
+  assert.equal(await agents.main(['preflight', '--select', 'opus'], { env: { CURSOR_API_KEY: KEY }, fetchImpl: recorder({ 'GET /v1/models': () => models([opus]) }).fetchImpl, log: l => logs.push(l) }), 0);
   await assert.rejects(agents.main(['preflight', '--select', 'sonnet'], { env: { CURSOR_API_KEY: KEY }, fetchImpl: () => { throw new Error('ne doit pas être appelé'); } }), /Sélection inconnue/);
   assert.equal(await agents.main(['preflight'], { env: { CURSOR_API_KEY: KEY }, fetchImpl: recorder({ 'GET /v1/models': () => json({ error: { code: 'unauthorized' } }, 401) }).fetchImpl, log: l => logs.push(l) }), 3);
   for (const line of logs) { assert.ok(!line.includes(KEY)); JSON.parse(line); }
@@ -311,7 +328,7 @@ test('the generator installs the standard as an exact managed copy usable withou
     const script = join(standalone, orchestrationDir, 'scripts/cursor-agents.mjs');
     const help = spawnSync(process.execPath, [script, '--help'], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
     assert.equal(help.status, 0, help.stderr); assert.match(help.stdout, /preflight/);
-    const check = spawnSync(process.execPath, ['--input-type=module', '-e', `import('${script.replaceAll('\\', '/')}').then(async m=>{const config=await m.loadSelections();const selection=m.resolveSelection(config);console.log(JSON.stringify(await m.preflight({selection,config,key:'FAKE_TEST_KEY_NOT_A_SECRET',fetchImpl:async()=>new Response(JSON.stringify({items:[{id:selection.modelId,displayName:'Fable'}]}),{status:200,headers:{'content-type':'application/json'}})})))})`], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
+    const check = spawnSync(process.execPath, ['--input-type=module', '-e', `import('${script.replaceAll('\\', '/')}').then(async m=>{const config=await m.loadSelections();const selection=m.resolveSelection(config);console.log(JSON.stringify(await m.preflight({selection,config,key:'FAKE_TEST_KEY_NOT_A_SECRET',fetchImpl:async()=>new Response(JSON.stringify({items:[{id:selection.modelId,displayName:'Fable',variants:[{params:selection.params,displayName:'Fable'}]}]}),{status:200,headers:{'content-type':'application/json'}})})))})`], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
     assert.equal(check.status, 0, check.stderr); assert.equal(JSON.parse(check.stdout).status, 'ok');
     const skill = await readFile(join(standalone, orchestrationDir, 'SKILL.md'), 'utf8');
     assert.match(skill, /^---\nname: lite-orchestration\n/);

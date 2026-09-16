@@ -29,6 +29,6 @@ Choisie **une fois** à l’attribution parmi `cursor-model.json`, puis conserv�
 ## Ressources
 
 - `CONTRACT.md` — contrat complet : sélection, brief, lancement, checkpoints, réception, revue, adoption. À lire avant de rédiger un brief ou une réception.
-- `cursor-model.json` — sélections autorisées (`fable` par défaut, `opus`, `grok`), options désactivées par défaut quand exposées (`fast`, `cyber`), aucun repli. Modifié seulement par le kit, après préflight réel.
+- `cursor-model.json` — sélections autorisées (`fable` par défaut, `opus`, `grok`) avec leur combinaison complète de paramètres relevée dans le catalogue authentifié (`fast`/`cyber` à `false` là où le modèle les expose), aucun repli. Modifié seulement par le kit, après relevé du catalogue.
 - `scripts/cursor-agents.mjs` — `preflight`, `launch`, `reconcile`, `status`, `followup`. Sorties JSON sans secret ; codes 0 ok, 2 bloqué, 3 indisponible ou incertain, 4 usage.
-- Adoption dans une application existante : `node bin/lite.mjs adopt --app <dossier>` (inspection), puis `--apply`. Conflit local ⇒ refus, aucune écriture.
+- Adoption dans une application existante, depuis un checkout du kit (l’application ne contient pas `bin/lite.mjs`) : `node <checkout-kit>/bin/lite.mjs adopt --app <dossier>` (inspection), puis `--apply`. Conflit local ou lien symbolique sur un chemin géré ⇒ refus, aucune écriture.
