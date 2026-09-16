@@ -21,7 +21,7 @@ const TOOL=/^(?:lite|custom)_[a-z][a-z0-9_]{0,120}$/,UUID=/^[0-9a-f]{8}-[0-9a-f]
 export const GENERIC_ERROR_CODE='error';
 /** Codes raised by `fail()` / `ApiError` in runtime/core and the native mounts. Adding a new code to the runtime requires adding it here; a test scans the sources for that. */
 const RUNTIME_ERROR_CODES=[
-  'access_denied','api_error','attachment_missing','attachments_limit','audio_required','authentication_required','client_not_found','conflict','conversation_busy','conversation_missing','database_unavailable',
+  'access_denied','api_error','attachment_missing','attachments_limit','audio_required','authentication_required','client_not_found','command_required','conflict','conversation_busy','conversation_missing','database_unavailable',
   'empty_file','empty_response','essential_operation','executor_unavailable','file_not_found','files_unavailable','folder_invalid','forbidden','generated_tool','group_limit','group_not_found','host_runner_unavailable',
   'imap_required','imap_response','integration_missing','integration_required','internal_error','invalid_account','invalid_arguments','invalid_assignee','invalid_attachment','invalid_attachments','invalid_boolean',
   'invalid_client','invalid_client_metadata','invalid_data','invalid_date','invalid_duration','invalid_email','invalid_enabled','invalid_endpoint','invalid_event','invalid_events','invalid_field','invalid_filter',
