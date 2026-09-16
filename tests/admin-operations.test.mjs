@@ -76,7 +76,8 @@ test('request logs and native usage analytics persist within the workspace witho
   for(const action of ['timeline','pages','clicks','users','events','productivity'])assert.equal((await a(`admin/analytics/${action}`)).status,200,action);
   const events=(await a('admin/analytics/events')).body.events;assert.equal(events[0].username,alice.displayName);assert.equal(events[0].path,'/dashboard');
   await a('/api/mcp',{method:'POST',body:rpc('missing_tool',{token:'lite_'+'a'.repeat(64)})});
-  const logs=(await a('admin/request-logs?source=mcp&errorsOnly=1')).body;assert.equal(logs.logs.length,1);assert.equal(logs.logs[0].detail.tool,'missing_tool');assert.equal(JSON.stringify(logs).includes('a'.repeat(64)),false);
+  const logs=(await a('admin/request-logs?source=mcp&errorsOnly=1')).body;assert.equal(logs.logs.length,1);assert.equal(logs.logs[0].detail.tool,'[outil-inconnu]');assert.equal(logs.logs[0].detail.ok,false);
+  for(const marker of ['a'.repeat(64),'missing_tool'])assert.equal(JSON.stringify(logs).includes(marker),false,marker);
   assert.equal((await b('admin/request-logs')).body.total,0);
   assert.equal((await a('admin/analytics/events',{method:'DELETE'})).status,200);assert.equal((await a('admin/analytics/overview')).body.totals.events,0);
  }finally{db.close();}
