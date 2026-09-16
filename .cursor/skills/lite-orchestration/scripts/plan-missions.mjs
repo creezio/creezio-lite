@@ -241,7 +241,7 @@ export function decide(plan, state) {
     ready: ordered.map(c => ({ mission: c.mission.id, step: c.step })),
     proposals,
     blocked: candidates.filter(c => c.outcome === 'blocked').map(c => ({ mission: c.mission.id, step: c.step, reasons: c.blocking })),
-    missions: report,
+    missions: Object.fromEntries(Object.keys(report).sort(byIdStr).map(id => [id, report[id]])),
   };
 }
 
