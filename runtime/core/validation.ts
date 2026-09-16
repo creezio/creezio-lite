@@ -1,4 +1,4 @@
-import type { AppDefinition, Module, Role } from './types.ts';
+import type { AppDefinition, Module, ModuleKind, Role } from './types.ts';
 
 export class ApiError extends Error {
   status: number; code: string;
@@ -6,17 +6,26 @@ export class ApiError extends Error {
 }
 export function fail(status: number, code: string, message: string): never { throw new ApiError(status, code, message); }
 export const roles: Role[] = ['owner', 'admin', 'member', 'viewer'];
+export const MODULE_LIMIT = 64;
+export const moduleKinds: ModuleKind[] = ['module', 'entity', 'collection'];
+/** Effective kind: an absent kind is the historical CRUD module. */
+export function moduleKind(mod: Pick<Module, 'kind'>): ModuleKind { return mod.kind ?? 'module'; }
+/** Entities and collections are only written through declared commands. */
+export function moduleWritable(mod: Pick<Module, 'kind'>): boolean { return moduleKind(mod) === 'module'; }
+/** Navigation and dashboard counters follow this flag; collections never navigate. */
+export function moduleNavigable(mod: Pick<Module, 'kind' | 'navigation'>): boolean { return moduleKind(mod) !== 'collection' && mod.navigation !== false; }
 const keyPattern = /^[a-z][a-z0-9_]{0,47}$/;
-const idPattern = /^[a-z][a-z0-9-]{0,47}$/;
+export const idPattern = /^[a-z][a-z0-9-]{0,47}$/;
 const forbidden = new Set(['__proto__', 'constructor', 'prototype']);
 
 export function defineApp(input: unknown): AppDefinition {
   if (!input || typeof input !== 'object') throw new Error('Le brief doit être un objet JSON.');
   const app = input as AppDefinition;
   if (!idPattern.test(app.id) || typeof app.name !== 'string' || !app.name.trim() || app.name.length > 100 || typeof app.description !== 'string') throw new Error('Identité de marque invalide.');
-  if (!Array.isArray(app.modules) || app.modules.length < 1 || app.modules.length > 32) throw new Error('Déclarer entre 1 et 32 modules.');
+  if (!Array.isArray(app.modules) || app.modules.length < 1 || app.modules.length > MODULE_LIMIT) throw new Error(`Déclarer entre 1 et ${MODULE_LIMIT} modules.`);
   const ids = new Set<string>();
   for (const mod of app.modules) {
+    if (!mod || typeof mod !== 'object') throw new Error('Déclaration de module invalide.');
     if (!idPattern.test(mod.id) || ids.has(mod.id) || ['mail','mails','email','assistant','integrations','observability','overview','files','team','audit','members','search','registry','mcp','oauth','settings','dashboard','taches','support','documents','collaborateurs','parametres','admin','api','login','setup','onboarding','signin-with-chatgpt','signout-with-chatgpt','callback','nav','interactive-demo','tasks'].includes(mod.id)) throw new Error('Identifiant de module invalide, réservé ou dupliqué.');
     ids.add(mod.id);
     if (![mod.name, mod.singular, mod.description].every(v => typeof v === 'string') || !mod.name.trim() || !mod.singular.trim()) throw new Error('Libellés de module manquants.');
@@ -37,8 +46,44 @@ export function defineApp(input: unknown): AppDefinition {
       if(mod.search.fields&&(!Array.isArray(mod.search.fields)||new Set(mod.search.fields).size!==mod.search.fields.length||mod.search.fields.some(k=>!keys.has(k))))throw new Error('Champs de recherche invalides.');
     }
     for (const grant of [mod.readRoles, mod.writeRoles]) if (grant && (!Array.isArray(grant) || !grant.every(r => roles.includes(r)))) throw new Error('Rôles de module invalides.');
+    validateModuleKind(mod, keys);
   }
+  validateModuleParents(app.modules);
   return app;
+}
+
+/** Kind-specific declaration rules. A module without kind is unchanged. */
+function validateModuleKind(mod: Module, keys: Set<string>) {
+  if (mod.kind !== undefined && !moduleKinds.includes(mod.kind)) throw new Error(`Kind de module invalide : ${String(mod.kind)}.`);
+  if (mod.navigation !== undefined && typeof mod.navigation !== 'boolean') throw new Error('navigation doit être un booléen.');
+  const kind = moduleKind(mod);
+  if (kind !== 'collection') {
+    if (mod.parent !== undefined || mod.parentField !== undefined) throw new Error(`Le module ${mod.id} ne peut déclarer parent ou parentField : réservés aux collections.`);
+    return;
+  }
+  if (typeof mod.parent !== 'string' || !idPattern.test(mod.parent) || mod.parent === mod.id) throw new Error(`La collection ${mod.id} doit déclarer l’identifiant de son entité parente.`);
+  if (typeof mod.parentField !== 'string' || !keys.has(mod.parentField)) throw new Error(`La collection ${mod.id} doit déclarer un parentField présent dans ses champs.`);
+  const field = mod.fields.find(f => f.key === mod.parentField)!;
+  if (!['text', 'email'].includes(field.type) || !field.required) throw new Error(`Le parentField ${mod.parentField} de ${mod.id} doit être un champ texte obligatoire.`);
+  if (mod.navigation === true) throw new Error(`La collection ${mod.id} ne peut pas imposer navigation:true.`);
+}
+
+/** Parents must be declared entities; a collection is never a parent and chains never loop. */
+function validateModuleParents(modules: Module[]) {
+  const byId = new Map(modules.map(m => [m.id, m]));
+  for (const mod of modules) {
+    if (moduleKind(mod) !== 'collection') continue;
+    const seen = new Set<string>([mod.id]);
+    let current: Module | undefined = mod;
+    while (current && current.parent !== undefined) {
+      const parent: Module | undefined = byId.get(current.parent);
+      if (!parent) throw new Error(`La collection ${current.id} référence un parent absent : ${current.parent}.`);
+      if (seen.has(parent.id)) throw new Error(`Cycle de parenté détecté sur ${parent.id}.`);
+      if (moduleKind(parent) !== 'entity') throw new Error(`Le parent ${parent.id} de ${current.id} doit être un module de kind entity.`);
+      seen.add(parent.id);
+      current = parent;
+    }
+  }
 }
 
 export function validateData(mod: Module, input: unknown): Record<string, unknown> {

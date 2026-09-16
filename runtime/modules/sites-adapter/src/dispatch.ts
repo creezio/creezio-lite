@@ -1,5 +1,7 @@
-import type { ApiContext, BeforeWrite, Workspace } from '@lite/core';
+import type { ApiContext, AppExtensions, CredentialKind, Workspace } from '@lite/core';
 import { handleApi } from '@lite/core';
+import { executeAppOperation } from '@lite/core/commands';
+import { principalOf } from '@lite/core/scope';
 import { mailRoute, mailInboundRoute } from '@lite/core/mail';
 import { integrationsRoute } from '@lite/core/integrations';
 import { assistantRoute } from '@lite/core/assistant';
@@ -17,7 +19,7 @@ import { observabilityRoute, persistRequestLog } from '@lite/core/observability'
 import { handleNativeApi, workspaceCookie } from './index';
 import { operationCatalog } from './catalog';
 
-export async function dispatchRequest(request:Request,context:ApiContext,options:{beforeWrite?:BeforeWrite}={}):Promise<Response>{
+export async function dispatchRequest(request:Request,context:ApiContext,options:AppExtensions={}):Promise<Response>{
   const started=performance.now();let logContext:ApiContext|undefined,logOrg:Workspace|undefined;
   const source=new URL(request.url).pathname==='/api/mcp'?'mcp':'api';
   let detail:Record<string,unknown>={};
@@ -30,8 +32,9 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
   try{
     if(source==='mcp'&&request.method==='OPTIONS')return mcpOptions();
     const inbound=await mailInboundRoute(request,context);if(inbound)return inbound;
-    const credential=await resolveOAuthToken(request,context)??await resolveToken(request,context);
-    const trusted=credential?{...context,identity:credential.identity}:context;
+    const oauth=await resolveOAuthToken(request,context),credential=oauth??await resolveToken(request,context);
+    const credentialKind:CredentialKind=oauth?'oauth':credential?'token':'session';
+    const trusted:ApiContext=credential?{...context,identity:credential.identity,credential:credentialKind}:{...context,credential:credentialKind};
     if(source==='api'&&trusted.identity){detail.query=Object.fromEntries(new URL(request.url).searchParams);if(!/^\/api\/v1\/(assistant|email)(?:\/|$)/.test(new URL(request.url).pathname)&&request.headers.get('content-type')?.startsWith('application/json'))detail.body=await readJson(request.clone()).catch(()=>undefined);}
     const orgFor=async(req:Request)=>workspace(context.env.DB,trusted.identity!,credential?.access.workspaceId??new URL(req.url).searchParams.get('workspace')??workspaceCookie(req));
     const invoke=async(incoming:Request,fixedOrg?:Workspace):Promise<Response>=>{
@@ -43,7 +46,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       if(!credential)checkOrigin(current);
       if(credential&&url.searchParams.has('workspace')&&url.searchParams.get('workspace')!==credential.access.workspaceId)fail(403,'token_workspace','Cette clé appartient à un autre espace.');
       const org=fixedOrg??await orgFor(current);
-      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app);
+      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app,options.operations);
       const op=matchOperation(operations,current.method,url.pathname);
       logOrg=org;logContext=trusted;
       if(!op)fail(404,'not_found','Route introuvable.');
@@ -52,6 +55,11 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       if(op.moduleId==='mail')detail={tool:detail.tool,operation:op.id};
       url=new URL(current.url);url.searchParams.set('workspace',org.id);current=new Request(url,current);
       const scoped={...trusted,workspace:org,operations};
+      if(op.source==='app'){
+        // Application handlers run after identity, workspace, role, policy, credential and origin checks, before the native kernel.
+        const definition=options.operations?.find(d=>d.operation.id===op.id);if(!definition)fail(404,'not_found','Route introuvable.');
+        return await executeAppOperation(current,definition,{app:context.app,env:context.env,identity:trusted.identity,workspace:org,principal:principalOf(trusted.identity,org,credentialKind),scope:options.scope,defer:context.defer});
+      }
       if(path==='admin/endpoints')return json({generatedAt:new Date().toISOString(),source:'operation-registry',openapiUrl:'/api/v1/openapi.json',endpoints:operations.flatMap(o=>[o.path,...(o.aliases??[])].map(path=>({...o,path,documented:true,summary:o.description,tags:[o.moduleName]})))});
       if(path==='openapi.json')return json(openApiDocument(operations,context.app,org));
       const call=async(path:string,init:{method?:string;body?:string}={})=>{
@@ -67,7 +75,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       }
       const assistant=await assistantRoute(current,scoped,org,{tools:async()=>{
         // Re-read membership, group policies and MCP switches before each tool call.
-        const liveOrg=await orgFor(current),liveOps=operationCatalog({db:context.env.DB,user:trusted.identity!,workspace:liveOrg},context.app);
+        const liveOrg=await orgFor(current),liveOps=operationCatalog({db:context.env.DB,user:trusted.identity!,workspace:liveOrg},context.app,options.operations);
         const assistantOp=liveOps.find(o=>o.id==='assistant.chat')!;assertOperationAllowed(assistantOp,liveOrg);
         const liveCall=async(path:string,init:{method?:string;body?:string}={})=>{
           const target=new URL('/api/v1/'+path,request.url);target.searchParams.set('workspace',org.id);
@@ -85,7 +93,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       const requestedWorkspace=new URL(request.url).searchParams.get('workspace');
       if(credential&&requestedWorkspace&&requestedWorkspace!==credential.access.workspaceId)fail(403,'token_workspace','Cette connexion appartient à un autre espace.');
       const org=await orgFor(request);logOrg=org;logContext=trusted;
-      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app),scoped={...trusted,workspace:org,operations};
+      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app,options.operations),scoped={...trusted,workspace:org,operations};
       if(request.method==='POST'){const b=await readJson(request.clone()).catch(()=>({})) as any;detail={jsonrpcMethod:b.method,tool:b.params?.name,args:b.params?.arguments};}
       const api=async(path:string,init:{method?:string;body?:string}={})=>{
         const target=new URL('/api/v1/'+path,request.url);target.searchParams.set('workspace',org.id);

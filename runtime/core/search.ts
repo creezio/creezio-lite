@@ -1,9 +1,12 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import type { AppDefinition, Identity, Workspace } from './types.ts';
+import type { AppDefinition, Identity, Principal, ScopeProvider, Workspace } from './types.ts';
 import { moduleRegistry, recordHref, visibleModules, type RegisteredModule } from './registry.ts';
 import { boundedInteger, fail, requireRole } from './validation.ts';
 import { json, readJson } from './http.ts';
 import { canReadModule } from './operations.ts';
+import { openScope, recordScope } from './scope.ts';
+
+type SearchOptions={limit?:number;offset?:number;moduleId?:string;scope?:ScopeProvider;principal?:Principal};
 
 const sources = ['records','tasks','files','support','members','audit','mail'];
 type Override = {module_id:string;enabled:number;fields_json:string;version:number};
@@ -62,7 +65,7 @@ export function searchTerms(query:string):string[] {
   return terms;
 }
 
-export async function searchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:{limit?:number;offset?:number;moduleId?:string}={}) {
+export async function searchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:SearchOptions={}) {
   const terms=searchTerms(query);
   const context=await searchContext(db,app,org.id);
   const policies=context.policies.filter(m=>m.readRoles.includes(org.role)&&canReadModule(org,m.id)&&m.search.enabled&&m.search.fields.length&&(!options.moduleId||options.moduleId===m.id));
@@ -70,17 +73,19 @@ export async function searchSelection(db:D1Database,app:AppDefinition,org:Worksp
   if(!terms.length||!policies.length)return {cte:'WITH ranked AS (SELECT id,0 AS score FROM lite_search_documents WHERE 0)',bindings:[],policies,indexing};
   // Policy filtering happens inside the query, before counts, excerpts and pagination.
   // One FTS row per field lets an administrator remove a field immediately.
+  // The record scope is evaluated in the same place: an out-of-scope document never becomes a match.
+  const scope=options.scope&&options.principal?recordScope(options.scope,options.principal,{alias:'d',idColumn:'record_id',moduleColumn:'module_id'},'read'):recordScope(openScope,{userId:'',role:org.role,workspaceId:org.id,credential:'session'},{alias:'d',idColumn:'record_id',moduleColumn:'module_id'},'read');
   const allowed=JSON.stringify(policies.flatMap(m=>m.search.fields.map(field=>({module:m.id,field,title:field===m.titleField?1:0}))));
   const matches=`SELECT d.id,CAST(t.key AS INTEGER) AS term,CAST(json_extract(p.value,'$.title') AS INTEGER) AS title_match
     FROM json_each(?) t CROSS JOIN lite_search_fts JOIN lite_search_documents d ON d.id=lite_search_fts.document_id
     JOIN json_each(?) p ON json_extract(p.value,'$.module')=d.module_id AND json_extract(p.value,'$.field')=lite_search_fts.field_key
-    WHERE lite_search_fts MATCH t.value AND d.org_id=?`;
-  const bindings=[JSON.stringify(terms.map(t=>'"'+t.replaceAll('"','""')+'"*')),allowed,org.id];
+    WHERE lite_search_fts MATCH t.value AND d.org_id=? AND ${scope.sql}`;
+  const bindings=[JSON.stringify(terms.map(t=>'"'+t.replaceAll('"','""')+'"*')),allowed,org.id,...scope.bindings];
   const cte=`WITH matches AS (${matches}), ranked AS (SELECT id,SUM(title_match) AS score FROM matches GROUP BY id HAVING COUNT(DISTINCT term)=?)`;
   return {cte,bindings:[...bindings,terms.length],policies,indexing};
 }
 
-export async function searchData(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:{limit?:number;offset?:number;moduleId?:string}={}) {
+export async function searchData(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:SearchOptions={}) {
   const {cte,bindings,policies,indexing}=await searchSelection(db,app,org,query,options);
   const terms=searchTerms(query),limit=options.limit??30,offset=options.offset??0;
   const [found,count]=await db.batch([
@@ -96,16 +101,17 @@ export async function searchData(db:D1Database,app:AppDefinition,org:Workspace,q
     const snippet=(matching.length?matching:excerpts).filter(f=>f.value).slice(0,3).map(f=>`${f.label} : ${f.value}`).join(' · ').slice(0,420);
     return {index:module.id,id:row.record_id,moduleName:module.name,title:plain(data[module.titleField])||module.name,description:snippet,href:recordHref(module,row.record_id,data),updatedAt:row.updated_at};
   });
-  const pages=terms.length?policies.filter(m=>terms.every(t=>normalize(m.name).includes(normalize(t)))).map(m=>({index:'pages',id:m.id,title:m.name,description:'Ouvrir le module',href:m.href})):[];
+  // Only navigable modules own a page to open; collections never appear here.
+  const pages=terms.length?policies.filter(m=>m.navigation&&terms.every(t=>normalize(m.name).includes(normalize(t)))).map(m=>({index:'pages',id:m.id,title:m.name,description:'Ouvrir le module',href:m.href})):[];
   return {items,pages,total:(count.results[0] as {total:number}|undefined)?.total??0,indexing,engine:'d1-fts5'};
 }
 
-export async function searchRoute(request:Request,db:D1Database,app:AppDefinition,org:Workspace,user:Identity):Promise<Response|null> {
+export async function searchRoute(request:Request,db:D1Database,app:AppDefinition,org:Workspace,user:Identity,scoped:{scope?:ScopeProvider;principal?:Principal}={}):Promise<Response|null> {
   const url=new URL(request.url),path=url.pathname.replace(/^\/api\/v1\//,'').replace(/\/$/,'');
   if(path==='registry'&&request.method==='GET')return json({modules:visibleModules(app,org.role).filter(m=>canReadModule(org,m.id)),workspace:org});
   if(path==='search'&&request.method==='GET'){
     const limit=boundedInteger(url.searchParams.get('limit'),30,100);if(!limit)fail(400,'invalid_pagination','Limite positive attendue.');
-    return json(await searchData(db,app,org,url.searchParams.get('q')??'',{limit,offset:boundedInteger(url.searchParams.get('offset'),0,100000),moduleId:url.searchParams.get('module')??undefined}));
+    return json(await searchData(db,app,org,url.searchParams.get('q')??'',{limit,offset:boundedInteger(url.searchParams.get('offset'),0,100000),moduleId:url.searchParams.get('module')??undefined,...scoped}));
   }
   if(!path.startsWith('admin/search'))return null;
   requireRole(org.role,['owner','admin']);

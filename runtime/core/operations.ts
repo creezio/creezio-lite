@@ -1,5 +1,5 @@
-import type { AppDefinition, Field, Role, Workspace } from './types.ts';
-import { roles, fail } from './validation.ts';
+import type { AppDefinition, AppOperationDefinition, Field, Role, Workspace } from './types.ts';
+import { roles, fail, idPattern, moduleWritable } from './validation.ts';
 
 export type JsonSchema = Record<string, any>;
 export type Operation = {
@@ -8,6 +8,8 @@ export type Operation = {
   essential?:boolean; tokenAllowed:boolean; mcp:boolean; mcpReason?:string;
   toolName:string; inputSchema:JsonSchema; bodySchema?:JsonSchema; querySchema?:JsonSchema;
   responseType?:'json'|'file'; requestType?:'json'|'file';
+  /** Explicit transport marker: 'app' operations run their declared handler through the generic executor. */
+  source?:'core'|'native'|'app';
 };
 export type OperationPolicy = {operationId:string;effect:'allow'|'deny'};
 export const objectSchema=(properties:JsonSchema={},required:string[]=[])=>({type:'object',properties,required,additionalProperties:false});
@@ -112,7 +114,9 @@ export function coreOperations(app:AppDefinition):Operation[]{
   ] as const)add(`assistant.${id}`,method,`assistant/${path}`,'assistant','Assistant',description,{...personalAssistant,...(id==='transcribe'?{requestType:'file' as const}:method==='POST'||method==='PATCH'?{bodySchema:{type:'object',additionalProperties:true}}:{})});
   for(const module of app.modules){
     const data=objectSchema(Object.fromEntries(module.fields.map(f=>[f.key,fieldSchema(f)])),module.fields.filter(f=>f.required).map(f=>f.key));
-    for(const [action,method,suffix] of [['list','GET',''],['get','GET','/:id'],['create','POST',''],['update','PATCH','/:id'],['archive','DELETE','/:id']] as const){
+    // Entities and collections expose reads only; every mutation is a declared command.
+    const actions=([['list','GET',''],['get','GET','/:id'],['create','POST',''],['update','PATCH','/:id'],['archive','DELETE','/:id']] as const).filter(([,method])=>method==='GET'||moduleWritable(module));
+    for(const [action,method,suffix] of actions){
       add(`module.${module.id}.${action}`,method,`modules/${module.id}/records${suffix}`,module.id,module.name,`${module.name} : ${action}`,{kind:'business',roles:method==='GET'?(module.readRoles??roles):(module.writeRoles??writers),toolName:`lite_${module.id.replaceAll('-','_')}_${action}`,
         ...(action==='list'?{querySchema:objectSchema({...paging,field:stringSchema,value:stringSchema})}:{}),
         ...(action==='create'?{bodySchema:objectSchema({data},['data'])}:{}),
@@ -121,6 +125,48 @@ export function coreOperations(app:AppDefinition):Operation[]{
     }
   }
   return list;
+}
+const operationIdPattern=/^[a-z][a-z0-9_.-]{0,119}$/,methods=['GET','POST','PUT','PATCH','DELETE'];
+/**
+ * Validate application operations and mark them for the generic executor.
+ * Business operations belong to a declared module and never exceed its read roles;
+ * system descriptors (jobs…) use an explicit moduleId that is not a business module.
+ */
+export function appOperations(app:AppDefinition,definitions:AppOperationDefinition[]=[]):Operation[]{
+  const result:Operation[]=[],ids=new Set<string>();
+  for(const definition of definitions){
+    if(!definition||typeof definition!=='object'||typeof definition.handle!=='function'||!definition.operation||typeof definition.operation!=='object')throw new Error('Une opération applicative déclare une Operation et un handler.');
+    const op=definition.operation;
+    if(!operationIdPattern.test(op.id)||ids.has(op.id))throw new Error(`Identifiant d’opération applicative invalide ou dupliqué : ${String(op.id)}.`);
+    if(!methods.includes(op.method))throw new Error(`Méthode HTTP non prise en charge pour ${op.id}.`);
+    for(const path of [op.path,...(op.aliases??[])])if(typeof path!=='string'||!path.startsWith('/api/v1/')||/\/\/|\s/.test(path))throw new Error(`Chemin invalide pour ${op.id} : chaque route commence par /api/v1/.`);
+    if(typeof op.description!=='string'||!op.description.trim()||typeof op.moduleName!=='string'||!op.moduleName.trim())throw new Error(`Description et nom de module requis pour ${op.id}.`);
+    if(!idPattern.test(op.moduleId))throw new Error(`moduleId invalide pour ${op.id}.`);
+    const module=app.modules.find(m=>m.id===op.moduleId);
+    if(op.kind==='business'&&!module)throw new Error(`L’opération ${op.id} référence un module absent de l’application : ${op.moduleId}.`);
+    if(op.kind!=='business'&&module)throw new Error(`Le descripteur système ${op.id} ne peut pas réutiliser le module métier ${op.moduleId}.`);
+    if(!Array.isArray(op.roles)||!op.roles.length||!op.roles.every(r=>roles.includes(r))||new Set(op.roles).size!==op.roles.length)throw new Error(`Rôles invalides pour ${op.id}.`);
+    if(op.method==='GET'&&op.bodySchema)throw new Error(`L’opération GET ${op.id} n’accepte pas de corps métier.`);
+    if(op.essential)throw new Error(`Une opération applicative ne peut pas être déclarée indispensable : ${op.id}.`);
+    if(typeof op.toolName!=='string'||!/^[a-z][a-z0-9_]{1,80}$/.test(op.toolName))throw new Error(`Nom d’outil invalide pour ${op.id}.`);
+    if(!op.inputSchema||typeof op.inputSchema!=='object')throw new Error(`inputSchema requis pour ${op.id}.`);
+    const readers=module?(module.readRoles??roles):roles;
+    const allowed=op.roles.filter(r=>readers.includes(r));
+    if(!allowed.length)throw new Error(`Aucun rôle de ${op.id} ne peut lire le module ${op.moduleId}.`);
+    ids.add(op.id);
+    result.push({...op,roles:allowed,source:'app'});
+  }
+  return result;
+}
+/** Refuse duplicate IDs, method/path/alias routes and tool names across the whole catalogue. */
+export function assertUniqueOperations(operations:Operation[]):Operation[]{
+  const ids=new Set<string>(),routes=new Set<string>(),tools=new Set<string>();
+  for(const op of operations){
+    if(ids.has(op.id))throw Error(`Duplicate operation: ${op.id}`);ids.add(op.id);
+    for(const path of [op.path,...(op.aliases??[])]){const key=`${op.method} ${path}`;if(routes.has(key))throw Error(`Duplicate route: ${key}`);routes.add(key);}
+    if(tools.has(op.toolName))throw Error(`Duplicate tool: ${op.toolName}`);tools.add(op.toolName);
+  }
+  return operations;
 }
 export function operationAllowed(op:Operation,org:Workspace):boolean {
   if(!op.roles.includes(org.role))return false;

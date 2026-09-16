@@ -1,5 +1,5 @@
-import type { AppDefinition } from '@lite/core';
-import { coreOperations, operation, objectSchema, stringSchema, idSchema, paging, type Operation } from '@lite/core/operations';
+import type { AppDefinition, AppOperationDefinition } from '@lite/core';
+import { coreOperations, operation, objectSchema, stringSchema, idSchema, paging, appOperations, assertUniqueOperations, type Operation } from '@lite/core/operations';
 import { roles } from '@lite/core/validation';
 import type { NativeContext } from './context';
 import type { ApiMount } from '../../api-kernel/src/types';
@@ -17,8 +17,10 @@ export function nativeMounts(c:NativeContext,app:AppDefinition):{id:string;name:
     {id:'platform-support',name:'Support',space:'platform',mount:supportMount(c)},
   ];
 }
-export function operationCatalog(c:NativeContext,app:AppDefinition):Operation[]{
+/** One catalogue for HTTP, MCP, assistant tools, administration and OpenAPI; application operations join it before duplicate detection. */
+export function operationCatalog(c:NativeContext,app:AppDefinition,extensions:AppOperationDefinition[]=[]):Operation[]{
   const result=coreOperations(app);
+  result.push(...appOperations(app,extensions));
   for(const entry of nativeMounts(c,app))for(const op of entry.mount.operations??[]){
     const base=`/api/v1/${entry.space==='module'?'modules':'platform'}/${entry.id}`,suffix=op.path==='/'?'':op.path;
     const moduleId=entry.id==='platform-support'?'support':entry.id;
@@ -32,7 +34,5 @@ export function operationCatalog(c:NativeContext,app:AppDefinition):Operation[]{
   for(const [id,path,description] of [['health','health','Santé du noyau'],['version','version','Version du runtime'],['architecture','architecture','Architecture et modules montés'],['sqlite.status','sqlite/status','État du stockage Sites']] as const){
     result.push(operation({id:`core.${id==='health'?'kernel_health':id}`,moduleId:'core',moduleName:'Système',method:'GET',path:`/api/v1/core/${path}`,description,roles,essential:true,...(id==='health'?{aliases:['/api/v1/core']}:{})}));
   }
-  const ids=new Set<string>(),routes=new Set<string>();
-  for(const op of result){if(ids.has(op.id))throw Error(`Duplicate operation: ${op.id}`);ids.add(op.id);for(const path of [op.path,...(op.aliases??[])]){const key=`${op.method} ${path}`;if(routes.has(key))throw Error(`Duplicate route: ${key}`);routes.add(key);}}
-  return result;
+  return assertUniqueOperations(result);
 }

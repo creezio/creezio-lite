@@ -29,6 +29,8 @@ export function validateSchema(schema:JsonSchema,value:unknown,path='arguments')
 }
 function legacyRead(op:Operation){return op.kind==='system'&&['tasks','files','support','members','audit'].includes(op.moduleId)&&['list','get','detail'].includes(op.id.split('.').at(-1)!);}
 function toolSchema(op:Operation):JsonSchema {
+  // Application operations use their declared inputSchema (path params, query, body); never the legacy CRUD branch.
+  if(op.source==='app')return op.inputSchema;
   if(legacyRead(op))return op.id.endsWith('.list')?objectSchema({query:{type:'string',maxLength:120},offset:{type:'integer',minimum:0,maximum:100000}}):objectSchema({recordId:idSchema},['recordId']);
   if(op.id==='search.query')return objectSchema({query:{type:'string',maxLength:120},moduleId:idSchema,offset:{type:'integer',minimum:0,maximum:100000}},['query']);
   if(op.kind==='business'){
@@ -51,7 +53,7 @@ export function operationTool(op:Operation,api:ApiCall,binding?:ToolBinding):Dat
         else{if(/[\/\\]/.test(input.recordId)||['.','..'].includes(input.recordId))fail(400,'invalid_arguments','Identifiant invalide.');path=path.replace(':id',encodeURIComponent(input.recordId));}
       }
       if(op.id==='search.query')query={q:input.query,module:input.moduleId,offset:input.offset};
-      if(op.kind==='business'){
+      if(op.kind==='business'&&op.source!=='app'){
         if(input.recordId!==undefined&&(/[\/\\]/.test(input.recordId)||['.','..'].includes(input.recordId)))fail(400,'invalid_arguments','Identifiant invalide.');
         path=path.replace(':id',encodeURIComponent(input.recordId??''));
         query={q:input.query,offset:input.offset,limit:100};
