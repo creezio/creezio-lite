@@ -15,7 +15,6 @@ const MILESTONES = Object.freeze(['delivered', 'integrated', 'published']);
 const CHAIN = Object.freeze({ dev: ['start', 'delivered', 'integrated', 'published'], review: ['start', 'delivered'], investigation: ['start', 'delivered'] });
 const STEP_NODE = Object.freeze({ start: 'start', integrate: 'integrated', publish: 'published' });
 const REACHED = Object.freeze({ delivered: ['delivered'], closed: ['delivered'], integrated: ['delivered', 'integrated'], published: MILESTONES });
-const RELEASED = new Set(['integrated', 'published', 'closed', 'cancelled', 'historical']);
 const TERMINAL_RUN = new Set(['FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED']);
 const HOLDING = new Set(['active', 'delivered', 'unknown']);
 const byIdStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
