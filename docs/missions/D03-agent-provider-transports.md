@@ -1,0 +1,9 @@
+# D03 — Transports fournisseurs Cursor et xAI
+
+Lire AGENTS.md, START-HERE.md, docs/contracts/agent-provider-transport.md et vérifier les documentations officielles citées. Livrer les exports et garanties fixés par le contrat dans runtime/core/agent-providers/{types,catalog,transport,cursor,xai,index}.ts et tests/agent-providers.test.mjs, tests/agent-provider-workers.test.mjs. Réception dans docs/reviews/D03-reception.md.
+
+Périmètre isolé : ne pas modifier integrations.ts, les types centraux, registre, dispatcher, UI, package/lockfile, schéma/migrations, version du kit, CHANGELOG ou d’autres tests. Le coffre est un port resolveCredential injecté, lié à l’espace et à la référence côté serveur, relu à chaque appel. Aucun secret réel nécessaire. Les imports restent relatifs entre fichiers nouveaux.
+
+createCursorProvider/createXaiProvider : URLs officielles fixes, payloads typés/validés, réponse validée, erreurs d’une liste fermée sans corps brut ni secret, redirects refusés, délai/abort combinés, corps borné en streaming. Conserver delivery not_sent/unknown/responded. Aucun retry, polling, effet à l’import, exécution d’outil ou stockage. createAgent exige agentId bc-UUID pour réconciliation, sans envVars incompatibles ; conflit 409 n’entraîne jamais création d’un autre agent. xAI reste synchrone avec choix store explicite et budget de sortie borné. Aucun webhook ou API Grok Bot inventé.
+
+Tester via fetch simulé puis workerd/Miniflare existant : auth, invalides, timeout, abort, redirections, 401/403/409/429/5xx, réponses trop grandes ou inconnues, credential révoqué, aucune fuite et aucun renvoi automatique. Tous les tests restent sans réseau payant. Exécuter npm test/check et template typecheck/build/exemples dans l’ordre AGENTS. Ne pas fusionner, déployer ni lancer un agent. Ouvrir une PR de code testée ; l’intégration coffre/identités/UI/tables appartient à des missions ultérieures.
