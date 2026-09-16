@@ -9,7 +9,7 @@ const scalar = (value: unknown): value is PublicDetail => value === null || type
 /**
  * Validate the public details an adapter attaches to an error. The adapter chooses the fields per code;
  * the kit only accepts a plain object of at most 16 identifier keys with scalar values (strings ≤ 200
- * characters) or lists of at most 20 scalars, 2 KiB serialised, and refuses sensitive key names.
+ * characters) or lists of at most 20 scalars, 2 KiB of UTF-8 once serialised, and refuses sensitive key names.
  * Anything else returns undefined: an invalid detail set is dropped as a whole, never partially serialised.
  */
 export function publicDetails(value: unknown): PublicDetails | undefined {
@@ -24,7 +24,8 @@ export function publicDetails(value: unknown): PublicDetails | undefined {
     else if (Array.isArray(item) && item.length <= DETAIL_LIMITS.items && item.every(scalar)) result[key] = Object.freeze([...item]) as readonly PublicDetail[];
     else return undefined;
   }
-  if (JSON.stringify(result).length > DETAIL_LIMITS.bytes) return undefined;
+  // The bound is on the wire size: UTF-8 bytes of the serialised object, not JS string units.
+  if (new TextEncoder().encode(JSON.stringify(result)).length > DETAIL_LIMITS.bytes) return undefined;
   return Object.freeze(result);
 }
 export class ApiError extends Error {

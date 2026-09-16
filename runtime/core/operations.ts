@@ -143,30 +143,77 @@ export function schemaPattern(pattern:unknown,label='schema'):RegExp{
   if(!compiled){try{compiled=new RegExp(pattern,'u');}catch{throw new OperationCatalogError('invalid_schema',`Schéma invalide (${label}) : pattern non compilable.`);}patternCache.set(pattern,compiled);}
   return compiled;
 }
-/** Refuse at declaration every schema the validator could not enforce: unknown types, invalid patterns, malformed constraints. */
+/**
+ * Closed JSON Schema subset of the kit. Every keyword listed here is enforced by validateSchema (tools.ts) on
+ * each HTTP, MCP, WebMCP and assistant entry; every other keyword is refused at declaration so that no
+ * declared constraint is ever silently ignored.
+ *
+ * - annotations (never validated): description, title, readOnly, writeOnly, deprecated
+ * - any type: type (one of object, array, string, number, integer, boolean, null), enum (scalars),
+ *   anyOf (non-empty list of sub-schemas; no validating sibling keyword allowed next to it)
+ * - string: minLength, maxLength, pattern (ECMAScript, flag u), format ∈ email, date, date-time, uri
+ * - number / integer: minimum, maximum
+ * - array: items, minItems, maxItems
+ * - object: properties (own, safe names), required (each name declared when additionalProperties is false),
+ *   additionalProperties (boolean, or a sub-schema applied to every undeclared property)
+ *
+ * The property names __proto__, constructor and prototype are refused in declarations and in values.
+ */
+export const SCHEMA_KEYWORDS={
+  annotations:['description','title','readOnly','writeOnly','deprecated'],
+  any:['type','enum','anyOf'],
+  string:['minLength','maxLength','pattern','format'],
+  number:['minimum','maximum'],
+  array:['items','minItems','maxItems'],
+  object:['properties','required','additionalProperties'],
+} as const;
+export const SCHEMA_FORMATS=['email','date','date-time','uri'] as const;
+/** Names that reach Object.prototype through a lookup or a spread; never a declared or accepted property. */
+export const UNSAFE_PROPERTY_NAMES=['__proto__','constructor','prototype'] as const;
+const propertyName=/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+const familyOf=(type:unknown)=>type==='string'?'string':type==='number'||type==='integer'?'number':type==='array'?'array':type==='object'?'object':undefined;
+/** Refuse at declaration every schema outside the closed subset above: the validator then enforces everything that was declared. */
 export function assertJsonSchema(schema:unknown,label:string,depth=0):void{
   const bad=(reason:string)=>{throw new OperationCatalogError('invalid_schema',`Schéma invalide (${label}) : ${reason}.`);};
   if(!schema||typeof schema!=='object'||Array.isArray(schema))bad('objet de schéma attendu');
   if(depth>16)bad('profondeur excessive');
-  const s=schema as JsonSchema;
-  if(s.anyOf!==undefined){if(!Array.isArray(s.anyOf)||!s.anyOf.length)bad('anyOf doit être une liste non vide');s.anyOf.forEach((option:unknown,i:number)=>assertJsonSchema(option,`${label}.anyOf[${i}]`,depth+1));}
+  const s=schema as JsonSchema,keys=Object.keys(s);
+  const known:readonly string[]=[...SCHEMA_KEYWORDS.annotations,...SCHEMA_KEYWORDS.any,...SCHEMA_KEYWORDS.string,...SCHEMA_KEYWORDS.number,...SCHEMA_KEYWORDS.array,...SCHEMA_KEYWORDS.object];
+  for(const key of keys)if(!known.includes(key))bad(`mot-clé non pris en charge : ${key}`);
   if(s.type!==undefined&&(typeof s.type!=='string'||!schemaTypes.includes(s.type)))bad(`type non pris en charge : ${String(s.type)}`);
+  const family=familyOf(s.type);
+  for(const [name,list] of Object.entries({string:SCHEMA_KEYWORDS.string,number:SCHEMA_KEYWORDS.number,array:SCHEMA_KEYWORDS.array,object:SCHEMA_KEYWORDS.object}))
+    for(const key of list)if(s[key]!==undefined&&family!==name)bad(`${key} exige type ${name==='number'?'number ou integer':name}`);
+  if(s.anyOf!==undefined){
+    if(!Array.isArray(s.anyOf)||!s.anyOf.length)bad('anyOf doit être une liste non vide');
+    const siblings=keys.filter(key=>key!=='anyOf'&&!(SCHEMA_KEYWORDS.annotations as readonly string[]).includes(key));
+    if(siblings.length)bad(`anyOf ne se combine pas avec ${siblings.join(', ')} ; placer ces contraintes dans chaque branche`);
+    s.anyOf.forEach((option:unknown,i:number)=>assertJsonSchema(option,`${label}.anyOf[${i}]`,depth+1));
+  }
   if(s.enum!==undefined&&(!Array.isArray(s.enum)||!s.enum.length||!s.enum.every((v:unknown)=>v===null||['string','number','boolean'].includes(typeof v))))bad('enum doit lister des valeurs scalaires');
-  if(s.pattern!==undefined){if(s.type!==undefined&&s.type!=='string')bad('pattern ne s’applique qu’à une chaîne');schemaPattern(s.pattern,label);}
-  for(const key of ['minLength','maxLength','maxItems'])if(s[key]!==undefined&&(!Number.isInteger(s[key])||s[key]<0))bad(`${key} doit être un entier positif`);
+  if(s.pattern!==undefined)schemaPattern(s.pattern,label);
+  for(const key of ['minLength','maxLength','minItems','maxItems'])if(s[key]!==undefined&&(!Number.isInteger(s[key])||s[key]<0))bad(`${key} doit être un entier positif`);
   for(const key of ['minimum','maximum'])if(s[key]!==undefined&&(typeof s[key]!=='number'||!Number.isFinite(s[key])))bad(`${key} doit être un nombre`);
   if(s.minLength!==undefined&&s.maxLength!==undefined&&s.minLength>s.maxLength)bad('minLength dépasse maxLength');
+  if(s.minItems!==undefined&&s.maxItems!==undefined&&s.minItems>s.maxItems)bad('minItems dépasse maxItems');
   if(s.minimum!==undefined&&s.maximum!==undefined&&s.minimum>s.maximum)bad('minimum dépasse maximum');
-  if(s.format!==undefined&&!['email','date','date-time','uri'].includes(s.format))bad(`format non pris en charge : ${String(s.format)}`);
+  if(s.format!==undefined&&!(SCHEMA_FORMATS as readonly string[]).includes(s.format))bad(`format non pris en charge : ${String(s.format)}`);
+  for(const key of ['description','title'])if(s[key]!==undefined&&(typeof s[key]!=='string'||s[key].length>2000))bad(`${key} doit être un texte de 2000 caractères au plus`);
+  for(const key of ['readOnly','writeOnly','deprecated'])if(s[key]!==undefined&&typeof s[key]!=='boolean')bad(`${key} doit être un booléen`);
   if(s.properties!==undefined){
     if(!s.properties||typeof s.properties!=='object'||Array.isArray(s.properties))bad('properties doit être un objet');
-    for(const [key,child] of Object.entries(s.properties)){if(!/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(key))bad(`nom de propriété refusé : ${key}`);assertJsonSchema(child,`${label}.${key}`,depth+1);}
+    if(Object.getPrototypeOf(s.properties)!==Object.prototype&&Object.getPrototypeOf(s.properties)!==null)bad('properties doit être un objet simple');
+    for(const [key,child] of Object.entries(s.properties)){if(!propertyName.test(key)||(UNSAFE_PROPERTY_NAMES as readonly string[]).includes(key))bad(`nom de propriété refusé : ${key}`);assertJsonSchema(child,`${label}.${key}`,depth+1);}
   }
   if(s.required!==undefined){
     if(!Array.isArray(s.required)||!s.required.every((k:unknown)=>typeof k==='string'))bad('required doit lister des noms');
-    if(s.additionalProperties===false)for(const key of s.required)if(!s.properties?.[key])bad(`champ requis non déclaré : ${key}`);
+    for(const key of s.required)if((UNSAFE_PROPERTY_NAMES as readonly string[]).includes(key))bad(`nom de propriété refusé : ${key}`);
+    if(s.additionalProperties===false)for(const key of s.required)if(!s.properties||!Object.hasOwn(s.properties,key))bad(`champ requis non déclaré : ${key}`);
   }
-  if(s.additionalProperties!==undefined&&typeof s.additionalProperties!=='boolean'&&(typeof s.additionalProperties!=='object'||!s.additionalProperties))bad('additionalProperties doit être un booléen ou un schéma');
+  if(s.additionalProperties!==undefined&&typeof s.additionalProperties!=='boolean'){
+    if(typeof s.additionalProperties!=='object'||!s.additionalProperties||Array.isArray(s.additionalProperties))bad('additionalProperties doit être un booléen ou un schéma');
+    assertJsonSchema(s.additionalProperties,`${label}.*`,depth+1);
+  }
   if(s.items!==undefined)assertJsonSchema(s.items,`${label}[]`,depth+1);
 }
 /** Two routes are equivalent when they differ only by the name of a parameter: /records/:id and /records/:recordId share one key. */
