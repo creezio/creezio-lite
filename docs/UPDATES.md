@@ -64,3 +64,13 @@ Les lignes écrites avant la mise à jour restent en base : la lecture les renvo
 ## Passage à 0.10.0
 
 Ajoute les transports purs Cursor/xAI, sans raccordement applicatif automatique. L’upgrade du runtime conserve les changements 0.9.1 ; aucune migration ni rotation de secret. L’activation des commandes, des droits, des tables et des vues Agents reste un lot d’intégration distinct. Relire les capacités et erreurs typées du contrat `docs/contracts/agent-provider-transport.md` avant raccordement.
+
+## Notifications de nouvelles versions (depuis 0.10.1)
+
+Le responsable du kit publie une release GitHub après revue et CI réussie sur le commit exact de main. Le workflow de chaque application vérifie les releases stables toutes les 30 minutes, à la demande et lorsque `lite.lock.json` change sur main. GitHub peut retarder un horaire : ce délai est une cadence de contrôle, pas une garantie de livraison.
+
+Les nouvelles applications reçoivent `.github/workflows/lite-update.yml` et `scripts/check-lite-update.mjs`. Dans une application existante, intégrer explicitement ces deux fichiers depuis la version validée du kit, activer Actions et Issues et adapter le nom de branche si nécessaire. Aucun jeton personnel ou secret inter-dépôts n’est requis : `GITHUB_TOKEN` lit le kit public et écrit seulement les issues de l’application. Aucun code applicatif ni installation de dépendance n’est exécuté par la veille.
+
+Une issue persistante par version contient le SHA exact, les changements et la recette. Les relances ne créent pas de doublon. La veille ne fusionne ni ne déploie et ne clôture jamais sur la seule version du verrou : le pilote de l’application confirme tests, intégration et publication. Une issue close comme « non prévue » reste différée ; une clôture prématurée sans version intégrée est rouverte.
+
+Pour un Site sans dépôt GitHub applicatif, enregistrer la source et le responsable dans le registre privé du mainteneur ; notifier sa tâche et y suivre explicitement la mise à jour. Ne pas publier les noms ou chemins des applications privées dans le dépôt public du kit. Voir [MAINTENANCE.md](MAINTENANCE.md).
