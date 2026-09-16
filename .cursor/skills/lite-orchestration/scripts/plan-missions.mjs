@@ -140,10 +140,7 @@ export function validateStateContract(plan, state, missions, errors, warnings) {
       if (entry.runStatus !== undefined) errors.push(inconsistent(id, 'runStatus', `pending avec runStatus ${entry.runStatus} : un historique de run ne redevient pas pending, garder la preuve et réconcilier`, reconcile));
       for (const field of ['assignedAt', 'deliveredAt', 'integratedAt', 'publishedAt', 'closedAt']) if (entry[field] !== undefined) errors.push(inconsistent(id, field, `pending avec jalon ${field} : un jalon atteint ne redevient pas pending`, reconcile));
     }
-    if (status === 'active') {
-      if (['not_created', 'failed'].includes(entry.launch)) errors.push(inconsistent(id, 'launch', `active avec launch ${entry.launch} : aucun run n’existe, repasser pending (launch conservé) ou relancer par attribution`));
-      if (entry.correction?.requested && (entry.launch !== 'launched' && entry.launch !== 'reconciled')) errors.push(inconsistent(id, 'correction', 'correction demandée sur un lancement non confirmé'));
-    }
+    if (status === 'active' && ['not_created', 'failed'].includes(entry.launch)) errors.push(inconsistent(id, 'launch', `active avec launch ${entry.launch} : aucun run n’existe, repasser pending (launch conservé) ou relancer par attribution`));
     if (status === 'delivered' && entry.runStatus !== undefined && !TERMINAL_RUN.has(entry.runStatus)) errors.push(inconsistent(id, 'runStatus', `delivered avec run ${entry.runStatus} non terminal : la mission est encore active`));
     if (['integrated', 'published'].includes(status) && mission.kind !== 'dev') errors.push(inconsistent(id, 'status', `${status} sur une mission ${mission.kind} : seul closed s’applique`));
     if (status === 'closed' && mission.kind === 'dev') errors.push(inconsistent(id, 'status', 'closed sur une mission dev : integrated ou published attendus'));
