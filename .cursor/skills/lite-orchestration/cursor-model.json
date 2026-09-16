@@ -1,0 +1,16 @@
+{
+  "formatVersion": 1,
+  "provider": "cursor",
+  "api": "https://api.cursor.com/v1",
+  "modelId": "claude-fable-5-1-thinking-high",
+  "params": [],
+  "effectiveModelName": "claude-fable-5-1-thinking-high",
+  "displayName": "Claude Fable 5.1 (Thinking, high)",
+  "matching": "exact-id",
+  "fallback": "none",
+  "evidence": {
+    "kind": "cloud-agent-run-info.originalModelName",
+    "observedAt": "2026-09-16",
+    "note": "Nom effectif relevé sur un run créé par l’API. L’identifiant model.id reste à confirmer par le préflight GET /v1/models avec une clé autorisée ; aucun alias n’est présumé."
+  }
+}
