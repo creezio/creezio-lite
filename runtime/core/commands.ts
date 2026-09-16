@@ -1,15 +1,16 @@
-import type { AppDefinition, AppExtensions, AppOperationContext, AppOperationDefinition, AppOperationResult, Identity, LiteEnvironment, Principal, Role, ScopeProvider, Workspace } from './types.ts';
+import type { AppDefinition, AppExtensions, AppOperationContext, AppOperationDefinition, AppOperationResult, CredentialContext, Identity, LiteEnvironment, Principal, Role, ScopeProvider, Workspace } from './types.ts';
 import { appOperations, assertUniqueOperations, coreOperations, idSchema, objectSchema, operation, type JsonSchema, type Operation } from './operations.ts';
-import { ApiError, fail, idPattern, roles as everyRole } from './validation.ts';
+import { ApiError, errorBody, fail, idPattern, roles as everyRole } from './validation.ts';
 import { validateSchema } from './tools.ts';
 import { json, readJson } from './http.ts';
-import { resolveScope } from './scope.ts';
+import { resolveScope, sessionCredential } from './scope.ts';
 
 const writers:Role[]=['owner','admin','member'];
 const namePattern=/^[a-z][a-z0-9-]{0,47}$/;
 type Requirement='required'|'optional'|'none';
 export const reservedCommandFields=['expectedVersion','idempotencyKey','reason'] as const;
-const rejectedCommandFields=['command','payload'];
+/** Never declarable as business fields: the envelope names and every server-context name a client could try to forge. */
+export const rejectedCommandFields=['command','payload','principal','credential','identity','workspace','workspaceId','role','requestId','scope','operation'] as const;
 /** Replay keys are opaque ASCII tokens: letters, digits, dot, underscore, colon and dash, 1 to 160 characters, no whitespace. */
 export const idempotencyKeyPattern='^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$';
 const reservedSchemas:Record<(typeof reservedCommandFields)[number],JsonSchema>={
@@ -37,7 +38,7 @@ export function command(input:CommandInput):AppOperationDefinition{
   const fields=input.fields??{};
   for(const key of Object.keys(fields)){
     if((reservedCommandFields as readonly string[]).includes(key))throw new Error(`Le champ ${key} est réservé au corps de commande.`);
-    if(rejectedCommandFields.includes(key)||!/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(key))throw new Error(`Champ de commande refusé : ${key}.`);
+    if((rejectedCommandFields as readonly string[]).includes(key)||!/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(key))throw new Error(`Champ de commande refusé : ${key}.`);
   }
   const policy:Record<(typeof reservedCommandFields)[number],Requirement>={
     expectedVersion:input.expectedVersion??(target==='record'?'required':'none'),
@@ -117,7 +118,11 @@ const dataChanged=/^[a-z][a-z0-9-]{0,47}$/;
 
 export type AppOperationInput={
   app:AppDefinition; env:LiteEnvironment; identity:Identity; workspace:Workspace; principal:Principal;
-  scope?:ScopeProvider; requestId?:string; defer?:(promise:Promise<unknown>)=>void;
+  /** Verified credential reference built by the dispatcher; defaults to the browser session. */
+  credential?:CredentialContext;
+  scope?:ScopeProvider;
+  /** The dispatcher correlation id. The executor never mints a second one when it is given. */
+  requestId?:string; defer?:(promise:Promise<unknown>)=>void;
 };
 /**
  * Single executor for application operations reached through HTTP, MCP or the assistant.
@@ -125,6 +130,7 @@ export type AppOperationInput={
  */
 export async function executeAppOperation(request:Request,definition:AppOperationDefinition,input:AppOperationInput):Promise<Response>{
   const requestId=input.requestId??crypto.randomUUID(),op:Operation=definition.operation;
+  const credential:CredentialContext=Object.isFrozen(input.credential??sessionCredential)?(input.credential??sessionCredential):Object.freeze({...(input.credential as CredentialContext)});
   const deferred:Promise<unknown>[]=[];
   const defer=(promise:Promise<unknown>)=>{if(input.defer)input.defer(promise);else deferred.push(promise.catch(()=>{}));};
   try{
@@ -156,11 +162,11 @@ export async function executeAppOperation(request:Request,definition:AppOperatio
       }
       validateSchema(bodySchema,body,'body');
     }
-    const ctx:AppOperationContext={
-      db:input.env.DB,env:input.env,app:input.app,identity:input.identity,workspace:input.workspace,principal:input.principal,
+    const ctx:AppOperationContext=Object.freeze({
+      db:input.env.DB,env:input.env,app:input.app,identity:Object.freeze({...input.identity}),workspace:input.workspace,principal:Object.freeze({...input.principal}),credential,
       operation:op,requestId,now:new Date().toISOString(),params:Object.freeze({...params}),query:Object.freeze(query),body:Object.freeze(body),
       scope:resolveScope(input.scope),defer,
-    };
+    });
     const result=await definition.handle(ctx);
     if(!result||typeof result!=='object'||!('body' in result))fail(503,'service_unavailable','Réponse d’opération invalide.');
     const status=result.status??200;
@@ -172,7 +178,9 @@ export async function executeAppOperation(request:Request,definition:AppOperatio
     if(result.replayed===true)response.headers.set('Idempotent-Replayed','true');
     return response;
   }catch(error){
-    if(error instanceof ApiError)return json({error:{code:error.code,message:error.message,requestId}},error.status);
+    // Only ApiError reaches the client, with its validated public details; any other throwable (including
+    // look-alikes carrying status/code/details) is a generic 503 without message, cause or properties.
+    if(error instanceof ApiError)return json(errorBody(error,requestId),error.status);
     console.error(JSON.stringify({event:'lite.app-operation-error',requestId,operation:op.id,type:error instanceof Error?error.name:'UnknownError'}));
     return json({error:{code:'service_unavailable',message:'Le service est momentanément indisponible. Vos modifications n’ont pas été confirmées.',requestId}},503);
   }finally{

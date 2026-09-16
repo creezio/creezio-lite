@@ -1,5 +1,6 @@
-import type {ApiContext, Identity} from './types.ts';
-import type {TokenAccess} from './access-tokens.ts';
+import type {ApiContext} from './types.ts';
+import type {ResolvedCredential} from './access-tokens.ts';
+import {oauthCredential} from './scope.ts';
 import {hash, inviteToken, readBytes, readJson, checkOrigin} from './http.ts';
 import {ApiError, fail} from './validation.ts';
 
@@ -196,13 +197,15 @@ async function exchangeToken(request:Request,c:ApiContext,client:Client,p:URLSea
   return oauthJson({access_token:access,token_type:'Bearer',expires_in:ACCESS_SECONDS,refresh_token:refresh,scope,resource});
 }
 
-export async function resolveOAuthToken(request:Request,c:ApiContext):Promise<{identity:Identity;access:TokenAccess}|null>{
+export async function resolveOAuthToken(request:Request,c:ApiContext):Promise<ResolvedCredential|null>{
   const authorization=request.headers.get('authorization');if(!authorization||!/^Bearer mcp_at_/i.test(authorization))return null;
   if(new URL(request.url).pathname!=='/api/mcp'||!/^Bearer mcp_at_[a-f0-9]{64}$/i.test(authorization))fail(401,'invalid_token','Jeton MCP invalide.');
   const now=new Date().toISOString();
-  const token=await c.env.DB.prepare(`SELECT g.id,g.org_id,t.scope,u.id AS user_id,u.email,u.name FROM lite_oauth_tokens t
+  const token=await c.env.DB.prepare(`SELECT g.id,g.org_id,t.id AS token_id,cl.id AS client_id,t.scope,u.id AS user_id,u.email,u.name FROM lite_oauth_tokens t
     JOIN lite_oauth_grants g ON g.id=t.grant_id JOIN lite_oauth_clients cl ON cl.id=g.client_id JOIN lite_users u ON u.id=g.user_id JOIN lite_members m ON m.org_id=g.org_id AND m.user_id=g.user_id
-    WHERE t.access_hash=? AND t.access_expires_at>? AND g.expires_at>? AND g.resource=? AND g.revoked_at IS NULL AND cl.revoked_at IS NULL`).bind(await hash(authorization.slice(7)),now,now,mcpResource(request)).first<{id:string;org_id:string;scope:string;user_id:string;email:string;name:string}>();
+    WHERE t.access_hash=? AND t.access_expires_at>? AND g.expires_at>? AND g.resource=? AND g.revoked_at IS NULL AND cl.revoked_at IS NULL`).bind(await hash(authorization.slice(7)),now,now,mcpResource(request)).first<{id:string;org_id:string;token_id:string;client_id:string;scope:string;user_id:string;email:string;name:string}>();
   if(!token||!token.scope.split(' ').includes('crm:read'))fail(401,'invalid_token','Connexion expirée, révoquée ou sans accès à cet espace.');
-  return {identity:{userId:token.user_id,email:token.email,displayName:token.name},access:{id:token.id,workspaceId:token.org_id,mode:token.scope.split(' ').includes('crm:write')?'write':'read'}};
+  const mode=token.scope.split(' ').includes('crm:write')?'write':'read';
+  // access.id is the grant row (g.id); the token row (t.id) and the client are carried separately by the credential context.
+  return {identity:{userId:token.user_id,email:token.email,displayName:token.name},access:{id:token.id,workspaceId:token.org_id,mode},credential:oauthCredential({tokenId:token.token_id,grantId:token.id,clientId:token.client_id,workspaceId:token.org_id,mode})};
 }

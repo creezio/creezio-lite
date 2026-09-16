@@ -1,12 +1,12 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { ApiContext, AppExtensions, Identity, Principal, Role, ScopeAction, ScopeProvider, Workspace } from './types.ts';
-import { ApiError, boundedInteger, fail, moduleNavigable, moduleWritable, requireModuleRole, requireRole, roles, validateData } from './validation.ts';
+import { ApiError, boundedInteger, errorBody, fail, moduleNavigable, moduleWritable, requireModuleRole, requireRole, roles, validateData } from './validation.ts';
 import { checkOrigin, hash, inviteToken, json, readBytes, readJson } from './http.ts';
 import { searchRoute, searchSelection } from './search.ts';
 import { businessModule } from './registry.ts';
 import { accessTokenRoute } from './access-tokens.ts';
 import { coreOperations, matchOperation, assertOperationAllowed, canReadModule } from './operations.ts';
-import { fileScope, principalOf, recordScope, resolveScope } from './scope.ts';
+import { fileScope, principalOf, recordScope, resolveScope, sessionCredential } from './scope.ts';
 
 type Row = { id: string; module_id: string; data: string; version: number; created_at: string; updated_at: string };
 type Scoped = { scope: ScopeProvider; principal: Principal };
@@ -42,7 +42,8 @@ async function getRecord(db: D1Database, org: string, mod: string, id: string, s
 /** Identity MUST come from the trusted Sites dispatcher via getChatGPTUser().
  * This function deliberately never authenticates caller-provided headers itself. */
 export async function handleApi(request: Request, context: ApiContext, options: AppExtensions = {}): Promise<Response> {
-  const requestId = uuid(),started=performance.now();
+  // The dispatcher correlation id is reused verbatim; a direct call without dispatcher still gets one id per request.
+  const requestId = context.requestId ?? uuid(),started=performance.now();
   try {
     const url = new URL(request.url);
     const path = url.pathname.replace(/^\/api\/v1\/?/, '').replace(/\/$/,'');
@@ -100,7 +101,8 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     const org = context.workspace??await workspace(db,user,url.searchParams.get('workspace'));
     const declared=matchOperation(context.operations??coreOperations(context.app),request.method,url.pathname);
     if(declared)assertOperationAllowed(declared,org);
-    const scoped:Scoped={scope:resolveScope(options.scope),principal:principalOf(user,org,context.credential)};
+    const credential=context.credential??sessionCredential;
+    const scoped:Scoped={scope:resolveScope(options.scope),principal:principalOf(user,org,credential)};
     const searchResponse=await searchRoute(request,db,context.app,org,user,scoped);if(searchResponse){searchResponse.headers.set('Server-Timing',`app;dur=${(performance.now()-started).toFixed(1)}`);return searchResponse;}
     const tokenResponse=await accessTokenRoute(request,context,org);if(tokenResponse)return tokenResponse;
     if (path === 'workspaces/current' && request.method === 'PATCH') {
@@ -265,7 +267,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         // The configured policy owns every native deletion of this workspace after the access checks above.
         // The kit performs neither tombstone nor bucket.delete here, in parallel or as a fallback.
         const deferred:Promise<unknown>[]=[];
-        const result=await scoped.scope.deleteFile({db,env:context.env,principal:scoped.principal,workspace:org,fileId:file.id,requestId,now:timestamp(),defer:p=>{if(context.defer)context.defer(p);else deferred.push(p.catch(()=>{}));}});
+        const result=await scoped.scope.deleteFile({db,env:context.env,principal:scoped.principal,credential,workspace:org,fileId:file.id,requestId,now:timestamp(),defer:p=>{if(context.defer)context.defer(p);else deferred.push(p.catch(()=>{}));}});
         if(deferred.length)await Promise.all(deferred);
         if(!result||!['queued','complete'].includes(result.cleanup))fail(503,'service_unavailable','La politique de suppression n’a pas confirmé le résultat.');
         return json({ok:true,cleanup:result.cleanup});
@@ -281,7 +283,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     }
     fail(404,'not_found','Route introuvable.');
   } catch(error) {
-    if(error instanceof ApiError) return json({error:{code:error.code,message:error.message,requestId}},error.status);
+    if(error instanceof ApiError) return json(errorBody(error,requestId),error.status);
     // Do not log user payloads, invitation tokens, credentials or SQL bindings.
     console.error(JSON.stringify({event:'lite.api-error',requestId,type:error instanceof Error?error.name:'UnknownError'}));
     return json({error:{code:'service_unavailable',message:'Le service est momentanément indisponible. Vos modifications n’ont pas été confirmées.',requestId}},503);

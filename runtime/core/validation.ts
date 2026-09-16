@@ -1,10 +1,46 @@
 import type { AppDefinition, Module, ModuleKind, Role } from './types.ts';
 
+/** A public detail is a scalar or a short list of scalars; nothing nested, no exception, no SQL cause. */
+export type PublicDetail = string | number | boolean | null;
+export type PublicDetails = Readonly<Record<string, PublicDetail | readonly PublicDetail[]>>;
+const DETAIL_LIMITS = { keys: 16, keyPattern: /^[A-Za-z][A-Za-z0-9_]{0,39}$/, string: 200, items: 20, bytes: 2048 } as const;
+const SENSITIVE_KEY = /password|passwd|secret|token|authorization|cookie|api_?key|jwt|bearer|credential|hash|session/i;
+const scalar = (value: unknown): value is PublicDetail => value === null || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)) || (typeof value === 'string' && value.length <= DETAIL_LIMITS.string && !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value));
+/**
+ * Validate the public details an adapter attaches to an error. The adapter chooses the fields per code;
+ * the kit only accepts a plain object of at most 16 identifier keys with scalar values (strings ≤ 200
+ * characters) or lists of at most 20 scalars, 2 KiB serialised, and refuses sensitive key names.
+ * Anything else returns undefined: an invalid detail set is dropped as a whole, never partially serialised.
+ */
+export function publicDetails(value: unknown): PublicDetails | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value instanceof Error) return undefined;
+  const proto = Object.getPrototypeOf(value); if (proto !== Object.prototype && proto !== null) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (!entries.length || entries.length > DETAIL_LIMITS.keys) return undefined;
+  const result: Record<string, PublicDetail | readonly PublicDetail[]> = {};
+  for (const [key, item] of entries) {
+    if (!DETAIL_LIMITS.keyPattern.test(key) || SENSITIVE_KEY.test(key)) return undefined;
+    if (scalar(item)) result[key] = item;
+    else if (Array.isArray(item) && item.length <= DETAIL_LIMITS.items && item.every(scalar)) result[key] = Object.freeze([...item]) as readonly PublicDetail[];
+    else return undefined;
+  }
+  if (JSON.stringify(result).length > DETAIL_LIMITS.bytes) return undefined;
+  return Object.freeze(result);
+}
 export class ApiError extends Error {
   status: number; code: string;
-  constructor(status: number, code: string, message: string) { super(message); this.status = status; this.code = code; }
+  /** Validated public details, or undefined when none were given or they failed publicDetails. */
+  details?: PublicDetails;
+  constructor(status: number, code: string, message: string, details?: unknown) {
+    super(message); this.status = status; this.code = code;
+    if (details !== undefined) { const checked = publicDetails(details); if (checked) this.details = checked; else console.error(JSON.stringify({ event: 'lite.error-details-rejected', code })); }
+  }
 }
-export function fail(status: number, code: string, message: string): never { throw new ApiError(status, code, message); }
+export function fail(status: number, code: string, message: string, details?: unknown): never { throw new ApiError(status, code, message, details); }
+/** The public error body shared by every executor: code, message, request id and validated details only. */
+export function errorBody(error: ApiError, requestId?: string): { error: { code: string; message: string; requestId?: string; details?: PublicDetails } } {
+  return { error: { code: error.code, message: error.message, ...(requestId ? { requestId } : {}), ...(error.details ? { details: error.details } : {}) } };
+}
 export const roles: Role[] = ['owner', 'admin', 'member', 'viewer'];
 export const MODULE_LIMIT = 64;
 export const moduleKinds: ModuleKind[] = ['module', 'entity', 'collection'];

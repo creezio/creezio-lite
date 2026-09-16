@@ -25,7 +25,17 @@ export type RecordData = { id: string; module_id: string; data: Record<string, u
 export type Workspace = { id: string; name: string; role: Role; operationPolicies?: import('./operations.ts').OperationPolicy[] };
 export type LiteEnvironment = { DB: D1Database; BUCKET?: R2Bucket; LITE_INTEGRATION_SECRET?: string };
 export type CredentialKind = 'session' | 'token' | 'oauth';
-export type ApiContext = { app: AppDefinition; env: LiteEnvironment; identity: Identity | null; workspace?:Workspace; operations?:import('./operations.ts').Operation[]; credential?:CredentialKind; defer?:(promise:Promise<unknown>)=>void };
+export type CredentialMode = 'read' | 'write';
+/**
+ * Immutable server-side reference to the credential that authenticated this request, built only by the
+ * resolvers and the dispatcher. It carries verified, non-secret identifiers: never the raw secret, the
+ * Authorization header or a hash. For OAuth the token and the grant are distinct references (t.id and g.id).
+ */
+export type CredentialContext =
+  | Readonly<{ kind: 'session' }>
+  | Readonly<{ kind: 'token'; tokenId: string; workspaceId: string; mode: CredentialMode }>
+  | Readonly<{ kind: 'oauth'; tokenId: string; grantId: string; clientId: string; workspaceId: string; mode: CredentialMode }>;
+export type ApiContext = { app: AppDefinition; env: LiteEnvironment; identity: Identity | null; workspace?:Workspace; operations?:import('./operations.ts').Operation[]; credential?:CredentialContext; requestId?:string; defer?:(promise:Promise<unknown>)=>void };
 export type BeforeWrite = (input: { module: Module; data: Record<string, unknown>; previous: Record<string, unknown> | null; workspace: Workspace; identity: Identity }) => Promise<void> | void;
 
 /** The verified actor of one request. Handlers never rebuild it from body or query. */
@@ -55,9 +65,10 @@ export type FileDeletionContext = {
   db: D1Database;
   env: LiteEnvironment;
   principal: Principal;
+  credential: CredentialContext;
   workspace: Workspace;
   fileId: string;
-  requestId: string;
+  requestId: string; // the dispatcher correlation id, also sent as the response request id header
   now: string;
   defer(promise: Promise<unknown>): void;
 };
@@ -72,8 +83,9 @@ export type AppOperationContext = {
   identity: Identity;
   workspace: Workspace;
   principal: Principal;
+  credential: CredentialContext;
   operation: import('./operations.ts').Operation;
-  requestId: string;
+  requestId: string; // the dispatcher correlation id, also sent as the response request id header
   now: string;
   params: Readonly<Record<string, string>>;
   query: Readonly<Record<string, unknown>>;
