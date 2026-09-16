@@ -26,8 +26,9 @@ Fichiers hors périmètre non touchés : `integrations.ts`, types centraux, regi
 ## Garanties implémentées
 
 - Racines fixes ; chemins construits par les adaptateurs, identifiants validés (`bc-<uuid>`, `run-<uuid>`) puis encodés ; `assertPath` refuse requête, fragment, segments vides ou relatifs.
-- Credential : `resolveCredential()` appelé avant chaque requête ; provider différent, `enabled:false`, clé vide/malformée/trop longue ou résolution en échec → `credential_unavailable`, `delivery:'not_sent'`, aucun `fetch`.
-- Délai (défaut 15 s, bornes 1–120 s) et `signal` de l'appelant combinés ; abort préalable → `not_sent` ; interruption après envoi → `provider_timeout` avec `reason` `timeout` ou `caller_abort` et `delivery:'unknown'`. Le timer est toujours nettoyé.
+- Credential : `resolveCredential()` appelé avant chaque requête ; provider différent, `enabled:false`, clé vide/malformée/trop longue ou résolution en échec (rejet ou exception synchrone) → `credential_unavailable`, `delivery:'not_sent'`, aucun `fetch`.
+- Délai (défaut 15 s, bornes 1–120 s) et `signal` de l'appelant combinés, démarrés **avant** la résolution du credential : le budget couvre toute l'opération. Résolution bloquée jusqu'à expiration → `credential_unavailable`, `reason:'timeout'`, `delivery:'not_sent'` ; abort de l'appelant avant ou pendant la résolution → `provider_timeout`, `reason:'caller_abort'`, `delivery:'not_sent'` (le résolveur n'est même pas appelé si le signal est déjà annulé). Une résolution qui aboutit après expiration ou annulation est ignorée et n'entraîne aucun `fetch`. Interruption après envoi → `provider_timeout` avec `reason` `timeout` ou `caller_abort` et `delivery:'unknown'`. Le timer est toujours nettoyé.
+- Échec sans recopie de données : `field` ne contient que des libellés fixes (`prompt`, `repos[0]`, `tools[0]`, `toolChoice`, …). Une clé inconnue, à tout niveau d'imbrication, produit `reason:'unknown_field'` avec le nom du conteneur connu ; la clé rejetée n'apparaît ni dans `field`, ni dans le message, ni dans la pile, ni dans la sérialisation JSON.
 - `redirect:'manual'` ; tout 3xx → `provider_redirect`, corps annulé, aucun appel vers la cible.
 - Statuts : 401/403 → `provider_auth` ; 429 → `provider_quota` avec `Retry-After` borné à 1 h ; autres 4xx → `provider_rejected` ; 5xx → `provider_unreachable` ; `delivery:'responded'`. Le corps d'erreur est lu borné (64 Ko max) uniquement pour extraire un code autorisé ; jamais de message ni de corps dans l'échec.
 - Corps de succès : type JSON requis, `content-length` puis lecture en flux bornée (défaut 2 Mo, bornes 1 Ko–16 Mo) avec annulation du lecteur ; JSON invalide ou schéma inconnu → `provider_response`.
@@ -42,13 +43,19 @@ Environnement : Node 24.21.0, pnpm 11.25.0 via Corepack, `pnpm --dir template in
 
 | Commande | Résultat |
 |---|---|
-| `npm test` (synchronise le template puis lance `tests/*.test.mjs`) | 67 tests, 0 échec ; dont les 15 tests fetch simulé et le test workerd de ce lot. |
+| `npm test` (synchronise le template puis lance `tests/*.test.mjs`) | 69 tests, 0 échec ; dont les 17 tests fetch simulé et le test workerd de ce lot (relancé après les correctifs de revue, head a0d7a72 + rapport). |
 | `npm run check` | `ok:true`, version 0.9.0, 2 exemples. |
 | `pnpm --dir template run typecheck` | 0 erreur (`tsc --noEmit` après `prepare-lite`). |
 | `pnpm --dir template run build` | « Build complete ». |
 | `node scripts/validate-examples.mjs` | Deux applications indépendantes générées et validées. |
 
 Couverture des tests du lot : racines et en-têtes (Bearer, `accept`, `redirect:'manual'`), credential incorrect/désactivé/révoqué avant réseau et relecture à chaque appel, bornes des options, validation des identifiants et payloads (32 cas Cursor, 33 cas xAI), payload exact envoyé, réponses invalides / identités divergentes / statuts inconnus, 409 déterministe sans seconde création, 401/403/429/5xx sans fuite (clé, corps, prompt et « Bearer » recherchés dans l'échec sérialisé et la pile), redirections 301/302/303/307/308, délai, annulation avant et pendant l'appel, erreur réseau, corps trop grand (flux annulé, `content-length` déclaré), non JSON, 204, xAI synchrone avec outil relayé sans second appel, `store` explicite, réponse `incomplete` sans fuite. Le test workerd rejoue racines, auth, payloads, credential mismatch, redirection, 401/403/409/429/500/503 avec `Retry-After`, délai, annulation, corps trop grand et non JSON avec le `fetch` réel de workerd.
+
+Ajouts de la revue du 16/09/2026 (head relu 47dbb49) :
+
+- Clés inconnues imbriquées : 12 cas (Cursor : racine, `prompt`, `model`, `repos[0]`, `env`, clé composée `prompt.<marqueur>` ; xAI : racine, `input[0]` message et `function_call_output`, `input[0].content[0]`, `tools[0]`, `toolChoice`) avec le marqueur `PRIVATE_FAKE_CLIENT_DATA@example.test` recherché dans la sérialisation JSON, le message, la pile, `field` et toutes les propriétés de l'échec : absent partout, `reason:'unknown_field'`, `field` = conteneur connu, aucun fetch.
+- Budget étendu à la résolution du credential (fetch simulé) : résolution bloquée avec `timeoutMs:1000` → échec `credential_unavailable`/`timeout`/`not_sent` mesuré entre 950 et 1150 ms ; résolution tardive (1300 ms) → échec à l'expiration puis, 450 ms après la fin de la résolution, toujours aucun fetch ; abort de l'appelant pendant l'attente (30 ms) → `provider_timeout`/`caller_abort`/`not_sent` en moins de 500 ms ; abort préalable → résolveur jamais appelé ; exception synchrone du résolveur → `credential_unavailable` ; un client sain sur le même fetch simulé passe ensuite normalement.
+- Même scénarios dans workerd : credential retardé de 2,5 s avec `timeoutMs:1000` → `credential_unavailable`/`timeout`/`not_sent` en moins de 1,4 s ; credential retardé avec abort à 50 ms → `provider_timeout`/`caller_abort`/`not_sent` ; après 2,6 s d'attente, aucun appel sortant supplémentaire ; clé inconnue imbriquée dans `prompt` → `field:'prompt'`, marqueur absent de la réponse.
 
 ## Limites et raccordement
 
