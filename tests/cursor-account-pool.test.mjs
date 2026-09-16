@@ -507,11 +507,19 @@ test('launch in pool mode: deterministic account in configured order, owner atta
     const generic = await agents.launch({ ...base, mission: 'M2', ref: 'agents/M2', account: 'acct-c', fetchImpl: nearMiss.fetchImpl });
     assert.equal(generic.status, 'unavailable'); assert.equal(generic.account.id, 'acct-c'); assert.equal(generic.account.explicitValidation, 'start_block'); assert.equal(generic.evidence.classification, 'undetermined'); assert.equal(generic.nextAction, undefined, 'aucune consigne d’épuisement sur un 429 générique');
     c = await accountOf('acct-c'); assert.equal(c.status, 'active'); assert.deepEqual(c.modelPools, { custom: 'recheck_required', standard: 'recheck_required' }, 'aucune inférence d’épuisement'); assert.equal(c.startBlock.at, T0, 'blocage maintenu tant qu’aucun départ n’est accepté');
-    for (const handler of [() => providerError(402, 'payment_required', MESSAGE_MARKER), () => providerError(403, 'forbidden', MESSAGE_MARKER), () => json({}, 503), () => { throw new TypeError('socket hang up'); }]) {
+    for (const [handler, uncertain] of [[() => providerError(402, 'payment_required', MESSAGE_MARKER), false], [() => providerError(403, 'forbidden', MESSAGE_MARKER), false], [() => json({}, 503), true], [() => { throw new TypeError('socket hang up'); }, true]]) {
       const r = recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': handler, [`GET /v1/agents/${M2}`]: () => providerError(404, 'not_found', '') });
       const out = await agents.launch({ ...base, mission: 'M2', ref: 'agents/M2', account: 'acct-c', fetchImpl: r.fetchImpl });
       assert.equal(out.account.id, 'acct-c'); assert.notEqual(out.status, 'launched'); assertNoSecret(out);
       c = await accountOf('acct-c'); assert.equal(c.status, 'active'); assert.deepEqual(c.modelPools, { custom: 'recheck_required', standard: 'recheck_required' }); assert.ok(c.startBlock);
+      // Livraison incertaine (5xx, réseau) : le 404 immédiat ne conclut pas « non créé » ; seul un reconcile explicite le fait. Refus explicite (4xx) : non créé.
+      const state = (await agents.loadRegistry(registryFile)).missions.M2.state;
+      if (uncertain) {
+        assert.equal(out.status, 'uncertain'); assert.equal(out.reason, 'not_found_after_unknown_delivery'); assert.ok(['server', 'network'].includes(out.deliveryReason)); assert.equal(state, 'uncertain'); assert.match(out.nextAction, /404 immédiat ne prouve pas l’absence/);
+        assert.equal((await agents.launch({ ...base, mission: 'M2', ref: 'agents/M2', account: 'acct-c', fetchImpl: recorder({}).fetchImpl })).status, 'deduplicated', 'aucun POST tant que non résolu');
+        const settled = await agents.reconcile({ mission: 'M2', registryFile, access, fetchImpl: r.fetchImpl });
+        assert.equal(settled.status, 'not_created'); assert.match(settled.nextAction, /launch autorisé/); assert.equal(r.posts().length, 1);
+      } else assert.ok(['failed', 'not_created'].includes(state), `refus explicite ⇒ ${state}`);
     }
     // Plan manquant (403 exact) ⇒ deux pools indisponibles.
     const plan = recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': () => providerError(403, 'plan_required', PLAN), [`GET /v1/agents/${M2}`]: () => providerError(404, 'not_found', '') });
@@ -556,64 +564,97 @@ test('launch in pool mode: deterministic account in configured order, owner atta
   });
 });
 
-test('successor: only after the predecessor is terminal, reconciled through its owner and checkpointed; new linked agent on the next premium account with the same selection; refused attempts retried deterministically', async () => {
+test('successor: only when the owner is confirmed unavailable for the current selection, after re-reading the predecessor through its owner (terminal run), on the observed branch with an attested checkpoint; retries re-read and detect external resumption; launch never overwrites a lineage', async () => {
   const config = await agents.loadSelections();
   await withTemp('lite-pool-successor-', async (temp) => {
     const { access, accountOf, registryFile } = await openVault(temp);
     const S1 = agents.missionAgentId(REPO, 'S1'), S1b = agents.missionAgentId(REPO, 'S1~s1'), S1c = agents.missionAgentId(REPO, 'S1~s2');
     const SHA = 'a'.repeat(40);
     const launched = await agents.launch({ mission: 'S1', repo: REPO, ref: 'agents/S1', promptText: 'brief', config, access, registryFile, now, fetchImpl: recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': () => json({ agent: agentOf(S1, RUN1), run: runOf(S1, RUN1) }) }).fetchImpl });
-    assert.equal(launched.account.id, 'acct-a');
+    assert.equal(launched.account.id, 'acct-a'); assert.equal((await agents.loadRegistry(registryFile)).missions.S1.workOnCurrentBranch, true);
     const entryOf = async () => (await agents.loadRegistry(registryFile)).missions.S1;
     const base = { mission: 'S1', registryFile, promptText: `suite ${PROMPT_MARKER}`, checkpoint: SHA, config, access, now };
     await assert.rejects(agents.successor({ ...base, access: agents.envAccess(KEY_ENV) }), /exige le pool/);
     await assert.rejects(agents.successor({ ...base, checkpoint: 'abc' }), /--checkpoint/);
     await assert.rejects(agents.successor({ ...base, checkpoint: undefined }), /--checkpoint/);
-    // Mission active : jamais interrompue.
-    const active = recorder({ [`GET /v1/agents/${S1}`]: () => json(agentOf(S1, RUN1)), [`GET /v1/agents/${S1}/runs/${RUN1}`]: () => json(runOf(S1, RUN1, 'RUNNING')) });
-    const running = await agents.successor({ ...base, fetchImpl: active.fetchImpl });
-    assert.equal(running.status, 'blocked'); assert.equal(running.reason, 'run_active'); assert.equal(active.posts().length, 0); assert.deepEqual(active.keysUsed(), [KEY_A]);
+    await assert.rejects(agents.successor({ ...base, branch: 'bad branch' }), /branche/);
+    // B1 : propriétaire actif et éligible, run FINISHED, autre compte éligible ⇒ aucun successeur (une préférence de compte n’est pas une migration) ; followup conseillé, aucun appel.
+    const silent = recorder({});
+    const preferred = await agents.successor({ ...base, fetchImpl: silent.fetchImpl });
+    assert.equal(preferred.status, 'blocked'); assert.equal(preferred.reason, 'owner_not_confirmed_unavailable'); assert.equal(preferred.owner.poolState, 'probe_passed_balance_unknown'); assert.match(preferred.nextAction, /followup --mission S1/); assert.match(preferred.nextAction, /préférence de compte/); assert.equal(silent.calls.length, 0);
+    assert.deepEqual(preferred.predecessor.selection, { key: 'fable', modelId: 'claude-fable-5-1', params: fable.params });
+    // Propriétaire bloqué au départ (plafond) ou inactif sans confirmation : disponibilité inconnue ⇒ blocage explicite, jamais successeur.
+    await access.pool.record('acct-a', access.pool.classify({ callKind: 'run', modelId: 'claude-fable-5-1', result: rejected(400, 'usage_limit_exceeded', HARD_LIMIT) }));
+    const capped = await agents.successor({ ...base, fetchImpl: silent.fetchImpl });
+    assert.equal(capped.reason, 'owner_not_confirmed_unavailable'); assert.equal(capped.owner.startBlocked, true); assert.match(capped.nextAction, /disponibilité inconnue/); assert.match(capped.nextAction, /followup --mission S1 --account acct-a/); assert.equal(silent.calls.length, 0);
+    await access.pool.record('acct-a', access.pool.classify({ callKind: 'run', modelId: 'claude-fable-5-1', result: { outcome: 'ok', status: 200 } }));
     // Reprise incertaine du prédécesseur : successeur refusé sans appel jusqu’à reconcile.
     const lost = recorder({ [`GET /v1/agents/${S1}`]: () => json(agentOf(S1, RUN1)), [`GET /v1/agents/${S1}/runs/${RUN1}`]: () => json(runOf(S1, RUN1, 'FINISHED')), [`POST /v1/agents/${S1}/runs`]: () => { throw new TypeError('socket hang up'); } });
     assert.equal((await agents.followup({ mission: 'S1', registryFile, promptText: 'x', access, fetchImpl: lost.fetchImpl })).status, 'uncertain');
-    const silent = recorder({});
     const unresolved = await agents.successor({ ...base, fetchImpl: silent.fetchImpl });
     assert.equal(unresolved.status, 'blocked'); assert.equal(unresolved.reason, 'followup_unresolved'); assert.equal(silent.calls.length, 0);
-    // Le POST perdu avait en fait été accepté (RUN2) : reconcile l’attribue, puis ce run doit être terminal.
+    // Le POST perdu avait en fait été accepté (RUN2) : reconcile l’attribue (limite documentée rappelée), puis ce run doit être terminal.
     const accepted = recorder({ [`GET /v1/agents/${S1}`]: () => json(agentOf(S1, RUN2)) });
-    assert.deepEqual((await agents.reconcile({ mission: 'S1', registryFile, access, fetchImpl: accepted.fetchImpl })).followup, { state: 'accepted', priorRunId: RUN1, runId: RUN2 });
-    // acct-a épuisé (usage inclus) pendant RUN2 : le propriétaire inactif reste celui qui lit l’agent ; un autre compte ne le verrait pas (404).
+    const settled = await agents.reconcile({ mission: 'S1', registryFile, access, fetchImpl: accepted.fetchImpl });
+    assert.deepEqual(settled.followup, { state: 'accepted', priorRunId: RUN1, runId: RUN2 }); assert.match(settled.nextAction, /run tiers n’est pas exclu/);
+    // acct-a épuisé (usage inclus) pendant RUN2 : confirmé indisponible ⇒ successeur possible ; le propriétaire inactif reste celui qui lit l’agent (un autre compte verrait 404).
     await access.pool.record('acct-a', access.pool.classify({ callKind: 'run', modelId: 'claude-fable-5-1', result: { outcome: 'unavailable', status: 429, reason: 'quota', providerCode: 'rate_limit_exceeded', providerMessage: INCLUDED } }));
     assert.equal((await accountOf('acct-a')).status, 'inactive');
+    const active = recorder({ [`GET /v1/agents/${S1}`]: () => json(agentOf(S1, RUN2)), [`GET /v1/agents/${S1}/runs/${RUN2}`]: () => json(runOf(S1, RUN2, 'RUNNING')) });
+    const running = await agents.successor({ ...base, fetchImpl: active.fetchImpl });
+    assert.equal(running.status, 'blocked'); assert.equal(running.reason, 'run_active'); assert.equal(active.posts().length, 0); assert.deepEqual(active.keysUsed(), [KEY_A]);
     const owner = recorder({ [`GET /v1/agents/${S1}`]: r => (r.key === KEY_A ? json(agentOf(S1, RUN2, 'IDLE')) : providerError(404, 'not_found', MESSAGE_MARKER)), [`GET /v1/agents/${S1}/runs/${RUN2}`]: r => (r.key === KEY_A ? json(runOf(S1, RUN2, 'ERROR')) : providerError(404, 'not_found', '')), 'GET /v1/models': catalog, 'POST /v1/agents': r => { assert.equal(r.key, KEY_B); assert.equal(r.body.agentId, S1b); return json({ agent: agentOf(S1b, RUN1), run: runOf(S1b, RUN1) }); } });
     const succeeded = await agents.successor({ ...base, name: 'S1 successeur', fetchImpl: owner.fetchImpl });
     assert.equal(succeeded.status, 'launched'); assert.equal(succeeded.agentId, S1b); assert.equal(succeeded.account.id, 'acct-b'); assert.equal(succeeded.attempt, 1);
-    assert.deepEqual(succeeded.predecessor, { agentId: S1, accountId: 'acct-a', runId: RUN2, runStatus: 'ERROR', checkpoint: SHA });
+    assert.deepEqual(succeeded.predecessor, { agentId: S1, accountId: 'acct-a', runId: RUN2, selection: { key: 'fable', modelId: 'claude-fable-5-1', params: fable.params } }); assert.deepEqual(succeeded.predecessorRun, { runId: RUN2, runStatus: 'ERROR' });
+    assert.deepEqual(succeeded.branch, { name: 'agents/S1', source: 'entry_ref' }, 'aucune branche exposée par le run : mission sur branche courante ⇒ ref de départ'); assert.equal(succeeded.checkpoint.sha, SHA); assert.match(succeeded.checkpoint.attestation, /le transport ne vérifie ni Git/); assert.match(succeeded.checkpoint.attestation, /HEAD actuel de la branche/);
     assert.deepEqual(owner.calls.map(c => `${c.method} ${c.path.replace(S1b, 'NEW').replace(S1, 'OLD')} ${c.key === KEY_A ? 'A' : 'B'}`), ['GET /v1/agents/OLD A', `GET /v1/agents/OLD/runs/${RUN2} A`, 'GET /v1/models B', 'POST /v1/agents B'], 'prédécesseur lu par son propriétaire, création par le successeur');
     const post = owner.posts()[0].body;
-    assert.deepEqual(post.model, { id: 'claude-fable-5-1', params: fable.params }, 'même sélection et mêmes paramètres sur l’autre compte'); assert.deepEqual(post.repos, [{ url: REPO, startingRef: 'agents/S1' }]); assert.equal(post.prompt.text, `suite ${PROMPT_MARKER}`); assert.equal(post.name, 'S1 successeur');
-    assert.equal(succeeded.selection.requested.modelId, 'claude-fable-5-1'); assert.equal(succeeded.selection.currentSelection, undefined); assertNoSecret(succeeded);
+    assert.deepEqual(post.model, { id: 'claude-fable-5-1', params: fable.params }, 'même sélection et mêmes paramètres sur l’autre compte'); assert.deepEqual(post.repos, [{ url: REPO, startingRef: 'agents/S1' }]); assert.equal(post.workOnCurrentBranch, true); assert.equal(post.prompt.text, `suite ${PROMPT_MARKER}`); assert.equal(post.name, 'S1 successeur');
+    assert.equal(succeeded.selection.requested.modelId, 'claude-fable-5-1'); assert.equal(succeeded.selection.currentSelection, undefined); assert.equal(succeeded.selection.createAccepted, true); assertNoSecret(succeeded);
     let entry = await entryOf();
-    assert.equal(entry.agentId, S1b); assert.equal(entry.accountId, 'acct-b'); assert.equal(entry.state, 'launched'); assert.equal(entry.runId, RUN1); assert.equal(entry.successorOf, S1); assert.equal(entry.successorAttempts, 1); assert.equal(entry.followup, undefined);
-    assert.equal(entry.predecessors.length, 1); assert.deepEqual({ ...entry.predecessors[0], endedAt: undefined }, { agentId: S1, accountId: 'acct-a', runId: RUN2, runStatus: 'ERROR', url: `https://cursor.com/agents/${S1}`, checkpoint: { sha: SHA, ref: 'agents/S1', providedBy: 'orchestrator' }, followups: 1, endedAt: undefined });
+    assert.equal(entry.agentId, S1b); assert.equal(entry.accountId, 'acct-b'); assert.equal(entry.state, 'launched'); assert.equal(entry.runId, RUN1); assert.equal(entry.successorOf, S1); assert.equal(entry.successorAttempts, 1); assert.equal(entry.followup, undefined); assert.equal(entry.ref, 'agents/S1');
+    assert.equal(entry.predecessors.length, 1);
+    assert.deepEqual({ ...entry.predecessors[0], endedAt: undefined }, { agentId: S1, accountId: 'acct-a', runId: RUN2, runStatus: 'ERROR', url: `https://cursor.com/agents/${S1}`, selection: { key: 'fable', modelId: 'claude-fable-5-1', params: fable.params }, workOnCurrentBranch: true, branch: { name: 'agents/S1', source: 'entry_ref', observed: [] }, checkpoint: { sha: SHA, ref: 'agents/S1', branch: 'agents/S1', providedBy: 'orchestrator', verification: 'orchestrator_attested', transportVerifiedGit: false }, followups: 1, endedAt: undefined });
     assert.equal(entry.selection.modelId, 'claude-fable-5-1'); assertNoSecret(entry);
+    // B3 : launch sur une mission à chaîne est refusé (active ou non), sans appel ; la chaîne, le propriétaire et l’identifiant restent intacts.
+    const relaunch = await agents.launch({ mission: 'S1', repo: REPO, ref: 'agents/S1', promptText: 'brief', config, access, registryFile, now, fetchImpl: silent.fetchImpl });
+    assert.equal(relaunch.status, 'deduplicated'); assert.match(relaunch.nextAction, /jamais launch/); assert.equal(silent.calls.length, 0);
     // La mission continue sur le successeur avec la clé de son propriétaire.
     const next = recorder({ [`GET /v1/agents/${S1b}/runs/${RUN1}`]: r => { assert.equal(r.key, KEY_B); return json(runOf(S1b, RUN1, 'RUNNING')); } });
     assert.equal((await agents.status({ mission: 'S1', registryFile, access, fetchImpl: next.fetchImpl })).account.id, 'acct-b');
-    // Second successeur : acct-b épuisé, POST perdu et agent introuvable ⇒ not_created ; nouvelle tentative avec le même checkpoint et un identifiant distinct ; autre checkpoint refusé.
+    // Second successeur : acct-b épuisé ; POST perdu puis 404 immédiat ⇒ incertain (pas « non créé »), aucun nouvel identifiant tant que non résolu ; reconcile explicite ⇒ not_created.
     await access.pool.record('acct-b', access.pool.classify({ callKind: 'run', modelId: 'claude-fable-5-1', result: { outcome: 'unavailable', status: 429, reason: 'quota', providerCode: 'rate_limit_exceeded', providerMessage: INCLUDED } }));
     const SHA2 = 'b'.repeat(40);
     const lostPost = recorder({ [`GET /v1/agents/${S1b}`]: () => json(agentOf(S1b, RUN1, 'IDLE')), [`GET /v1/agents/${S1b}/runs/${RUN1}`]: () => json(runOf(S1b, RUN1, 'FINISHED')), 'GET /v1/models': catalog, 'POST /v1/agents': () => { throw new TypeError('socket hang up'); }, [`GET /v1/agents/${S1c}`]: () => providerError(404, 'not_found', '') });
-    const notCreated = await agents.successor({ ...base, checkpoint: SHA2, fetchImpl: lostPost.fetchImpl });
-    assert.equal(notCreated.status, 'unavailable'); assert.equal(notCreated.state, 'not_created'); assert.equal(notCreated.account.id, 'acct-c'); assert.equal(notCreated.attempt, 2); assert.equal(lostPost.posts()[0].body.agentId, S1c);
-    entry = await entryOf(); assert.equal(entry.state, 'not_created'); assert.equal(entry.predecessors.length, 2); assert.equal(entry.predecessors[1].agentId, S1b); assert.equal(entry.predecessors[1].checkpoint.sha, SHA2);
-    await assert.rejects(agents.successor({ ...base, checkpoint: SHA, fetchImpl: silent.fetchImpl }), /Checkpoint différent/);
-    const S1d = agents.missionAgentId(REPO, 'S1~s3');
-    const retry = recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': r => json({ agent: agentOf(r.body.agentId, RUN1), run: runOf(r.body.agentId, RUN1) }) });
-    const retried = await agents.successor({ ...base, checkpoint: SHA2, fetchImpl: retry.fetchImpl });
-    assert.equal(retried.status, 'launched'); assert.equal(retried.agentId, S1d); assert.equal(retried.attempt, 3); assert.equal(retried.account.id, 'acct-c'); assert.deepEqual(retry.keysUsed(), [KEY_C]);
-    assert.deepEqual(retry.calls.map(c => `${c.method} ${c.path}`), ['GET /v1/models', 'POST /v1/agents'], 'prédécesseur déjà vérifié : aucune relecture');
+    const lostSucc = await agents.successor({ ...base, checkpoint: SHA2, fetchImpl: lostPost.fetchImpl });
+    assert.equal(lostSucc.status, 'uncertain'); assert.equal(lostSucc.reason, 'not_found_after_unknown_delivery'); assert.equal(lostSucc.deliveryReason, 'network'); assert.equal(lostSucc.account.id, 'acct-c'); assert.equal(lostSucc.attempt, 2); assert.equal(lostPost.posts()[0].body.agentId, S1c); assert.match(lostSucc.nextAction, /404 immédiat ne prouve pas l’absence/);
+    entry = await entryOf(); assert.equal(entry.state, 'uncertain'); assert.equal(entry.agentId, S1c); assert.equal(entry.predecessors.length, 2); assert.equal(entry.predecessors[1].agentId, S1b); assert.equal(entry.predecessors[1].checkpoint.sha, SHA2);
+    await assert.rejects(agents.successor({ ...base, checkpoint: SHA2, fetchImpl: silent.fetchImpl }), /reconcile avant tout successeur/); assert.equal(silent.calls.length, 0, 'aucun nouvel identifiant depuis une incertitude');
+    const stillAbsent = recorder({ [`GET /v1/agents/${S1c}`]: () => providerError(404, 'not_found', '') });
+    const concluded = await agents.reconcile({ mission: 'S1', registryFile, access, fetchImpl: stillAbsent.fetchImpl });
+    assert.equal(concluded.status, 'not_created'); assert.match(concluded.nextAction, /successor --mission --checkpoint <même SHA>/); assert.match(concluded.nextAction, /jamais launch/); assert.deepEqual(concluded.lineage, { successorOf: S1b, predecessors: 2 }); assert.deepEqual(stillAbsent.keysUsed(), [KEY_C]);
+    const blockedLaunch = await agents.launch({ mission: 'S1', repo: REPO, ref: 'agents/S1', promptText: 'brief', config, access, registryFile, now, fetchImpl: silent.fetchImpl });
+    assert.equal(blockedLaunch.status, 'blocked'); assert.equal(blockedLaunch.reason, 'mission_has_lineage'); assert.match(blockedLaunch.nextAction, /successor --mission --checkpoint/); assert.equal(silent.calls.length, 0);
+    entry = await entryOf(); assert.equal(entry.agentId, S1c); assert.equal(entry.successorOf, S1b); assert.equal(entry.accountId, 'acct-c'); assert.equal(entry.predecessors.length, 2, 'chaîne et propriétaire intacts');
+    await assert.rejects(agents.followup({ mission: 'S1', registryFile, promptText: 'x', access, fetchImpl: silent.fetchImpl }), /successor --checkpoint/);
+    // B2 : chaque nouvelle tentative relit le prédécesseur via son compte. Autre checkpoint avec run inchangé : refusé après relecture ; run actif : bloqué ;
+    // reprise externe (nouveau run terminal) : la preuve enregistrée est périmée ⇒ blocage avec le même SHA, nouvelle attestation exigée.
+    const unchanged = recorder({ [`GET /v1/agents/${S1b}`]: () => json(agentOf(S1b, RUN1, 'IDLE')), [`GET /v1/agents/${S1b}/runs/${RUN1}`]: () => json(runOf(S1b, RUN1, 'FINISHED')) });
+    await assert.rejects(agents.successor({ ...base, checkpoint: SHA, fetchImpl: unchanged.fetchImpl }), /Checkpoint différent/); assert.deepEqual(unchanged.keysUsed(), [KEY_B]); assert.equal(unchanged.posts().length, 0);
+    const resumedActive = recorder({ [`GET /v1/agents/${S1b}`]: () => json(agentOf(S1b, RUN2, 'RUNNING')), [`GET /v1/agents/${S1b}/runs/${RUN2}`]: () => json(runOf(S1b, RUN2, 'RUNNING')) });
+    const busy = await agents.successor({ ...base, checkpoint: SHA2, fetchImpl: resumedActive.fetchImpl });
+    assert.equal(busy.status, 'blocked'); assert.equal(busy.reason, 'run_active'); assert.equal(busy.runId, RUN2); assert.equal(busy.registryRunId, RUN1); assert.equal(resumedActive.posts().length, 0);
+    const resumed = recorder({ [`GET /v1/agents/${S1b}`]: () => json(agentOf(S1b, RUN2, 'IDLE')), [`GET /v1/agents/${S1b}/runs/${RUN2}`]: () => json(runOf(S1b, RUN2, 'FINISHED')), 'GET /v1/models': catalog, 'POST /v1/agents': r => json({ agent: agentOf(r.body.agentId, RUN1), run: runOf(r.body.agentId, RUN1) }) });
+    const staleProof = await agents.successor({ ...base, checkpoint: SHA2, fetchImpl: resumed.fetchImpl });
+    assert.equal(staleProof.status, 'blocked'); assert.equal(staleProof.reason, 'predecessor_resumed'); assert.equal(staleProof.runId, RUN2); assert.match(staleProof.nextAction, /SHA re-vérifié/); assert.equal(resumed.posts().length, 0);
+    entry = await entryOf(); assert.equal(entry.predecessors[1].runId, RUN1, 'rien n’est réécrit sans nouvelle attestation'); assert.equal(entry.state, 'not_created');
+    const S1d = agents.missionAgentId(REPO, 'S1~s3'); const SHA3 = 'd'.repeat(40);
+    const retried = await agents.successor({ ...base, checkpoint: SHA3, fetchImpl: resumed.fetchImpl });
+    assert.equal(retried.status, 'launched'); assert.equal(retried.agentId, S1d); assert.equal(retried.attempt, 3); assert.equal(retried.account.id, 'acct-c'); assert.deepEqual(retried.predecessorRun, { runId: RUN2, runStatus: 'FINISHED' });
+    assert.deepEqual(resumed.calls.map(c => `${c.method} ${c.path.replace(S1b, 'PRED')} ${c.key === KEY_B ? 'B' : 'C'}`), ['GET /v1/agents/PRED B', `GET /v1/agents/PRED/runs/${RUN2} B`, 'GET /v1/agents/PRED B', `GET /v1/agents/PRED/runs/${RUN2} B`, 'GET /v1/models C', 'POST /v1/agents C'], 'relecture du prédécesseur à chaque tentative (bloquée puis acceptée), création seulement après');
     entry = await entryOf(); assert.equal(entry.predecessors.length, 2, 'aucun prédécesseur dupliqué'); assert.equal(entry.successorAttempts, 3); assert.equal(entry.state, 'launched');
+    assert.equal(entry.predecessors[1].runId, RUN2); assert.equal(entry.predecessors[1].runStatus, 'FINISHED'); assert.equal(entry.predecessors[1].resumedExternally, true); assert.deepEqual({ sha: entry.predecessors[1].checkpoint.sha, previousRunId: entry.predecessors[1].checkpoint.previousRunId }, { sha: SHA3, previousRunId: RUN1 });
     // Tous les comptes premium épuisés et aucune preuve standard : successeur refusé honnêtement, aucun POST.
     await access.pool.record('acct-c', access.pool.classify({ callKind: 'run', modelId: 'claude-fable-5-1', result: { outcome: 'unavailable', status: 429, reason: 'quota', providerCode: 'rate_limit_exceeded', providerMessage: INCLUDED } }));
     const done = recorder({ [`GET /v1/agents/${S1d}`]: () => json(agentOf(S1d, RUN1, 'IDLE')), [`GET /v1/agents/${S1d}/runs/${RUN1}`]: () => json(runOf(S1d, RUN1, 'FINISHED')) });
@@ -625,6 +666,116 @@ test('successor: only after the predecessor is terminal, reconciled through its 
     const noOwner = await agents.successor({ ...base, mission: 'L1', fetchImpl: silent.fetchImpl });
     assert.equal(noOwner.status, 'blocked'); assert.equal(noOwner.reason, 'owner_unknown'); assert.equal(silent.calls.length, 0);
     await assert.rejects(agents.status({ mission: 'L1', registryFile, access, fetchImpl: silent.fetchImpl }), /propriétaire inconnu/);
+  });
+});
+
+test('successor starts on the branch the terminal run actually worked on (new-branch missions), refuses ambiguity or unexpected branches unless attested with --branch, and keeps the real selection history per predecessor', async () => {
+  const config = await agents.loadSelections();
+  await withTemp('lite-pool-branch-', async (temp) => {
+    const { access, registryFile } = await openVault(temp);
+    const exhaust = id => access.pool.record(id, access.pool.classify({ callKind: 'run', modelId: 'claude-fable-5-1', result: { outcome: 'unavailable', status: 429, reason: 'quota', providerCode: 'rate_limit_exceeded', providerMessage: INCLUDED } }));
+    const withBranches = (run, branches) => ({ ...run, git: { branches } });
+    const SHA = 'e'.repeat(40);
+    // Mission lancée avec --new-branch : entry.ref est la base, le run travaille sur cursor/… ; le successeur doit démarrer là, pas sur la base.
+    const N1 = agents.missionAgentId(REPO, 'N1'), N1b = agents.missionAgentId(REPO, 'N1~s1');
+    const started = await agents.launch({ mission: 'N1', repo: REPO, ref: 'main', workOnCurrentBranch: false, promptText: 'brief', config, access, registryFile, now, fetchImpl: recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': () => json({ agent: agentOf(N1, RUN1), run: runOf(N1, RUN1) }) }).fetchImpl });
+    assert.equal(started.account.id, 'acct-a'); assert.equal((await agents.loadRegistry(registryFile)).missions.N1.workOnCurrentBranch, false);
+    await exhaust('acct-a');
+    const base = { mission: 'N1', registryFile, promptText: 'suite', checkpoint: SHA, config, access, now };
+    const routes = (branches, extra = {}) => recorder({ [`GET /v1/agents/${N1}`]: () => json(agentOf(N1, RUN1, 'IDLE')), [`GET /v1/agents/${N1}/runs/${RUN1}`]: () => json(withBranches(runOf(N1, RUN1, 'FINISHED'), branches)), 'GET /v1/models': catalog, 'POST /v1/agents': r => json({ agent: agentOf(r.body.agentId, RUN1), run: runOf(r.body.agentId, RUN1) }), ...extra });
+    // Aucune branche exposée et mode nouvelle branche : inconnue ⇒ refus sans POST ; --branch attesté débloque.
+    const unknown = routes([]);
+    const noBranch = await agents.successor({ ...base, fetchImpl: unknown.fetchImpl });
+    assert.equal(noBranch.status, 'blocked'); assert.equal(noBranch.reason, 'branch_unknown'); assert.match(noBranch.nextAction, /--branch/); assert.equal(unknown.posts().length, 0);
+    // Plusieurs branches pour ce dépôt : ambiguïté ⇒ refus ; --branch parmi elles ⇒ accepté.
+    const two = routes([{ repoUrl: 'github.com/example-org/example-app', branch: 'cursor/n1-a' }, { repoUrl: REPO, branch: 'cursor/n1-b' }]);
+    const ambiguous = await agents.successor({ ...base, fetchImpl: two.fetchImpl });
+    assert.equal(ambiguous.status, 'blocked'); assert.equal(ambiguous.reason, 'branch_ambiguous'); assert.deepEqual(ambiguous.observedBranches, ['cursor/n1-a', 'cursor/n1-b']); assert.equal(two.posts().length, 0);
+    const outside = await agents.successor({ ...base, branch: 'cursor/elsewhere', fetchImpl: two.fetchImpl });
+    assert.equal(outside.reason, 'branch_ambiguous'); assert.equal(two.posts().length, 0);
+    // Une seule branche observée (autre dépôt ignoré) : le successeur démarre à son HEAD, l’entrée suit cette branche, le prédécesseur garde base et branche.
+    const one = routes([{ repoUrl: 'https://github.com/other-org/other-repo', branch: 'main' }, { repoUrl: 'github.com/example-org/example-app', branch: 'cursor/n1-work' }]);
+    const moved = await agents.successor({ ...base, fetchImpl: one.fetchImpl });
+    assert.equal(moved.status, 'launched'); assert.equal(moved.agentId, N1b); assert.equal(moved.account.id, 'acct-b'); assert.deepEqual(moved.branch, { name: 'cursor/n1-work', source: 'run_observed' });
+    assert.deepEqual(one.posts()[0].body.repos, [{ url: REPO, startingRef: 'cursor/n1-work' }]); assert.equal(one.posts()[0].body.workOnCurrentBranch, true);
+    let entry = (await agents.loadRegistry(registryFile)).missions.N1;
+    assert.equal(entry.ref, 'cursor/n1-work'); assert.equal(entry.workOnCurrentBranch, true);
+    assert.deepEqual(entry.predecessors[0].branch, { name: 'cursor/n1-work', source: 'run_observed', observed: ['cursor/n1-work'] }); assert.deepEqual(entry.predecessors[0].checkpoint, { sha: SHA, ref: 'main', branch: 'cursor/n1-work', providedBy: 'orchestrator', verification: 'orchestrator_attested', transportVerifiedGit: false }); assert.equal(entry.predecessors[0].workOnCurrentBranch, false);
+    // Mission sur branche courante dont le run a travaillé ailleurs : inattendu ⇒ refus ; attestation --branch de la branche observée ⇒ accepté ; --branch différente de l’observée ⇒ refus.
+    const C1 = agents.missionAgentId(REPO, 'C1');
+    await agents.launch({ mission: 'C1', repo: REPO, ref: 'agents/C1', promptText: 'brief', config, access, registryFile, now, fetchImpl: recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': () => json({ agent: agentOf(C1, RUN1), run: runOf(C1, RUN1) }) }).fetchImpl });
+    assert.equal((await agents.loadRegistry(registryFile)).missions.C1.accountId, 'acct-b'); await exhaust('acct-b');
+    const cRoutes = branches => recorder({ [`GET /v1/agents/${C1}`]: () => json(agentOf(C1, RUN1, 'IDLE')), [`GET /v1/agents/${C1}/runs/${RUN1}`]: () => json(withBranches(runOf(C1, RUN1, 'FINISHED'), branches)), 'GET /v1/models': catalog, 'POST /v1/agents': r => json({ agent: agentOf(r.body.agentId, RUN1), run: runOf(r.body.agentId, RUN1) }) });
+    const drifted = cRoutes([{ repoUrl: REPO, branch: 'cursor/unexpected' }]);
+    const unexpected = await agents.successor({ ...base, mission: 'C1', fetchImpl: drifted.fetchImpl });
+    assert.equal(unexpected.status, 'blocked'); assert.equal(unexpected.reason, 'branch_unexpected'); assert.match(unexpected.nextAction, /--branch cursor\/unexpected/); assert.equal(drifted.posts().length, 0);
+    const wrongAttest = await agents.successor({ ...base, mission: 'C1', branch: 'agents/C1', fetchImpl: drifted.fetchImpl });
+    assert.equal(wrongAttest.reason, 'branch_unexpected'); assert.equal(drifted.posts().length, 0);
+    const attested = await agents.successor({ ...base, mission: 'C1', branch: 'cursor/unexpected', fetchImpl: drifted.fetchImpl });
+    assert.equal(attested.status, 'launched'); assert.deepEqual(attested.branch, { name: 'cursor/unexpected', source: 'orchestrator' }); assert.equal(drifted.posts()[0].body.repos[0].startingRef, 'cursor/unexpected');
+    // Entrée héritée sans mode de branche et sans branche observée : ambiguïté ⇒ refus ; ref observée égale à la ref ⇒ accepté.
+    const legacyId = agents.missionAgentId(REPO, 'L2');
+    const registry = await agents.loadRegistry(registryFile); registry.missions.L2 = { agentId: legacyId, repo: REPO, ref: 'agents/L2', selection: fable, accountId: 'acct-a', state: 'launched', runId: RUN1, updatedAt: T0 }; await agents.saveRegistry(registryFile, registry);
+    const lRoutes = branches => recorder({ [`GET /v1/agents/${legacyId}`]: () => json(agentOf(legacyId, RUN1, 'IDLE')), [`GET /v1/agents/${legacyId}/runs/${RUN1}`]: () => json(withBranches(runOf(legacyId, RUN1, 'FINISHED'), branches)), 'GET /v1/models': catalog, 'POST /v1/agents': r => json({ agent: agentOf(r.body.agentId, RUN1), run: runOf(r.body.agentId, RUN1) }) });
+    const legacyUnknown = lRoutes([]);
+    assert.equal((await agents.successor({ ...base, mission: 'L2', fetchImpl: legacyUnknown.fetchImpl })).reason, 'branch_unknown'); assert.equal(legacyUnknown.posts().length, 0);
+    const legacySame = lRoutes([{ repoUrl: REPO, branch: 'agents/L2' }]);
+    const legacyOk = await agents.successor({ ...base, mission: 'L2', fetchImpl: legacySame.fetchImpl });
+    assert.equal(legacyOk.status, 'launched'); assert.deepEqual(legacyOk.branch, { name: 'agents/L2', source: 'run_observed' }); assert.equal(legacyOk.account.id, 'acct-c');
+    // N2 : historique réel des sélections. Exception au successeur (tous premium confirmés, preuve grok) : le POST porte Grok ; createAccepted de premier niveau reste faux,
+    // la sélection courante est celle marquée acceptée ; le prédécesseur enregistre sa propre sélection réelle.
+    await exhaust('acct-c');
+    await access.pool.record('acct-a', access.pool.classify({ callKind: 'create', modelId: 'grok-4.6', agentId: agents.missionAgentId(REPO, 'G'), result: { outcome: 'ok', status: 201 } }));
+    const gRoutes = recorder({ [`GET /v1/agents/${N1b}`]: () => json(agentOf(N1b, RUN1, 'IDLE')), [`GET /v1/agents/${N1b}/runs/${RUN1}`]: () => json(withBranches(runOf(N1b, RUN1, 'FINISHED'), [{ repoUrl: REPO, branch: 'cursor/n1-work' }])), 'GET /v1/models': catalog, 'POST /v1/agents': r => json({ agent: agentOf(r.body.agentId, RUN1), run: runOf(r.body.agentId, RUN1) }) });
+    const fell = await agents.successor({ ...base, checkpoint: 'f'.repeat(40), fetchImpl: gRoutes.fetchImpl });
+    assert.equal(fell.status, 'launched'); assert.equal(fell.account.id, 'acct-a'); assert.equal(fell.account.decision, 'exception'); assert.equal(gRoutes.posts()[0].body.model.id, 'grok-4.6');
+    const receipt = fell.selection;
+    assert.equal(receipt.requested.modelId, 'claude-fable-5-1'); assert.equal(receipt.createAccepted, false, 'la requête Fable n’a pas été acceptée : le POST portait Grok'); assert.equal(receipt.runAccepted, false);
+    assert.deepEqual(receipt.accepted, { modelId: 'grok-4.6', params: grok.params, createAccepted: true, runAccepted: false }); assert.equal(receipt.currentSelection.createAccepted, true); assert.equal(receipt.currentSelection.requested.modelId, 'grok-4.6'); assert.equal(receipt.modelObserved, null);
+    entry = (await agents.loadRegistry(registryFile)).missions.N1;
+    assert.deepEqual(entry.predecessors.map(p => p.selection.modelId), ['claude-fable-5-1', 'claude-fable-5-1']); assert.equal(entry.predecessors[1].exception, undefined); assert.equal(entry.currentSelection.modelId, 'grok-4.6');
+    // Reprise du successeur Grok : runAccepted marqué sur la sélection courante, pas sur la requête initiale.
+    const G2 = entry.agentId;
+    const follow = recorder({ [`GET /v1/agents/${G2}`]: () => json(agentOf(G2, RUN1)), [`GET /v1/agents/${G2}/runs/${RUN1}`]: () => json(runOf(G2, RUN1, 'FINISHED')), [`POST /v1/agents/${G2}/runs`]: () => json({ run: runOf(G2, RUN2) }) });
+    const continued = await agents.followup({ mission: 'N1', registryFile, promptText: 'suite', access, fetchImpl: follow.fetchImpl });
+    assert.equal(continued.status, 'launched'); assert.equal(continued.selection.runAccepted, false); assert.equal(continued.selection.currentSelection.runAccepted, true); assert.equal(continued.selection.accepted.runAccepted, true); assert.equal(continued.selection.accepted.modelId, 'grok-4.6');
+    // Un troisième successeur depuis l’agent Grok conserverait cette sélection réelle dans la chaîne (la preuve grok d’acct-a est ensuite invalidée par son épuisement standard).
+    await access.pool.record('acct-a', access.pool.classify({ callKind: 'run', modelId: 'grok-4.6', result: { outcome: 'unavailable', status: 429, reason: 'quota', providerCode: 'rate_limit_exceeded', providerMessage: INCLUDED } }));
+    const g3 = recorder({ [`GET /v1/agents/${G2}`]: () => json(agentOf(G2, RUN2, 'IDLE')), [`GET /v1/agents/${G2}/runs/${RUN2}`]: () => json(withBranches(runOf(G2, RUN2, 'FINISHED'), [{ repoUrl: REPO, branch: 'cursor/n1-work' }])) });
+    const third = await agents.successor({ ...base, checkpoint: '9'.repeat(40), fetchImpl: g3.fetchImpl });
+    assert.equal(third.status, 'blocked'); assert.deepEqual(third.predecessor.selection, { key: 'grok', modelId: 'grok-4.6', params: grok.params }, 'le prédécesseur Grok est décrit par sa sélection réelle'); assert.equal(g3.posts().length, 0);
+  });
+});
+
+test('identity mismatch keeps the identifiers the API really returned; a 404 on the expected id never concludes absence nor allows a successor; reconcile reads both ids without any POST', async () => {
+  const config = await agents.loadSelections();
+  await withTemp('lite-pool-identity-', async (temp) => {
+    const { access, registryFile } = await openVault(temp);
+    const I1 = agents.missionAgentId(REPO, 'I1'), OTHER = 'bc-ffffffff-ffff-4fff-8fff-ffffffffffff';
+    const foreign = recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': () => json({ agent: agentOf(OTHER, RUN1), run: runOf(OTHER, RUN1) }) });
+    const mismatch = await agents.launch({ mission: 'I1', repo: REPO, ref: 'agents/I1', promptText: 'brief', config, access, registryFile, now, fetchImpl: foreign.fetchImpl });
+    assert.equal(mismatch.status, 'uncertain'); assert.equal(mismatch.reason, 'identity_mismatch'); assert.deepEqual(mismatch.returned, { agentId: OTHER, runId: RUN1, url: `https://cursor.com/agents/${OTHER}` }); assert.match(mismatch.nextAction, /aucun successeur/);
+    const entryOf = async () => (await agents.loadRegistry(registryFile)).missions.I1;
+    let entry = await entryOf(); assert.equal(entry.state, 'uncertain'); assert.equal(entry.agentId, I1); assert.deepEqual(entry.returned, { agentId: OTHER, runId: RUN1, url: `https://cursor.com/agents/${OTHER}` });
+    const silent = recorder({});
+    assert.equal((await agents.launch({ mission: 'I1', repo: REPO, ref: 'agents/I1', promptText: 'brief', config, access, registryFile, now, fetchImpl: silent.fetchImpl })).status, 'deduplicated');
+    await assert.rejects(agents.successor({ mission: 'I1', registryFile, promptText: 'x', checkpoint: 'a'.repeat(40), config, access, fetchImpl: silent.fetchImpl }), /reconcile avant tout successeur/);
+    await assert.rejects(agents.followup({ mission: 'I1', registryFile, promptText: 'x', access, fetchImpl: silent.fetchImpl }), /reconcile avant/); assert.equal(silent.calls.length, 0);
+    // Reconcile : l’identifiant attendu répond 404, l’identifiant retourné existe ⇒ toujours incertain, décision humaine, aucun POST, identifiants conservés.
+    const both = recorder({ [`GET /v1/agents/${I1}`]: () => providerError(404, 'not_found', ''), [`GET /v1/agents/${OTHER}`]: () => json(agentOf(OTHER, RUN1)) });
+    const read = await agents.reconcile({ mission: 'I1', registryFile, access, fetchImpl: both.fetchImpl });
+    assert.equal(read.status, 'uncertain'); assert.equal(read.reason, 'identity_mismatch'); assert.equal(read.returned.agentId, OTHER); assert.equal(read.returnedAgent.found, true); assert.equal(read.returnedAgent.agentId, OTHER); assert.match(read.nextAction, /Décision humaine/); assert.match(read.nextAction, /aucun POST, aucun successeur/);
+    assert.deepEqual(both.calls.map(c => `${c.method} ${c.path}`), [`GET /v1/agents/${I1}`, `GET /v1/agents/${OTHER}`]); assert.deepEqual(both.keysUsed(), [KEY_A]);
+    entry = await entryOf(); assert.equal(entry.state, 'uncertain'); assert.equal(entry.reason, 'identity_mismatch'); assert.equal(entry.agentId, I1); assert.equal(entry.returned.agentId, OTHER, 'jamais « non créé », jamais un nouvel identifiant');
+    // L’identifiant retourné n’existe pas non plus : toujours incertain (absence ≠ preuve après une identité inattendue).
+    const neither = recorder({ [`GET /v1/agents/${I1}`]: () => providerError(404, 'not_found', ''), [`GET /v1/agents/${OTHER}`]: () => providerError(404, 'not_found', '') });
+    const gone = await agents.reconcile({ mission: 'I1', registryFile, access, fetchImpl: neither.fetchImpl });
+    assert.equal(gone.status, 'uncertain'); assert.equal(gone.returnedAgent.found, false); assert.equal((await entryOf()).state, 'uncertain');
+    // Si l’identifiant attendu finit par répondre, la mission est réconciliée normalement.
+    const ours = recorder({ [`GET /v1/agents/${I1}`]: () => json(agentOf(I1, RUN2)) });
+    const fixed = await agents.reconcile({ mission: 'I1', registryFile, access, fetchImpl: ours.fetchImpl });
+    assert.equal(fixed.status, 'reconciled'); assert.equal(fixed.agent.latestRunId, RUN2); assert.equal((await entryOf()).reason, undefined);
+    assertNoSecret(read); assertNoSecret(await entryOf());
   });
 });
 
@@ -676,7 +827,7 @@ test('hard limit on a followup blocks new starts for the owner until explicit --
     const reads = recorder({ [`GET /v1/agents/${M1}`]: () => json(agentOf(M1, RUN1)), [`GET /v1/agents/${M1}/runs/${RUN1}`]: () => json(runOf(M1, RUN1, 'FINISHED')), [`POST /v1/agents/${M1}/runs`]: () => json({ run: runOf(M1, RUN2) }) });
     const seen = await agents.status({ mission: 'M1', registryFile, access, fetchImpl: reads.fetchImpl }); assert.equal(seen.status, 'ok'); assert.equal(seen.account.id, 'acct-a');
     const gated = await agents.followup({ mission: 'M1', registryFile, promptText: 'suite', access, fetchImpl: reads.fetchImpl });
-    assert.equal(gated.status, 'blocked'); assert.equal(gated.reason, 'owner_start_blocked'); assert.equal(gated.startBlock.reason, 'hard_limit_start_refused'); assert.match(gated.nextAction, /followup --mission … --account acct-a/); assert.match(gated.nextAction, /successor --mission/); assert.equal(reads.posts().length, 0, 'aucun POST');
+    assert.equal(gated.status, 'blocked'); assert.equal(gated.reason, 'owner_start_blocked'); assert.equal(gated.startBlock.reason, 'hard_limit_start_refused'); assert.match(gated.nextAction, /followup --mission … --account acct-a/); assert.match(gated.nextAction, /Aucun successeur/); assert.equal(reads.posts().length, 0, 'aucun POST');
     // Nouveau lancement automatique : acct-a sauté, acct-b choisi avec la même sélection.
     const other = recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': () => json({ agent: agentOf(agents.missionAgentId(REPO, 'M2'), RUN1), run: runOf(agents.missionAgentId(REPO, 'M2'), RUN1) }) });
     const next = await agents.launch({ ...base, mission: 'M2', ref: 'agents/M2', fetchImpl: other.fetchImpl }); assert.equal(next.account.id, 'acct-b'); assert.deepEqual(other.keysUsed(), [KEY_B]);
