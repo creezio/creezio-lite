@@ -16,7 +16,37 @@ export const REQUEST_ID_HEADER='x-lite-request-id';
 const JSONRPC_METHODS=new Set(['initialize','ping','tools/list','tools/call','notifications/initialized','notifications/cancelled']);
 const HTTP_METHODS=new Set(['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']);
 const CREDENTIALS=new Set(['session','api_key','oauth']);
-const CODE=/^-?[A-Za-z0-9_.]{1,64}$/,TOOL=/^(?:lite|custom)_[a-z][a-z0-9_]{0,120}$/,UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const TOOL=/^(?:lite|custom)_[a-z][a-z0-9_]{0,120}$/,UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** Generic code stored whenever a response carries anything outside the closed list below. The raw value is never kept. */
+export const GENERIC_ERROR_CODE='error';
+/** Codes raised by `fail()` / `ApiError` in runtime/core and the native mounts. Adding a new code to the runtime requires adding it here; a test scans the sources for that. */
+const RUNTIME_ERROR_CODES=[
+  'access_denied','api_error','attachment_missing','attachments_limit','audio_required','authentication_required','client_not_found','conflict','conversation_busy','conversation_missing','database_unavailable',
+  'empty_file','empty_response','essential_operation','executor_unavailable','file_not_found','files_unavailable','folder_invalid','forbidden','generated_tool','group_limit','group_not_found','host_runner_unavailable',
+  'imap_required','imap_response','integration_missing','integration_required','internal_error','invalid_account','invalid_arguments','invalid_assignee','invalid_attachment','invalid_attachments','invalid_boolean',
+  'invalid_client','invalid_client_metadata','invalid_data','invalid_date','invalid_duration','invalid_email','invalid_enabled','invalid_endpoint','invalid_event','invalid_events','invalid_field','invalid_filter',
+  'invalid_grant','invalid_header','invalid_host','invalid_id','invalid_inbound_token','invalid_invite','invalid_json','invalid_kind','invalid_label','invalid_members','invalid_model','invalid_name','invalid_nav_override',
+  'invalid_number','invalid_option','invalid_order','invalid_origin','invalid_pagination','invalid_period','invalid_policy','invalid_port','invalid_position','invalid_priority','invalid_query','invalid_read',
+  'invalid_recipients','invalid_redirect_uri','invalid_references','invalid_request','invalid_role','invalid_scope','invalid_search_settings','invalid_sender','invalid_slug','invalid_source','invalid_status',
+  'invalid_target','invalid_text','invalid_tls','invalid_token','invalid_token_settings','invalid_tool','invalid_ui_result','invalid_window','invalid_window_kind','invite_not_found','invite_used','json_required',
+  'mail_busy','mail_connection','mail_delivery_unknown','mail_domain','mail_gateway_required','mail_missing','mail_rejected','mail_required','mail_unconfigured','member_not_found','message_id_required','message_required',
+  'method_not_allowed','model_required','module_not_found','not_draft','not_found','operation_forbidden','operation_not_exposable','owner_protected','password_required','payload_too_large','preference_owner',
+  'preferences_too_large','provider_auth','provider_failure','provider_interrupted','provider_limit','provider_model','provider_quota','provider_redirect','provider_response','provider_stream','provider_timeout',
+  'provider_tool','provider_unavailable','provider_unknown','provider_unreachable','query_too_long','read_only_token','record_not_found','required_field','round_limit','sender_required','service_unavailable',
+  'setup_required','sites_identity','slug_exists','storage_unavailable','sync_busy','system_group','task_not_found','temporarily_unavailable','token_scope','token_workspace','too_many_terms','tool_exists',
+  'tool_forbidden','tool_limit','tool_not_found','transcription_failed','trash_required','ui_action_closed','ui_forbidden','ui_run_closed','ui_target_required','unknown_field','unknown_nav_entry','unknown_operation',
+  'unreadable','unsupported_grant_type','unsupported_patch','unsupported_response_type','unsupported_test','vault_unavailable','version_conflict','version_required','websocket_required','websocket_unavailable',
+  'window_inactive','workspace_limit','workspace_not_found',
+] as const;
+/** Codes returned as `{ok:false,error:'…'}` by the API kernel and the native mounts, and by the MCP transport before JSON-RPC. */
+const KERNEL_ERROR_CODES=[
+  'core_route_not_found','cross_layer_write_denied','cross_write_denied','db_unavailable','entry_id_required','invalid_body','invalid_path','meili_unavailable','module_not_mounted','not_archivable','outside_api_v1',
+  'permission_denied','platform_not_mounted','plugin_not_mounted','scenario_invalide','sqlite_runtime_unavailable','unauthenticated','unsupported_notification','unsupported_protocol','use_archive','user_required',
+] as const;
+/** JSON-RPC 2.0 codes emitted by handleMcp, the request-log tool error marker, and the bounded HTTP fallback codes. */
+const JSONRPC_ERROR_CODES=['-32700','-32600','-32601','-32602','-32603'] as const;
+const LOG_ERROR_CODES=['tool_error',GENERIC_ERROR_CODE,...Array.from({length:500},(_,i)=>`http_${100+i}`)] as const;
+export const KNOWN_ERROR_CODES:ReadonlySet<string>=new Set<string>([...RUNTIME_ERROR_CODES,...KERNEL_ERROR_CODES,...JSONRPC_ERROR_CODES,...LOG_ERROR_CODES]);
 const SKIPPED_OPERATIONS=/^(?:logs\.|analytics\.|mcp\.(?:metrics|status)$|session\.(?:heartbeat|me)$)/;
 const SKIPPED_PATHS=/^\/api\/v1\/(admin\/(request-logs|analytics|mcp\/(metrics|status))|analytics\/events|desktop\/heartbeat|auth\/me)/;
 
@@ -28,8 +58,15 @@ export type RequestDiagnostic={ok:boolean;error?:string;operation?:string;tool?:
 
 export function newRequestTrace(credential:RequestCredential='session'):RequestTrace{return {correlationId:crypto.randomUUID(),credential,calls:[]};}
 export function jsonrpcLabel(value:unknown):string{return typeof value==='string'&&JSONRPC_METHODS.has(value)?value:'unknown';}
-/** Error codes are our own snake_case identifiers or JSON-RPC integers; anything else collapses to a neutral code. */
-export function errorCode(value:unknown):string{const text=typeof value==='number'&&Number.isInteger(value)?String(value):typeof value==='string'?value:'';return CODE.test(text)?text:'error';}
+/** Membership in the closed list is the only test: a value that merely looks like an identifier (a phone number, a name, a token) is replaced by the generic code. */
+export function errorCode(value:unknown):string{const text=typeof value==='number'&&Number.isInteger(value)?String(value):typeof value==='string'?value:'';return KNOWN_ERROR_CODES.has(text)?text:GENERIC_ERROR_CODE;}
+/** Reads the code of a JSON error response: `{error:{code}}` (API and JSON-RPC), `{ok:false,error:'code'}` (kernel) or `{ok:false,error:message,code}` (native handler). */
+function responseErrorCode(result:any):string{
+  const error=result?.error;
+  if(error&&typeof error==='object')return errorCode(error.code);
+  if(typeof result?.code==='string')return errorCode(result.code);
+  return errorCode(error);
+}
 const knownOperation=(catalog:Operation[],id:unknown)=>typeof id==='string'?catalog.find(o=>o.id===id):undefined;
 const toolLabel=(value:unknown)=>value===UNKNOWN_TOOL||(typeof value==='string'&&TOOL.test(value))?value as string:undefined;
 const knownCalls=(catalog:Operation[],value:unknown)=>Array.isArray(value)?value.slice(0,20).flatMap(step=>{const op=knownOperation(catalog,step?.operation);return op&&Number.isInteger(step.status)?[{operation:op.id,status:Number(step.status)}]:[];}):[];
@@ -60,9 +97,9 @@ export async function persistRequestLog(request:Request,response:Response,c:ApiC
   if(response.headers.get('content-type')?.includes('json')&&(source==='mcp'||!response.ok)){
     const result=await response.clone().json().catch(()=>null) as any;
     const rpcError=result?.error,toolError=result?.result?.isError===true;
-    if(rpcError||toolError){ok=false;error=toolError?'tool_error':errorCode(rpcError&&typeof rpcError==='object'?rpcError.code:rpcError);}
+    if(rpcError||toolError){ok=false;error=toolError?'tool_error':responseErrorCode(result);}
   }
-  if(!ok&&!error)error=`http_${response.status}`;
+  if(!ok&&!error)error=errorCode(`http_${response.status}`);
   const diagnostic=buildDiagnostic(catalog,trace,ok,error);
   const path=source==='mcp'?MCP_PATH:knownOperation(catalog,diagnostic.operation)?.path??UNKNOWN_ROUTE;
   await c.env.DB.batch<Record<string,any>>([
@@ -108,12 +145,18 @@ export async function observabilityRoute(request:Request,c:ApiContext,org:Worksp
     const conditions=['org_id=?','created_at>=?'],params:unknown[]=[org.id,retentionCutoff()],source=url.searchParams.get('source'),q=url.searchParams.get('q')??'';
     if(source&&source!=='all'){if(!['api','mcp'].includes(source))fail(400,'invalid_source','Source inconnue.');conditions.push('source=?');params.push(source);}
     if(url.searchParams.get('errorsOnly')==='1')conditions.push("(status>=400 OR json_extract(detail_json,'$.ok')=0)");
-    // Search only the closed fields of minimised rows; legacy rows are never matched by their stored payloads.
-    if(q){if(q.length>120)fail(400,'invalid_query','Recherche trop longue.');conditions.push("(json_extract(detail_json,'$.correlationId') IS NOT NULL AND instr(lower(path||' '||COALESCE(json_extract(detail_json,'$.operation'),'')||' '||COALESCE(json_extract(detail_json,'$.tool'),'')||' '||COALESCE(json_extract(detail_json,'$.error'),'')||' '||COALESCE(json_extract(detail_json,'$.jsonrpcMethod'),'')||' '||COALESCE(json_extract(detail_json,'$.calls'),'')||' '||json_extract(detail_json,'$.correlationId')),lower(?))>0)");params.push(q);}
+    if(q.length>120)fail(400,'invalid_query','Recherche trop longue.');
     const limit=boundedInteger(url.searchParams.get('limit'),200,1000),offset=boundedInteger(url.searchParams.get('offset'),0,100000),where=conditions.join(' AND ');
-    const [logs,count]=await db.batch<Record<string,any>>([db.prepare(`SELECT id,created_at AS ts,source,method,path,status,duration_ms AS durationMs,detail_json FROM lite_request_logs WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?`).bind(...params,limit,offset),db.prepare(`SELECT COUNT(*) AS n FROM lite_request_logs WHERE ${where}`).bind(...params)]);
-    const catalog=c.operations??coreOperations(c.app);
-    return json({logs:logs.results.map(row=>projectRequestLog(row as StoredRequestLog,catalog)),total:count.results[0]?.n??0,capacity:CAPACITY,retentionDays:RETENTION_DAYS});
+    const select=`SELECT id,created_at AS ts,source,method,path,status,duration_ms AS durationMs,detail_json FROM lite_request_logs WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT ?`;
+    const catalog=c.operations??coreOperations(c.app),project=(row:Record<string,any>)=>projectRequestLog(row as StoredRequestLog,catalog);
+    if(q){
+      // Free text only ever meets the projected vocabulary: stored values that fail validation are neither shown nor searchable, and legacy rows are skipped.
+      const needle=q.toLowerCase(),all=(await db.prepare(select).bind(...params,CAPACITY).all<Record<string,any>>()).results.map(project);
+      const matches=all.filter(({path,detail})=>!detail.legacy&&[path,detail.operation,detail.tool,detail.error,detail.jsonrpcMethod,detail.correlationId,...(detail.calls??[]).map(call=>call.operation)].some(value=>typeof value==='string'&&value.toLowerCase().includes(needle)));
+      return json({logs:matches.slice(offset,offset+limit),total:matches.length,capacity:CAPACITY,retentionDays:RETENTION_DAYS});
+    }
+    const [logs,count]=await db.batch<Record<string,any>>([db.prepare(`${select} OFFSET ?`).bind(...params,limit,offset),db.prepare(`SELECT COUNT(*) AS n FROM lite_request_logs WHERE ${where}`).bind(...params)]);
+    return json({logs:logs.results.map(project),total:count.results[0]?.n??0,capacity:CAPACITY,retentionDays:RETENTION_DAYS});
   }
   if(path==='admin/analytics/events'&&request.method==='DELETE'){await db.prepare('DELETE FROM lite_usage_events WHERE org_id=?').bind(org.id).run();return json({ok:true});}
   const period=url.searchParams.get('period')??'week',days=({day:1,week:7,month:30,year:365} as Record<string,number>)[period];if(!days)fail(400,'invalid_period','Période inconnue.');
