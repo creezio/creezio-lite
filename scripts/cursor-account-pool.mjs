@@ -279,7 +279,7 @@ export async function openAccountPool({ env = process.env, decrypt, now = isoNow
   const pool = {
     mode: 'pool', fallbackModel: FALLBACK_MODEL, stateFile: paths.stateFile, lockFile: paths.lockFile, accountIds: credentials.ids,
     keyFor: accountId => credentials.keyFor(accountId),
-    classify: args => classifyResult(args),
+    classify: args => classifyResult({ at: now(), ...args }),
     read: () => withPoolState(paths, () => ({ changed: false, value: state => summarizeState(state) }), options),
     decide: args => withPoolState(paths, state => ({ changed: false, value: decide(state, { ...args, now }) }), options),
     // Propriétaire d’une mission : ses GET restent toujours possibles ; un POST sur un pool confirmé indisponible est refusé avant envoi.
