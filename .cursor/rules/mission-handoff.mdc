@@ -1,0 +1,6 @@
+---
+description: Réception et passage de relais des missions du kit Lite
+alwaysApply: true
+---
+
+Lire AGENTS.md puis le brief et ses contrats. Une mission déléguée reste sur ses fichiers attribués, vérifie le comportement livré et remet la même PR avec SHA, tests réels, limites et prochaine action pour l’orchestrateur. Elle ne fusionne ni ne déploie ni ne lance de mission supplémentaire. Les lots Certivan retrouvent les sources métier dans le miroir du dépôt certivan-bo ; ne pas les réinventer. Si le mandat est explicitement l’orchestration Certivan, appliquer sa compétence et son verrou partagé, réconcilier les runs existants puis enchaîner l’étape autorisée suivante.

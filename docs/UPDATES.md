@@ -54,3 +54,13 @@ Appliquer la mise à jour du runtime puis fusionner explicitement les métadonn�
 ## Passage à 0.9.0
 
 Appliquer la mise à jour du runtime et la migration additive `0010_browser_relay.sql`. Fusionner explicitement `worker.ts` et le changement `main` dans `vite.config.ts` : les routes assistant sont servies directement par le Worker. Préserver les autres adaptations locales. Recharger les fenêtres après publication. Voir [l’audit et le fonctionnement du relais](BROWSER-RELAY.md).
+
+## Passage à 0.9.1 — Journal des requêtes minimisé
+
+Appliquer la mise à jour du runtime seul : aucune migration, aucun secret et aucune page applicative ne changent. Le journal `lite_request_logs` cesse de copier les corps, paramètres, arguments d’outils et messages ; il ne conserve que des métadonnées à vocabulaire fermé (voir [API.md](API.md#journal-des-requêtes)). Chaque réponse porte désormais l’en-tête `x-lite-request-id`, valeur du champ `correlationId` de la ligne correspondante.
+
+Les lignes écrites avant la mise à jour restent en base : la lecture les renvoie avec `legacy:true`, sans leur `detail_json` stocké, avec leur chemin re-résolu par le catalogue ; la recherche `q` ne les parcourt pas. Elles sont supprimées par la rétention de 30 jours à la prochaine écriture de l’espace, ou immédiatement par « Vider » dans l’écran Activité. Aucune fiche, aucun fichier et aucune conversation ne sont modifiés. Un nettoyage immédiat des anciennes lignes par migration reste possible sur demande, sous forme d’une instruction additive `DELETE`/`UPDATE` ciblant `lite_request_logs` ; il n’est pas inclus ici.
+
+## Passage à 0.10.0
+
+Ajoute les transports purs Cursor/xAI, sans raccordement applicatif automatique. L’upgrade du runtime conserve les changements 0.9.1 ; aucune migration ni rotation de secret. L’activation des commandes, des droits, des tables et des vues Agents reste un lot d’intégration distinct. Relire les capacités et erreurs typées du contrat `docs/contracts/agent-provider-transport.md` avant raccordement.

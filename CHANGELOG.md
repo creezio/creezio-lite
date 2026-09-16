@@ -1,5 +1,19 @@
 # Versions de Lite
 
+## 0.10.0 — Transports des agents
+
+- Transports Cursor et xAI injectables, avec états et capacités explicites ; aucune activation d’agent ou dépense automatique.
+- Validation fermée des requêtes, erreurs minimisées, expiration et annulation couvrant aussi la résolution des identifiants.
+- Tests sur transports simulés et Worker ; pas de nouvelle table, migration, UI ou secret.
+- Conserve le correctif de journaux 0.9.1. Les applications adoptent le runtime par l’upgrade vérifié.
+
+## 0.9.1 — Journal des requêtes minimisé
+
+- Journal limité aux métadonnées et codes d’erreur à vocabulaire fermé ; corps, paramètres et arguments exclus.
+- Anciennes lignes projetées et recherchées uniquement après filtrage, sans exposition de leurs détails historiques.
+- Identifiant de corrélation de requête et rétention bornée conservés ; aucune migration ni rotation de secret.
+- Versions des diagnostics API et MCP alignées avec celle du kit.
+
 ## 0.9.0 — Pilotage fiable et chat mobile
 
 - File de commandes D1 indépendante du SSE, connexion WebSocket et secours HTTP.
