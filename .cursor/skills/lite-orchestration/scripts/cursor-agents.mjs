@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Outil d’orchestration Creezio Lite pour l’API Cursor Cloud Agents v1 (https://cursor.com/docs/cloud-agent/api/endpoints).
 // Usage orchestrateur uniquement ; distinct du transport métier runtime/core/agent-providers. Aucune dépendance au kit.
-// Clé : CURSOR_API_KEY en environnement. Sorties JSON sans clé, sans prompt, sans corps fournisseur.
+// Accès : CURSOR_API_KEY en environnement (un compte implicite) sinon le pool commun de comptes via l’adaptateur local optionnel
+// (scripts/cursor-account-pool.mjs du kit ou CURSOR_ACCOUNT_POOL_MODULE), décidé une fois par appel. Sorties JSON sans clé, sans prompt, sans corps fournisseur.
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
@@ -9,12 +10,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const API = 'https://api.cursor.com';
 export const selectionsFile = resolve(dirname(fileURLToPath(import.meta.url)), '../cursor-model.json');
+export const accountPoolModule = new URL('../../../../scripts/cursor-account-pool.mjs', import.meta.url);
 export const exitCodes = Object.freeze({ ok: 0, blocked: 2, unavailable: 3, usage: 4 });
 export const pollIntervalsMs = Object.freeze([15_000, 30_000, 60_000, 120_000, 300_000]);
 const agentIdPattern = /^bc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const runIdPattern = /^run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const modelIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const providerCodePattern = /^[a-z][a-z0-9_]{1,63}$/;
+const accountIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const shaPattern = /^[0-9a-f]{40}$/i;
 const activeStates = new Set(['pending', 'launched', 'reconciled', 'uncertain']);
 
 export class UsageError extends Error { constructor(message) { super(message); this.name = 'UsageError'; } }
@@ -24,6 +28,40 @@ export function readKey(env = process.env) {
   if (!key || key.length > 512 || /[\s\x00-\x1f\x7f]/.test(key)) return null;
   return key;
 }
+
+// Accès aux comptes. Mode env : CURSOR_API_KEY, un compte implicite, aucun état de pool (compatibilité). Mode pool : coffre local + pool-state.json,
+// clé du compte propriétaire pour chaque appel d’une mission, décision déterministe au lancement et au successeur. Sans adaptateur ni clé : refus explicite.
+export function envAccess(key) { return { mode: 'env', pool: null, keyFor: async () => key ?? null }; }
+export async function loadAccountAdapter(env = process.env) {
+  const override = typeof env.CURSOR_ACCOUNT_POOL_MODULE === 'string' && env.CURSOR_ACCOUNT_POOL_MODULE.trim() ? pathToFileURL(resolve(env.CURSOR_ACCOUNT_POOL_MODULE.trim())).href : null;
+  try { return await import(override ?? accountPoolModule.href); }
+  catch (error) { if (!override && error?.code === 'ERR_MODULE_NOT_FOUND') return null; throw new UsageError(`Adaptateur de comptes illisible (${override ? 'CURSOR_ACCOUNT_POOL_MODULE' : 'scripts/cursor-account-pool.mjs'}) ; aucun appel émis.`); }
+}
+export async function resolveAccess({ env = process.env, adapter, decrypt, now } = {}) {
+  const key = readKey(env);
+  if (key) return envAccess(key);
+  const module = adapter === undefined ? await loadAccountAdapter(env) : adapter;
+  const pool = module && typeof module.openAccountPool === 'function' ? await module.openAccountPool({ env, decrypt, now }) : null;
+  if (!pool) throw new UsageError('CURSOR_API_KEY absente et aucun coffre de comptes lisible (CURSOR_CREDENTIALS_FILE ou %LOCALAPPDATA%/Creezio/cursor/credentials.json) ; aucun appel émis.');
+  return { mode: 'pool', pool, keyFor: async (accountId) => { if (!accountId) throw new UsageError('Compte propriétaire inconnu pour cet appel ; aucun appel émis (entrée de registre sans accountId : utiliser CURSOR_API_KEY, ou --account pour --agent).'); return pool.keyFor(accountId); } };
+}
+const accessOf = (access, key) => access ?? envAccess(key ?? null);
+function assertAccountId(value) { if (typeof value !== 'string' || !accountIdPattern.test(value)) throw new UsageError('Identifiant de compte invalide.'); return value; }
+// Preuve fournisseur assainie, enregistrée sur le compte appelé (aucune inférence hors signatures exactes) ; le rapport n’expose que le résumé.
+async function recordEvidence(access, accountId, { callKind, modelId, result, agentId }) {
+  if (!access.pool || !accountId) return undefined;
+  const evidence = access.pool.classify({ callKind, modelId, result, agentId });
+  const summary = { accountId, classification: evidence.classification, ...(evidence.httpStatus ? { httpStatus: evidence.httpStatus } : {}), ...(evidence.providerCode ? { providerCode: evidence.providerCode } : {}) };
+  try { const account = await access.pool.record(accountId, evidence, { activate: callKind === 'create' }); return { ...summary, recorded: true, account }; }
+  catch (error) { return { ...summary, recorded: false, recordError: error?.code ?? 'error' }; }
+}
+const evidenceHint = (evidence) => {
+  if (!evidence) return undefined;
+  if (evidence.classification === 'included_usage_exhausted') return `usage inclus épuisé sur le compte ${evidence.accountId} pour ce pool (état enregistré) : relancer la même commande, le compte premium suivant sera choisi ; ou activer l’usage à la demande manuellement. Aucune inférence sur l’autre pool.`;
+  if (evidence.classification === 'plan_required') return `compte ${evidence.accountId} sans plan Cloud Agent (deux pools indisponibles, enregistré) : relancer la même commande pour le compte suivant.`;
+  if (evidence.classification === 'hard_limit_start_refused') return `plafond de dépenses du compte ${evidence.accountId} : création refusée par le fournisseur. Augmenter la limite manuellement (tableau de bord) ou placer un autre compte en tête de l’ordre ; aucune relance automatique, aucune inférence sur le solde standard, état des pools inchangé.`;
+  return undefined;
+};
 
 // Sélections autorisées : choisies une fois à l'attribution, conservées pour toute la mission. Aucun repli, aucun alias présumé.
 const paramsList = (value, where) => { if (!Array.isArray(value) || value.length > 16 || value.some(p => !p || typeof p.id !== 'string' || typeof p.value !== 'string' || !p.id || !p.value)) throw new UsageError(`cursor-model.json : ${where} doit être une liste {id,value}.`); return value.map(p => ({ id: p.id, value: p.value })); };
@@ -48,6 +86,8 @@ export function resolveSelection(config, key) {
   if (!selection) throw new UsageError(`Sélection inconnue : ${String(key)}. Choix possibles : ${Object.keys(config.selections).join(', ')}.`);
   return selection;
 }
+// Sélection de repli du pool (Grok 4.6) telle que déclarée dans le catalogue ; absente ⇒ aucune exception possible, jamais Composer.
+const fallbackSelectionOf = (config, access) => (access.pool && config ? Object.values(config.selections).find(s => s.modelId === access.pool.fallbackModel && !/composer/i.test(s.modelId)) ?? null : null);
 
 // UUID v5 (espace de noms URL) de "dépôt#mission" : le même brief produit toujours le même agent.
 export function missionAgentId(repo, mission) {
@@ -79,6 +119,12 @@ function providerCode(data) {
   const code = data && typeof data === 'object' ? (data.error && typeof data.error === 'object' ? data.error.code : data.code) : undefined;
   return typeof code === 'string' && providerCodePattern.test(code) ? code : undefined;
 }
+// Message fournisseur borné, réservé à la comparaison exacte des signatures par l’adaptateur ; jamais recopié dans un rapport, un registre ou un état.
+function providerMessage(data) {
+  const message = data && typeof data === 'object' ? (data.error && typeof data.error === 'object' ? data.error.message : data.message) : undefined;
+  return typeof message === 'string' && message.length <= 400 ? message : undefined;
+}
+const providerFields = data => ({ ...(providerCode(data) ? { providerCode: providerCode(data) } : {}), ...(providerMessage(data) ? { providerMessage: providerMessage(data) } : {}) });
 // Résultat fermé : ok | rejected | unavailable | invalid_response. Jamais de corps ni d’en-tête recopié.
 export async function call({ method = 'GET', path, body, key, fetchImpl = globalThis.fetch, timeoutMs = 20_000, maxBytes = 2_000_000 }) {
   if (!key) return { outcome: 'unavailable', reason: 'credential_missing', delivery: 'not_sent' };
@@ -95,10 +141,10 @@ export async function call({ method = 'GET', path, body, key, fetchImpl = global
     const read = await readBounded(response, maxBytes);
     if (read.tooLarge) return { outcome: 'invalid_response', reason: 'too_large', status };
     let data; if (read.text) { try { data = JSON.parse(read.text); } catch { data = undefined; } }
-    if (status === 401 || status === 403) return { outcome: 'unavailable', reason: 'auth', status };
-    if (status === 429) { const retry = Number(response.headers.get('retry-after')); return { outcome: 'unavailable', reason: 'quota', status, ...(Number.isFinite(retry) && retry > 0 ? { retryAfterMs: Math.min(retry, 3600) * 1000 } : {}) }; }
-    if (status >= 500) return { outcome: 'unavailable', reason: 'server', status };
-    if (status >= 400) return { outcome: 'rejected', status, providerCode: providerCode(data) };
+    if (status === 401 || status === 403) return { outcome: 'unavailable', reason: 'auth', status, ...providerFields(data) };
+    if (status === 429) { const retry = Number(response.headers.get('retry-after')); return { outcome: 'unavailable', reason: 'quota', status, ...(Number.isFinite(retry) && retry > 0 ? { retryAfterMs: Math.min(retry, 3600) * 1000 } : {}), ...providerFields(data) }; }
+    if (status >= 500) return { outcome: 'unavailable', reason: 'server', status, ...providerFields(data) };
+    if (status >= 400) return { outcome: 'rejected', status, ...providerFields(data) };
     if (status === 204) return { outcome: 'ok', status, data: null };
     if (data === undefined || data === null || typeof data !== 'object') return { outcome: 'invalid_response', reason: 'not_json', status };
     return { outcome: 'ok', status, data };
@@ -125,10 +171,12 @@ function parseModels(data) {
 const paramKey = params => params.map(p => `${p.id}=${p.value}`).sort().join('&');
 
 // Préflight : catalogue authentifié et daté ; identifiant exact listé ; la combinaison complète de la sélection est égale à une variante du catalogue. Aucune complétion, aucun repli.
-export async function preflight({ selection, key, fetchImpl, timeoutMs } = {}) {
+// En mode pool, la clé est celle du compte indiqué (ou décidé par l’appelant) ; onResult reçoit le résultat brut pour l’enregistrement de preuve.
+export async function preflight({ selection, key, access, accountId, fetchImpl, timeoutMs, onResult } = {}) {
   const checkedAt = new Date().toISOString();
-  const base = { command: 'preflight', selection: selection.key, requested: { modelId: selection.modelId, params: selection.params }, catalog: { checkedAt, validated: false }, fallback: 'none' };
-  const result = await call({ path: '/v1/models', key, fetchImpl, timeoutMs });
+  const base = { command: 'preflight', selection: selection.key, requested: { modelId: selection.modelId, params: selection.params }, catalog: { checkedAt, validated: false }, fallback: 'none', ...(accountId ? { accountId } : {}) };
+  const result = await call({ path: '/v1/models', key: await accessOf(access, key).keyFor(accountId), fetchImpl, timeoutMs });
+  if (onResult) onResult(result);
   if (result.outcome !== 'ok') return { ...base, status: 'unavailable', reason: result.reason ?? result.outcome, ...(result.status ? { httpStatus: result.status } : {}), ...(result.retryAfterMs ? { retryAfterMs: result.retryAfterMs } : {}), ...(result.providerCode ? { providerCode: result.providerCode } : {}) };
   const models = parseModels(result.data);
   if (!models) return { ...base, status: 'unavailable', reason: 'invalid_response', httpStatus: result.status };
@@ -173,48 +221,82 @@ function runSummary(run, { full = false } = {}) {
 }
 
 // Reçu de sélection : ce qui a été demandé, ce que le catalogue a validé, ce que l'API a accepté ; modelObserved reste null tant que l'API n'expose pas le modèle d'un run.
-function selectionReceipt(selection, { createAccepted = false, runAccepted = false } = {}) {
-  return { key: selection.key, requested: { modelId: selection.modelId, params: selection.params }, catalog: selection.catalog, createAccepted, runAccepted, modelObserved: null, note: 'Un POST accepté ne prouve pas la sélection effective ; un routage interne du fournisseur reste possible.' };
+// initialSelection = choix à l’attribution (toujours `selection`) ; currentSelection n’existe qu’après une exception (repli Grok 4.6 sur un successeur), distincte et datée.
+function selectionReceipt(selection, { createAccepted = false, runAccepted = false, entry } = {}) {
+  return { key: selection.key, requested: { modelId: selection.modelId, params: selection.params }, catalog: selection.catalog, createAccepted, runAccepted, modelObserved: null, note: 'Un POST accepté ne prouve pas la sélection effective ; un routage interne du fournisseur reste possible.', ...(entry?.currentSelection ? { currentSelection: { key: entry.currentSelection.key, requested: { modelId: entry.currentSelection.modelId, params: entry.currentSelection.params }, catalog: entry.currentSelection.catalog }, exception: entry.exception ?? null } : {}) };
 }
-// Lancement dédupliqué : registre → préflight → POST avec agentId déterministe → réconciliation des 409 et appels incertains.
-export async function launch({ mission, repo, ref, prUrl, promptText, name, autoCreatePR = false, workOnCurrentBranch = true, config, select, key, registryFile, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
+const effectiveSelection = entry => entry?.currentSelection ?? entry?.selection ?? null;
+const accountFields = (accountId, decision) => (accountId ? { account: { id: accountId, ...(decision ? { pool: decision.pool, decision: decision.status } : {}) } } : {});
+
+// Création d’un agent (lancement ou successeur) : POST unique avec agentId déterministe, réconciliation des 409 et appels incertains, preuve enregistrée sur le compte appelé.
+async function createAgent({ command, mission, entry, registry, registryFile, body, key, access, accountId, decision, modelId, fetchImpl, timeoutMs, now }) {
+  const agentId = body.agentId;
+  const result = await call({ method: 'POST', path: '/v1/agents', body, key, fetchImpl, timeoutMs });
+  const evidence = await recordEvidence(access, accountId, { callKind: 'create', modelId, result, agentId });
+  const extra = { ...accountFields(accountId, decision), ...(evidence ? { evidence: { classification: evidence.classification, recorded: evidence.recorded, ...(evidence.httpStatus ? { httpStatus: evidence.httpStatus } : {}) } } : {}) };
+  const hint = evidenceHint(evidence);
+  const finish = async (state, fields) => { Object.assign(entry, { state, updatedAt: now() }, fields); await saveRegistry(registryFile, registry); };
+  if (result.outcome === 'ok') {
+    const agent = agentSummary(result.data?.agent), run = runSummary(result.data?.run);
+    if (!agent || !run || agent.agentId !== agentId || run.agentId !== agentId) { await finish('uncertain', { reason: 'identity_mismatch' }); return { command, status: 'uncertain', mission, agentId, reason: 'identity_mismatch', nextAction: 'reconcile', ...extra }; }
+    await finish('launched', { runId: run.runId, url: agent.url });
+    return { command, status: 'launched', mission, agentId, runId: run.runId, url: agent.url, selection: selectionReceipt(entry.selection, { createAccepted: true, entry }), ...extra };
+  }
+  if (result.outcome === 'rejected' && result.status === 409) {
+    const reconciled = await reconcileEntry({ entry, key, fetchImpl, timeoutMs, now });
+    await saveRegistry(registryFile, registry);
+    return { command, status: reconciled.state === 'reconciled' ? 'existing' : 'uncertain', mission, agentId, providerCode: result.providerCode, ...reconciled, ...extra };
+  }
+  if (result.outcome === 'rejected') { await finish('failed', { reason: 'rejected', httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}) }); return { command, status: 'blocked', mission, agentId, reason: 'rejected', httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}), ...extra, ...(hint ? { nextAction: hint } : {}) }; }
+  if (result.delivery === 'not_sent') { await finish('failed', { reason: result.reason }); return { command, status: 'unavailable', mission, agentId, reason: result.reason, ...extra }; }
+  // Envoi incertain : l’agent existe peut-être. Une seule lecture, puis état uncertain pour reconcile.
+  const reconciled = await reconcileEntry({ entry, key, fetchImpl, timeoutMs, now, unavailableState: 'uncertain', unavailableReason: result.reason });
+  await saveRegistry(registryFile, registry);
+  return { command, status: reconciled.state === 'reconciled' ? 'existing' : reconciled.state === 'not_created' ? 'unavailable' : 'uncertain', mission, agentId, reason: result.reason, ...reconciled, ...extra, ...(reconciled.state === 'uncertain' ? { nextAction: 'reconcile' } : hint ? { nextAction: hint } : {}) };
+}
+// Lancement dédupliqué : registre → décision de compte (pool) → préflight → POST avec agentId déterministe → réconciliation des 409 et appels incertains.
+export async function launch({ mission, repo, ref, prUrl, promptText, name, autoCreatePR = false, workOnCurrentBranch = true, config, select, account, key, access, registryFile, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
   if (typeof mission !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(mission)) throw new UsageError('--mission : clé courte [A-Za-z0-9._-] requise.');
   if (typeof promptText !== 'string' || !promptText.trim() || promptText.length > 200_000) throw new UsageError('Brief vide ou trop long.');
   const repoUrl = normalizeRepo(repo);
   if (prUrl !== undefined) { const url = new URL(prUrl); if (url.protocol !== 'https:' || url.hostname !== 'github.com' || !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+\/?$/.test(url.pathname) || url.search || url.hash || url.username) throw new UsageError('URL de PR GitHub attendue.'); }
   else refName(ref);
   const chosen = resolveSelection(config, select);
+  access = accessOf(access, key);
+  if (account !== undefined) { assertAccountId(account); if (!access.pool) throw new UsageError('--account exige le pool de comptes (CURSOR_API_KEY désigne un seul compte implicite).'); }
   const registry = await loadRegistry(registryFile);
   const existing = registry.missions[mission];
   // pending = POST interrompu avant enregistrement du résultat : l'agent existe peut-être ; reconcile, jamais un nouveau lancement ni une reprise aveugle.
   if (existing && activeStates.has(existing.state)) return { command: 'launch', status: 'deduplicated', mission, entry: existing, nextAction: ['uncertain', 'pending'].includes(existing.state) ? 'reconcile' : 'followup ou nouvelle clé de mission' };
-  const check = await preflight({ selection: chosen, key, fetchImpl, timeoutMs });
-  if (check.status !== 'ok') return { command: 'launch', status: check.status, mission, preflight: check };
+  // Décision de compte, déterministe et relue dans l’état partagé : même sélection sur le compte premium éligible ; exception seulement selon la politique du pool.
+  let decision = null, accountId = null, active = chosen, exception;
+  if (access.pool) {
+    const fallbackSelection = fallbackSelectionOf(config, access);
+    decision = account ? await routeExplicit(access, account, chosen) : await access.pool.decide({ selection: chosen, fallbackSelection });
+    if (decision.status === 'blocked') return { command: 'launch', status: 'blocked', mission, reason: decision.reason, decision, nextAction: decision.nextAction };
+    accountId = decision.accountId;
+    if (decision.status === 'exception') { active = fallbackSelection; exception = { reason: decision.reason, at: now(), confirmed: decision.confirmed, proof: decision.proof, initialModelId: chosen.modelId }; }
+  }
+  let modelsResult;
+  const check = await preflight({ selection: active, access, accountId, fetchImpl, timeoutMs, onResult: r => { modelsResult = r; } });
+  if (check.status !== 'ok') { const evidence = await recordEvidence(access, accountId, { callKind: 'models', modelId: active.modelId, result: modelsResult }); return { command: 'launch', status: check.status, mission, preflight: check, ...accountFields(accountId, decision), ...(evidence ? { evidence: { classification: evidence.classification, recorded: evidence.recorded } } : {}), ...(evidenceHint(evidence) ? { nextAction: evidenceHint(evidence) } : {}) }; }
   const agentId = missionAgentId(repoUrl, mission);
-  // La sélection est fixée ici, une fois, et conservée pour toute la mission (reprises comprises).
-  const selection = { key: chosen.key, modelId: chosen.modelId, params: chosen.params, catalog: { checkedAt: check.catalog.checkedAt, displayName: check.catalog.displayName, variant: check.catalog.variant } };
-  const entry = { agentId, repo: repoUrl, ...(prUrl ? { prUrl } : { ref }), selection, state: 'pending', updatedAt: now() };
+  // La sélection est fixée ici, une fois, et conservée pour toute la mission (reprises comprises). En cas d’exception, initiale et courante restent distinctes.
+  const catalog = { checkedAt: check.catalog.checkedAt, displayName: check.catalog.displayName, variant: check.catalog.variant };
+  const selection = { key: chosen.key, modelId: chosen.modelId, params: chosen.params, catalog: exception ? { checkedAt: check.catalog.checkedAt, validated: false, note: 'sélection initiale non validée : exception au lancement' } : catalog };
+  const entry = { agentId, repo: repoUrl, ...(prUrl ? { prUrl } : { ref }), selection, ...(exception ? { currentSelection: { key: active.key, modelId: active.modelId, params: active.params, catalog }, exception } : {}), ...(accountId ? { accountId } : {}), state: 'pending', updatedAt: now() };
   registry.missions[mission] = entry; await saveRegistry(registryFile, registry);
-  const body = { agentId, prompt: { text: promptText }, model: selection.params.length ? { id: selection.modelId, params: selection.params } : { id: selection.modelId }, repos: [prUrl ? { url: repoUrl, prUrl } : { url: repoUrl, startingRef: ref }], workOnCurrentBranch, autoCreatePR, ...(name ? { name: String(name).slice(0, 100) } : {}) };
-  const result = await call({ method: 'POST', path: '/v1/agents', body, key, fetchImpl, timeoutMs });
-  const finish = async (state, extra) => { Object.assign(entry, { state, updatedAt: now() }, extra); await saveRegistry(registryFile, registry); };
-  if (result.outcome === 'ok') {
-    const agent = agentSummary(result.data?.agent), run = runSummary(result.data?.run);
-    if (!agent || !run || agent.agentId !== agentId || run.agentId !== agentId) { await finish('uncertain', { reason: 'identity_mismatch' }); return { command: 'launch', status: 'uncertain', mission, agentId, reason: 'identity_mismatch', nextAction: 'reconcile' }; }
-    await finish('launched', { runId: run.runId, url: agent.url });
-    return { command: 'launch', status: 'launched', mission, agentId, runId: run.runId, url: agent.url, selection: selectionReceipt(selection, { createAccepted: true }) };
-  }
-  if (result.outcome === 'rejected' && result.status === 409) {
-    const reconciled = await reconcileEntry({ entry, key, fetchImpl, timeoutMs, now });
-    await saveRegistry(registryFile, registry);
-    return { command: 'launch', status: reconciled.state === 'reconciled' ? 'existing' : 'uncertain', mission, agentId, providerCode: result.providerCode, ...reconciled };
-  }
-  if (result.outcome === 'rejected') { await finish('failed', { reason: 'rejected', httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}) }); return { command: 'launch', status: 'blocked', mission, agentId, reason: 'rejected', httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}) }; }
-  if (result.delivery === 'not_sent') { await finish('failed', { reason: result.reason }); return { command: 'launch', status: 'unavailable', mission, agentId, reason: result.reason }; }
-  // Envoi incertain : l’agent existe peut-être. Une seule lecture, puis état uncertain pour reconcile.
-  const reconciled = await reconcileEntry({ entry, key, fetchImpl, timeoutMs, now, unavailableState: 'uncertain', unavailableReason: result.reason });
-  await saveRegistry(registryFile, registry);
-  return { command: 'launch', status: reconciled.state === 'reconciled' ? 'existing' : reconciled.state === 'not_created' ? 'unavailable' : 'uncertain', mission, agentId, reason: result.reason, ...reconciled, ...(reconciled.state === 'uncertain' ? { nextAction: 'reconcile' } : {}) };
+  const body = { agentId, prompt: { text: promptText }, model: active.params.length ? { id: active.modelId, params: active.params } : { id: active.modelId }, repos: [prUrl ? { url: repoUrl, prUrl } : { url: repoUrl, startingRef: ref }], workOnCurrentBranch, autoCreatePR, ...(name ? { name: String(name).slice(0, 100) } : {}) };
+  return createAgent({ command: 'launch', mission, entry, registry, registryFile, body, key: await access.keyFor(accountId), access, accountId, decision, modelId: active.modelId, fetchImpl, timeoutMs, now });
+}
+// Compte imposé (--account) : décision humaine explicite, par exemple une mission bornée grok destinée à produire la preuve d’accès standard. Composer reste interdit,
+// un pool confirmé indisponible aussi.
+async function routeExplicit(access, accountId, selection) {
+  if (/composer/i.test(selection.modelId)) return { status: 'blocked', reason: 'composer_forbidden', accountId, nextAction: 'Composer n’est jamais utilisé.' };
+  const owner = await access.pool.owner({ accountId, modelId: selection.modelId });
+  if (!owner.known) return { status: 'blocked', reason: 'account_unknown', accountId, nextAction: `compte ${accountId} absent de l’état du pool.` };
+  if (owner.confirmedUnavailable) return { status: 'blocked', reason: 'account_pool_unavailable', accountId, pool: owner.pool, poolState: owner.poolState, nextAction: `pool ${owner.pool} du compte ${accountId} confirmé indisponible (${owner.poolState}) : réactiver manuellement après vérification, aucun POST.` };
+  return { status: 'route', accountId, pool: owner.pool, modelId: selection.modelId, selection: 'initial', explicit: true };
 }
 async function readAgent({ agentId, key, fetchImpl, timeoutMs }) {
   const result = await call({ path: `/v1/agents/${encodeURIComponent(agentId)}`, key, fetchImpl, timeoutMs });
@@ -225,7 +307,7 @@ async function readAgent({ agentId, key, fetchImpl, timeoutMs }) {
 }
 const openFollowup = entry => entry?.followup && ['pending', 'uncertain'].includes(entry.followup.state) ? entry.followup : null;
 // Reprise en attente : l'agent tranche. latestRunId différent du run d'avant tentative ⇒ le POST de suite a été accepté (même si ce run est déjà terminé) ;
-// identique ⇒ rien n'a été créé, une réémission redevient possible. Aucun POST ici.
+// identique ⇒ rien n'a été créé, une réémission redevient possible. Dernier run inconnu ⇒ reste incertain. Aucun POST ici.
 function settleFollowup(entry, agent, now) {
   const pending = openFollowup(entry);
   if (!pending) return null;
@@ -247,12 +329,14 @@ async function reconcileEntry({ entry, key, fetchImpl, timeoutMs, now, unavailab
   Object.assign(entry, { state: unavailableState, reason: httpStatus === 404 ? 'agent_not_found' : unavailableReason ?? failure.reason, updatedAt: now() });
   return { state: unavailableState, reason: entry.reason };
 }
-export async function reconcile({ mission, key, registryFile, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
+// Réconciliation : toujours avec la clé du compte propriétaire de l’agent (même inactif pour la dépense) ; un autre compte ne voit pas cet agent (404).
+export async function reconcile({ mission, key, access, registryFile, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
+  access = accessOf(access, key);
   const { registry, entry } = await missionEntry({ mission, registryFile });
-  const reconciled = await reconcileEntry({ entry, key, fetchImpl, timeoutMs, now });
+  const reconciled = await reconcileEntry({ entry, key: await access.keyFor(entry.accountId), fetchImpl, timeoutMs, now });
   await saveRegistry(registryFile, registry);
-  const nextAction = reconciled.state === 'not_created' ? 'launch autorisé sur la même clé' : reconciled.followup?.state === 'accepted' ? 'status --mission sur le nouveau run ; aucune réémission' : reconciled.followup?.state === 'not_created' ? 'followup --mission autorisé (aucun run accepté depuis priorRunId)' : reconciled.state === 'uncertain' ? 'reconcile à nouveau ; aucune création ni réémission' : undefined;
-  return { command: 'reconcile', mission, agentId: entry.agentId, status: reconciled.state, ...(reconciled.agent ? { agent: reconciled.agent } : {}), ...(reconciled.reason ? { reason: reconciled.reason } : {}), ...(reconciled.followup ? { followup: reconciled.followup } : {}), ...(nextAction ? { nextAction } : {}) };
+  const nextAction = reconciled.state === 'not_created' ? 'launch autorisé sur la même clé' : reconciled.followup?.state === 'accepted' ? 'status --mission sur le nouveau run ; aucune réémission' : reconciled.followup?.state === 'not_created' ? 'followup --mission autorisé (aucun run accepté depuis priorRunId)' : reconciled.followup?.state === 'uncertain' ? 'dernier run de l’agent inconnu : reprise toujours incertaine ; reconcile à nouveau plus tard, aucune réémission' : reconciled.state === 'uncertain' ? 'reconcile à nouveau ; aucune création ni réémission' : undefined;
+  return { command: 'reconcile', mission, agentId: entry.agentId, ...accountFields(entry.accountId), status: reconciled.state, ...(reconciled.agent ? { agent: reconciled.agent } : {}), ...(reconciled.reason ? { reason: reconciled.reason } : {}), ...(reconciled.followup ? { followup: reconciled.followup } : {}), ...(nextAction ? { nextAction } : {}) };
 }
 
 // Checkpoint : une lecture du run, diff par rapport au dernier état enregistré, résultat tronqué.
@@ -280,73 +364,156 @@ async function readRun({ agentId, runId, key, fetchImpl, timeoutMs, full }) {
   if (!run || run.runId !== runId || run.agentId !== agentId) return { failure: { status: 'unavailable', reason: 'invalid_response' } };
   return { run };
 }
-// Checkpoint : le run demandé (ou le dernier run de la mission), le diff, et la sélection initiale rappelée telle quelle.
-export async function status({ agentId, runId, mission, registryFile, stateFile, key, fetchImpl, timeoutMs, full = false }) {
-  let selection;
-  if (mission !== undefined) { const { entry } = await missionEntry({ mission, registryFile }); agentId ??= entry.agentId; runId ??= entry.runId; selection = entry.selection; if (!runId) throw new UsageError('Aucun run connu pour cette mission ; reconcile d’abord.'); }
+// Checkpoint : le run demandé (ou le dernier run de la mission), le diff, et la sélection initiale rappelée telle quelle. Clé du propriétaire ; --agent en mode pool exige --account.
+export async function status({ agentId, runId, mission, account, registryFile, stateFile, key, access, fetchImpl, timeoutMs, full = false }) {
+  access = accessOf(access, key);
+  let entry, accountId = account === undefined ? undefined : assertAccountId(account);
+  if (mission !== undefined) { ({ entry } = await missionEntry({ mission, registryFile })); agentId ??= entry.agentId; runId ??= entry.runId; if (accountId !== undefined && entry.accountId && accountId !== entry.accountId) throw new UsageError('Le compte indiqué n’est pas le propriétaire de la mission.'); accountId = entry.accountId; if (!runId) throw new UsageError('Aucun run connu pour cette mission ; reconcile d’abord.'); }
   assertAgentId(agentId); assertRunId(runId);
-  const { run, failure } = await readRun({ agentId, runId, key, fetchImpl, timeoutMs, full });
-  if (failure) return { command: 'status', ...failure, agentId, runId };
+  const { run, failure } = await readRun({ agentId, runId, key: await access.keyFor(accountId), fetchImpl, timeoutMs, full });
+  if (failure) return { command: 'status', ...failure, agentId, runId, ...accountFields(accountId) };
   let previous = null;
   if (stateFile) { try { previous = JSON.parse(await readFile(stateFile, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw new UsageError('Fichier d’état illisible.'); } }
   const changes = diffRun(previous, run);
   if (stateFile) { await mkdir(dirname(resolve(stateFile)), { recursive: true }); await writeFile(stateFile, JSON.stringify(run, null, 2) + '\n'); }
-  return { command: 'status', status: 'ok', changed: changes.length > 0, changes, terminal: terminalRunStatuses.has(run.status), run, ...(selection ? { selection: selectionReceipt(selection, { createAccepted: true }) } : {}) };
+  return { command: 'status', status: 'ok', changed: changes.length > 0, changes, terminal: terminalRunStatuses.has(run.status), run, ...accountFields(accountId), ...(entry?.selection ? { selection: selectionReceipt(entry.selection, { createAccepted: true, entry }) } : {}) };
 }
 
 // Reprise du même agent (docs/MAINTENANCE.md : pas de doublon). Toujours : lire l'agent réel et son latestRunId, lire ce run, exiger un état terminal,
 // puis un seul POST sans champ model (la sélection initiale s'applique telle quelle). Avec --mission, la tentative est persistée avant l'envoi et
 // une livraison inconnue impose reconcile avant toute réémission. Sans registre (--agent), garde minimale seulement : aucune idempotence.
-export async function followup({ agentId, mission, registryFile, promptText, key, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
-  let registry, entry;
+// Toujours la clé du compte propriétaire : jamais une reprise d’un ancien agent avec une autre clé (l’API répond 404 et le run serait perdu).
+export async function followup({ agentId, mission, account, registryFile, promptText, key, access, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
+  access = accessOf(access, key);
+  let registry, entry, accountId = account === undefined ? undefined : assertAccountId(account);
   if (mission !== undefined) {
     ({ registry, entry } = await missionEntry({ mission, registryFile }));
     if (!['launched', 'reconciled'].includes(entry.state)) throw new UsageError(`Mission en état ${entry.state} : ${entry.state === 'not_created' || entry.state === 'failed' ? 'launch' : 'reconcile'} avant toute reprise.`);
     agentId ??= entry.agentId;
     if (agentId !== entry.agentId) throw new UsageError('L’agent indiqué n’est pas celui de la mission.');
+    if (accountId !== undefined && entry.accountId && accountId !== entry.accountId) throw new UsageError('Le compte indiqué n’est pas le propriétaire de la mission ; jamais de reprise avec une autre clé.');
+    accountId = entry.accountId;
   }
   assertAgentId(agentId);
   if (typeof promptText !== 'string' || !promptText.trim() || promptText.length > 200_000) throw new UsageError('Brief de reprise vide ou trop long.');
   const receipt = entry
-    ? { selection: entry.selection ? selectionReceipt(entry.selection, { createAccepted: true }) : undefined, modelSent: false, persistent: true }
+    ? { selection: entry.selection ? selectionReceipt(entry.selection, { createAccepted: true, entry }) : undefined, modelSent: false, persistent: true }
     : { modelSent: false, persistent: false, note: 'Sans registre : aucune idempotence ; en cas de livraison inconnue, lire l’agent (latestRunId) soi-même ; aucune répétition automatique. Utiliser --mission/--registry pour une reprise réconciliable.' };
-  const report = (fields) => ({ command: 'followup', agentId, ...fields, ...receipt });
+  const report = (fields) => ({ command: 'followup', agentId, ...accountFields(accountId), ...fields, ...receipt });
   const persist = async (fields) => { if (!entry) return; Object.assign(entry, fields, { updatedAt: now() }); await saveRegistry(registryFile, registry); };
   const unresolved = openFollowup(entry);
   if (unresolved) return report({ status: 'blocked', reason: 'followup_unresolved', followup: unresolved, nextAction: 'reconcile --mission avant toute réémission ; aucun POST envoyé' });
-  const { agent, failure: agentFailure } = await readAgent({ agentId, key, fetchImpl, timeoutMs });
+  const ownerKey = await access.keyFor(accountId);
+  const modelId = effectiveSelection(entry)?.modelId ?? null;
+  const { agent, failure: agentFailure } = await readAgent({ agentId, key: ownerKey, fetchImpl, timeoutMs });
   if (agentFailure) return report({ ...agentFailure, nextAction: 'agent illisible : aucun POST envoyé ; relire plus tard' });
   if (!agent.latestRunId) return report({ status: 'blocked', reason: 'latest_run_unknown', nextAction: 'dernier run inconnu : aucun POST envoyé' });
   const registryRunId = entry?.runId;
-  const { run, failure: runFailure } = await readRun({ agentId, runId: agent.latestRunId, key, fetchImpl, timeoutMs });
+  const { run, failure: runFailure } = await readRun({ agentId, runId: agent.latestRunId, key: ownerKey, fetchImpl, timeoutMs });
   if (runFailure) return report({ ...runFailure, runId: agent.latestRunId, nextAction: 'run actuel illisible : aucun POST envoyé' });
   if (registryRunId && registryRunId !== run.runId) await persist({ runId: run.runId });
   const stale = registryRunId && registryRunId !== run.runId ? { registryRunId } : {};
   if (!terminalRunStatuses.has(run.status)) return report({ status: 'blocked', reason: 'run_active', runId: run.runId, runStatus: run.status, ...stale, nextAction: 'attendre le terminal (status --follow) ; aucun second run envoyé' });
+  // Pool confirmé indisponible pour le propriétaire : aucun POST voué à l’échec ; la suite passe par un successeur lié sur le compte premium suivant.
+  if (access.pool && accountId && modelId) {
+    const owner = await access.pool.owner({ accountId, modelId });
+    if (owner.confirmedUnavailable) return report({ status: 'blocked', reason: 'owner_pool_unavailable', runId: run.runId, pool: owner.pool, poolState: owner.poolState, ...stale, nextAction: `pool ${owner.pool} du compte propriétaire ${accountId} confirmé indisponible (${owner.poolState}) : aucun POST ; successor --mission --checkpoint <SHA poussé> pour continuer sur le compte premium suivant, ou réactiver le compte après vérification manuelle.` });
+  }
   const priorRunId = run.runId;
   await persist({ followup: { state: 'pending', priorRunId, requestedAt: now() } });
-  const result = await call({ method: 'POST', path: `/v1/agents/${encodeURIComponent(agentId)}/runs`, body: { prompt: { text: promptText } }, key, fetchImpl, timeoutMs });
+  const result = await call({ method: 'POST', path: `/v1/agents/${encodeURIComponent(agentId)}/runs`, body: { prompt: { text: promptText } }, key: ownerKey, fetchImpl, timeoutMs });
+  const evidence = await recordEvidence(access, accountId, { callKind: 'run', modelId, result, agentId });
+  const evidenceFields = evidence ? { evidence: { classification: evidence.classification, recorded: evidence.recorded } } : {};
+  const hint = evidenceHint(evidence);
   if (result.outcome === 'ok') {
     const accepted = runSummary(result.data?.run);
     if (accepted && accepted.agentId === agentId && accepted.runId !== priorRunId) {
       await persist({ runId: accepted.runId, followups: (entry?.followups ?? 0) + 1, followup: { state: 'accepted', priorRunId, runId: accepted.runId, settledAt: now() } });
       if (receipt.selection) receipt.selection.runAccepted = true;
-      return report({ status: 'launched', priorRunId, runId: accepted.runId, runStatus: accepted.status, ...stale });
+      return report({ status: 'launched', priorRunId, runId: accepted.runId, runStatus: accepted.status, ...stale, ...evidenceFields });
     }
     await persist({ followup: { state: 'uncertain', priorRunId, reason: 'invalid_response', requestedAt: entry?.followup?.requestedAt } });
-    return report({ status: 'uncertain', reason: 'invalid_response', priorRunId, nextAction: entry ? 'reconcile --mission ; aucune réémission avant' : 'lire l’agent (latestRunId ≠ priorRunId ⇒ accepté) ; aucune répétition automatique' });
+    return report({ status: 'uncertain', reason: 'invalid_response', priorRunId, nextAction: entry ? 'reconcile --mission ; aucune réémission avant' : 'lire l’agent (latestRunId ≠ priorRunId ⇒ accepté) ; aucune répétition automatique', ...evidenceFields });
   }
   if (result.outcome === 'rejected') {
     // Dont 409 agent_busy : garde complémentaire du serveur, pas la preuve du contrôle client effectué ci-dessus.
     await persist({ followup: { state: 'rejected', priorRunId, httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}), settledAt: now() } });
-    return report({ status: 'blocked', reason: 'rejected', priorRunId, httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}) });
+    return report({ status: 'blocked', reason: 'rejected', priorRunId, httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}), ...evidenceFields, ...(hint ? { nextAction: hint } : {}) });
   }
   if (result.delivery === 'not_sent') {
     await persist({ followup: { state: 'not_created', priorRunId, reason: result.reason, settledAt: now() } });
     return report({ status: 'unavailable', reason: result.reason, priorRunId, nextAction: 'requête non émise ; followup à nouveau possible' });
   }
   await persist({ followup: { state: 'uncertain', priorRunId, reason: result.reason, requestedAt: entry?.followup?.requestedAt } });
-  return report({ status: 'uncertain', reason: result.reason, priorRunId, nextAction: entry ? 'reconcile --mission ; aucune réémission avant' : 'lire l’agent (latestRunId ≠ priorRunId ⇒ accepté) ; aucune répétition automatique' });
+  return report({ status: 'uncertain', reason: result.reason, priorRunId, nextAction: entry ? `reconcile --mission ; aucune réémission avant${hint ? ` ; ${hint}` : ''}` : 'lire l’agent (latestRunId ≠ priorRunId ⇒ accepté) ; aucune répétition automatique', ...evidenceFields });
+}
+
+// Successeur lié (pool seulement) : même mission, même sélection initiale, nouveau compte premium de l’ordre configuré et nouvel identifiant d’agent dérivé (l’API peut refuser
+// la réutilisation d’un agentId entre comptes ; l’ancien agent n’est visible que par son propriétaire). Préconditions strictes : aucune reprise ouverte, prédécesseur lu par
+// son propriétaire, dernier run terminal et réconcilié, checkpoint Git poussé fourni explicitement (jamais de récupération inventée de travail non poussé). Tentative persistée.
+export async function successor({ mission, registryFile, promptText, checkpoint, name, config, key, access, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
+  access = accessOf(access, key);
+  if (!access.pool) throw new UsageError('successor exige le pool de comptes : CURSOR_API_KEY désigne un seul compte, aucun successeur possible.');
+  if (typeof checkpoint !== 'string' || !shaPattern.test(checkpoint)) throw new UsageError('--checkpoint <SHA Git complet, vérifié et poussé sur la branche de la mission> requis.');
+  if (typeof promptText !== 'string' || !promptText.trim() || promptText.length > 200_000) throw new UsageError('Brief de successeur vide ou trop long.');
+  const { registry, entry } = await missionEntry({ mission, registryFile });
+  // Nouvelle tentative après un successeur refusé ou jamais créé : prédécesseur déjà vérifié et enregistré, même checkpoint exigé, compte suivant de l’ordre.
+  const retrying = ['failed', 'not_created'].includes(entry.state) && typeof entry.successorOf === 'string' && Array.isArray(entry.predecessors) && entry.predecessors.length > 0;
+  if (!retrying && !['launched', 'reconciled'].includes(entry.state)) throw new UsageError(`Mission en état ${entry.state} : ${entry.state === 'not_created' || entry.state === 'failed' ? 'launch' : 'reconcile'} avant tout successeur.`);
+  if (!entry.accountId) return { command: 'successor', status: 'blocked', mission, agentId: entry.agentId, reason: 'owner_unknown', nextAction: 'entrée sans compte propriétaire (lancée avec CURSOR_API_KEY) : aucun successeur ; reprendre avec followup sous la même clé.' };
+  if (!entry.selection) throw new UsageError('Entrée sans sélection initiale ; aucun successeur.');
+  const persist = async (fields) => { Object.assign(entry, fields, { updatedAt: now() }); await saveRegistry(registryFile, registry); };
+  let predecessor, stale = {};
+  if (retrying) {
+    predecessor = entry.predecessors[entry.predecessors.length - 1];
+    if (predecessor.checkpoint?.sha !== checkpoint.toLowerCase()) throw new UsageError('Checkpoint différent de celui enregistré pour le prédécesseur ; aucun successeur.');
+  } else {
+    const report = fields => ({ command: 'successor', mission, predecessor: { agentId: entry.agentId, accountId: entry.accountId, runId: entry.runId ?? null }, ...fields });
+    const unresolved = openFollowup(entry);
+    if (unresolved) return report({ status: 'blocked', reason: 'followup_unresolved', followup: unresolved, nextAction: 'reconcile --mission : une reprise du prédécesseur est encore incertaine ; aucun successeur avant' });
+    const ownerKey = await access.keyFor(entry.accountId);
+    const { agent, failure: agentFailure } = await readAgent({ agentId: entry.agentId, key: ownerKey, fetchImpl, timeoutMs });
+    if (agentFailure) return report({ ...agentFailure, nextAction: 'prédécesseur illisible via son propriétaire : aucun POST ; relire plus tard' });
+    if (!agent.latestRunId) return report({ status: 'blocked', reason: 'latest_run_unknown', nextAction: 'dernier run du prédécesseur inconnu : aucun successeur' });
+    const registryRunId = entry.runId;
+    const { run, failure: runFailure } = await readRun({ agentId: entry.agentId, runId: agent.latestRunId, key: ownerKey, fetchImpl, timeoutMs });
+    if (runFailure) return report({ ...runFailure, runId: agent.latestRunId, nextAction: 'dernier run du prédécesseur illisible : aucun successeur' });
+    if (registryRunId !== run.runId) await persist({ runId: run.runId });
+    stale = registryRunId && registryRunId !== run.runId ? { registryRunId } : {};
+    if (!terminalRunStatuses.has(run.status)) return report({ status: 'blocked', reason: 'run_active', runId: run.runId, runStatus: run.status, ...stale, nextAction: 'mission active jamais interrompue : attendre le terminal (status --follow), vérifier le checkpoint poussé, puis successor' });
+    predecessor = { agentId: entry.agentId, accountId: entry.accountId, runId: run.runId, runStatus: run.status, ...(entry.url ? { url: entry.url } : {}), checkpoint: { sha: checkpoint.toLowerCase(), ...(entry.ref ? { ref: entry.ref } : {}), ...(entry.prUrl ? { prUrl: entry.prUrl } : {}), providedBy: 'orchestrator' }, ...(entry.followups ? { followups: entry.followups } : {}), endedAt: now() };
+  }
+  const report = fields => ({ command: 'successor', mission, predecessor: { agentId: predecessor.agentId, accountId: predecessor.accountId, runId: predecessor.runId, runStatus: predecessor.runStatus, checkpoint: predecessor.checkpoint.sha }, ...fields });
+  const initial = { key: entry.selection.key, modelId: entry.selection.modelId, params: entry.selection.params };
+  const fallbackSelection = fallbackSelectionOf(config, access);
+  const decision = await access.pool.decide({ selection: initial, fallbackSelection, excludeAccountIds: [predecessor.accountId] });
+  if (decision.status === 'blocked') return report({ status: 'blocked', reason: decision.reason, decision, nextAction: decision.nextAction, ...stale });
+  const active = decision.status === 'exception' ? fallbackSelection : initial;
+  let modelsResult;
+  const check = await preflight({ selection: active, access, accountId: decision.accountId, fetchImpl, timeoutMs, onResult: r => { modelsResult = r; } });
+  if (check.status !== 'ok') { const evidence = await recordEvidence(access, decision.accountId, { callKind: 'models', modelId: active.modelId, result: modelsResult }); return report({ status: check.status, preflight: check, ...accountFields(decision.accountId, decision), ...(evidence ? { evidence: { classification: evidence.classification, recorded: evidence.recorded } } : {}), ...(evidenceHint(evidence) ? { nextAction: evidenceHint(evidence) } : {}) }); }
+  // Identifiant dérivé de la mission et du numéro de tentative : jamais l’identifiant du prédécesseur (refus possible entre comptes), idempotence persistée avant le POST.
+  const attempt = (entry.successorAttempts ?? 0) + 1;
+  const agentId = missionAgentId(entry.repo, `${mission}~s${attempt}`);
+  const catalog = { checkedAt: check.catalog.checkedAt, displayName: check.catalog.displayName, variant: check.catalog.variant };
+  // L’entrée de mission bascule sur le successeur ; la chaîne des prédécesseurs, la sélection initiale et le lien explicite sont conservés.
+  for (const field of ['runId', 'url', 'followup', 'followups', 'reason', 'httpStatus', 'providerCode']) delete entry[field];
+  if (decision.status === 'exception') Object.assign(entry, { currentSelection: { key: active.key, modelId: active.modelId, params: active.params, catalog }, exception: { reason: decision.reason, at: now(), confirmed: decision.confirmed, proof: decision.proof, initialModelId: initial.modelId } });
+  else { delete entry.currentSelection; delete entry.exception; }
+  await persist({ agentId, accountId: decision.accountId, successorAttempts: attempt, successorOf: predecessor.agentId, state: 'pending', ...(retrying ? {} : { predecessors: [...(entry.predecessors ?? []), predecessor] }) });
+  const body = { agentId, prompt: { text: promptText }, model: active.params.length ? { id: active.modelId, params: active.params } : { id: active.modelId }, repos: [entry.prUrl ? { url: entry.repo, prUrl: entry.prUrl } : { url: entry.repo, startingRef: entry.ref }], workOnCurrentBranch: true, autoCreatePR: false, ...(name ? { name: String(name).slice(0, 100) } : {}) };
+  const created = await createAgent({ command: 'successor', mission, entry, registry, registryFile, body, key: await access.keyFor(decision.accountId), access, accountId: decision.accountId, decision, modelId: active.modelId, fetchImpl, timeoutMs, now });
+  return report({ ...created, attempt, ...stale });
+}
+
+// Vue du pool et décision déterministe à blanc (aucun appel API, aucune écriture hors création initiale de l’état).
+export async function accounts({ config, select, exclude = [], key, access }) {
+  access = accessOf(access, key);
+  if (!access.pool) return { command: 'accounts', status: 'ok', mode: 'env', note: 'CURSOR_API_KEY : un seul compte implicite, aucun état de pool.' };
+  const state = await access.pool.read();
+  const chosen = config ? resolveSelection(config, select) : null;
+  const decision = chosen ? await access.pool.decide({ selection: chosen, fallbackSelection: fallbackSelectionOf(config, access), excludeAccountIds: exclude }) : undefined;
+  return { command: 'accounts', status: 'ok', mode: 'pool', stateFile: access.pool.stateFile, ...state, ...(decision ? { decision: { ...decision, accounts: undefined } } : {}) };
 }
 
 export function exitCodeFor(report) {
@@ -361,48 +528,64 @@ function parseArgs(args) {
     if (!arg.startsWith('--')) throw new UsageError(`Argument inconnu : ${arg}`);
     const name = arg.slice(2);
     if (['follow', 'full', 'auto-pr', 'new-branch'].includes(name)) options.flags.add(name);
-    else if (['model-file', 'select', 'mission', 'repo', 'ref', 'pr-url', 'prompt-file', 'registry', 'name', 'agent', 'run', 'state'].includes(name) && i + 1 < args.length) options[name] = args[++i];
+    else if (['model-file', 'select', 'mission', 'repo', 'ref', 'pr-url', 'prompt-file', 'registry', 'name', 'agent', 'run', 'state', 'account', 'checkpoint', 'exclude'].includes(name) && i + 1 < args.length) options[name] = args[++i];
     else throw new UsageError(`Option inconnue ou incomplète : ${arg}`);
   }
   return options;
 }
-const help = `cursor-agents — orchestration Creezio Lite (clé : CURSOR_API_KEY en environnement)
-  preflight [--select fable|opus|grok] [--model-file f]
-  launch --mission K --repo URL (--ref BRANCHE | --pr-url URL) --prompt-file f --registry f [--select clé] [--name n] [--auto-pr] [--new-branch]
-  reconcile --mission K --registry f            (tranche aussi une reprise pending/uncertain : accepté ou non créé)
-  status (--mission K --registry f | --agent bc-… --run run-…) [--state f] [--follow] [--full]
-  followup --mission K --registry f --prompt-file f   (reprise persistée et réconciliable ; à utiliser pour les missions)
-  followup --agent bc-… --prompt-file f               (sans registre : garde minimale, aucune idempotence ; livraison inconnue ⇒ lire l’agent soi-même)
+const help = `cursor-agents — orchestration Creezio Lite (accès : CURSOR_API_KEY en environnement, sinon pool commun de comptes via CURSOR_CREDENTIALS_FILE)
+  preflight [--select fable|opus|grok] [--model-file f] [--account id]
+  launch --mission K --repo URL (--ref BRANCHE | --pr-url URL) --prompt-file f --registry f [--select clé] [--account id] [--name n] [--auto-pr] [--new-branch]
+  reconcile --mission K --registry f            (tranche aussi une reprise pending/uncertain : accepté ou non créé ; clé du compte propriétaire)
+  status (--mission K --registry f | --agent bc-… --run run-… [--account id]) [--state f] [--follow] [--full]
+  followup --mission K --registry f --prompt-file f   (reprise persistée et réconciliable, même agent, même compte propriétaire)
+  followup --agent bc-… --prompt-file f [--account id] (sans registre : garde minimale, aucune idempotence ; livraison inconnue ⇒ lire l’agent soi-même)
+  successor --mission K --registry f --prompt-file f --checkpoint SHA [--name n]   (pool : prédécesseur terminal réconcilié, checkpoint poussé, compte premium suivant, même sélection)
+  accounts [--select clé] [--exclude id]         (pool : état des comptes et décision à blanc, aucun appel API)
 Reprise : lecture de l’agent réel (latestRunId) puis du run actuel ; terminal exigé ; un seul POST sans champ model ; livraison inconnue ⇒ reconcile avant réémission.
-La sélection (--select, défaut : fable) est choisie une fois au lancement puis conservée pour toute la mission.
-Codes : 0 ok · 2 bloqué (modèle refusé, requête rejetée, run actif) · 3 indisponible ou incertain · 4 usage`;
-export async function main(argv = process.argv.slice(2), { env = process.env, fetchImpl, sleep = ms => new Promise(r => setTimeout(r, ms)), log = line => console.log(line) } = {}) {
+La sélection (--select, défaut : fable) est choisie une fois au lancement puis conservée pour toute la mission et ses successeurs ; exception Grok 4.6 seulement selon la
+politique du pool (tous les comptes premium confirmés indisponibles et preuve datée d’accès standard), jamais Composer.
+Codes : 0 ok · 2 bloqué (modèle refusé, requête rejetée, run actif, décision de pool) · 3 indisponible ou incertain · 4 usage`;
+export async function main(argv = process.argv.slice(2), { env = process.env, fetchImpl, adapter, decrypt, sleep = ms => new Promise(r => setTimeout(r, ms)), log = line => console.log(line) } = {}) {
   const [command, ...rest] = argv;
   if (!command || command === '--help') { log(help); return exitCodes.ok; }
   const options = parseArgs(rest);
-  const key = readKey(env);
-  if (!key) throw new UsageError('CURSOR_API_KEY absente ou invalide dans l’environnement ; aucun appel émis.');
   const emit = report => { log(JSON.stringify(report)); return exitCodeFor(report); };
-  if (command === 'preflight') { const config = await loadSelections(options['model-file']); return emit(await preflight({ selection: resolveSelection(config, options.select), key, fetchImpl })); }
-  if (command === 'launch') {
-    const config = await loadSelections(options['model-file']);
-    if (!options['prompt-file']) throw new UsageError('--prompt-file requis.');
-    const promptText = await readFile(options['prompt-file'], 'utf8');
-    return emit(await launch({ mission: options.mission, repo: options.repo, ref: options.ref, prUrl: options['pr-url'], promptText, name: options.name, autoCreatePR: options.flags.has('auto-pr'), workOnCurrentBranch: !options.flags.has('new-branch'), config, select: options.select, key, registryFile: options.registry, fetchImpl }));
-  }
-  if (command === 'reconcile') return emit(await reconcile({ mission: options.mission, key, registryFile: options.registry, fetchImpl }));
-  if (command === 'status') {
-    let interval = 0, code = exitCodes.ok;
-    for (;;) {
-      const report = await status({ agentId: options.agent, runId: options.run, mission: options.mission, registryFile: options.registry, stateFile: options.state, key, fetchImpl, full: options.flags.has('full') });
-      if (report.status !== 'ok') return emit(report);
-      if (report.changed || !options.flags.has('follow')) code = emit(report);
-      if (!options.flags.has('follow') || report.terminal) return code;
-      interval = nextInterval(interval); await sleep(interval);
+  let access;
+  try {
+    access = await resolveAccess({ env, adapter, decrypt });
+    if (command === 'preflight') {
+      const config = await loadSelections(options['model-file']); const selection = resolveSelection(config, options.select);
+      let accountId = options.account ? assertAccountId(options.account) : undefined;
+      if (access.pool && !accountId) { const decision = await access.pool.decide({ selection, fallbackSelection: fallbackSelectionOf(config, access) }); if (decision.status !== 'route') return emit({ command: 'preflight', status: 'blocked', selection: selection.key, reason: decision.status === 'exception' ? 'exception_requires_launch' : decision.reason, decision: { ...decision, accounts: undefined }, nextAction: decision.nextAction ?? 'exception de repli : décidée au lancement (launch), pas au préflight ; indiquer --account pour un compte précis' }); accountId = decision.accountId; }
+      return emit(await preflight({ selection, access, accountId, fetchImpl }));
     }
+    if (command === 'launch') {
+      const config = await loadSelections(options['model-file']);
+      if (!options['prompt-file']) throw new UsageError('--prompt-file requis.');
+      const promptText = await readFile(options['prompt-file'], 'utf8');
+      return emit(await launch({ mission: options.mission, repo: options.repo, ref: options.ref, prUrl: options['pr-url'], promptText, name: options.name, autoCreatePR: options.flags.has('auto-pr'), workOnCurrentBranch: !options.flags.has('new-branch'), config, select: options.select, account: options.account, access, registryFile: options.registry, fetchImpl }));
+    }
+    if (command === 'reconcile') return emit(await reconcile({ mission: options.mission, access, registryFile: options.registry, fetchImpl }));
+    if (command === 'status') {
+      let interval = 0, code = exitCodes.ok;
+      for (;;) {
+        const report = await status({ agentId: options.agent, runId: options.run, mission: options.mission, account: options.account, registryFile: options.registry, stateFile: options.state, access, fetchImpl, full: options.flags.has('full') });
+        if (report.status !== 'ok') return emit(report);
+        if (report.changed || !options.flags.has('follow')) code = emit(report);
+        if (!options.flags.has('follow') || report.terminal) return code;
+        interval = nextInterval(interval); await sleep(interval);
+      }
+    }
+    if (command === 'followup') { if (!options['prompt-file']) throw new UsageError('--prompt-file requis.'); return emit(await followup({ agentId: options.agent, mission: options.mission, account: options.account, registryFile: options.registry, promptText: await readFile(options['prompt-file'], 'utf8'), access, fetchImpl })); }
+    if (command === 'successor') { if (!options['prompt-file']) throw new UsageError('--prompt-file requis.'); const config = await loadSelections(options['model-file']); return emit(await successor({ mission: options.mission, registryFile: options.registry, promptText: await readFile(options['prompt-file'], 'utf8'), checkpoint: options.checkpoint, name: options.name, config, access, fetchImpl })); }
+    if (command === 'accounts') { const config = await loadSelections(options['model-file']); return emit(await accounts({ config, select: options.select, exclude: options.exclude ? [assertAccountId(options.exclude)] : [], access })); }
+    throw new UsageError(`Commande inconnue : ${command}`);
+  } catch (error) {
+    // Erreurs du pool (coffre, déchiffrement, verrou, état) : indisponibilité explicite sans secret ; le reste remonte comme erreur d’usage.
+    if (error && error.name === 'PoolError') return emit({ command, status: 'unavailable', reason: error.code, message: String(error.message), ...(error.accountId ? { accountId: error.accountId } : {}), ...(error.holder ? { holder: error.holder } : {}) });
+    throw error;
   }
-  if (command === 'followup') { if (!options['prompt-file']) throw new UsageError('--prompt-file requis.'); return emit(await followup({ agentId: options.agent, mission: options.mission, registryFile: options.registry, promptText: await readFile(options['prompt-file'], 'utf8'), key, fetchImpl })); }
-  throw new UsageError(`Commande inconnue : ${command}`);
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   main().then(code => { process.exitCode = code; }).catch(error => {

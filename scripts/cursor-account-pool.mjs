@@ -282,6 +282,8 @@ export async function openAccountPool({ env = process.env, decrypt, now = isoNow
     classify: args => classifyResult(args),
     read: () => withPoolState(paths, () => ({ changed: false, value: state => summarizeState(state) }), options),
     decide: args => withPoolState(paths, state => ({ changed: false, value: decide(state, { ...args, now }) }), options),
+    // Propriétaire d’une mission : ses GET restent toujours possibles ; un POST sur un pool confirmé indisponible est refusé avant envoi.
+    owner: ({ accountId, modelId }) => withPoolState(paths, state => { const account = state.accounts.find(a => a.id === accountId); const pool = poolFor(modelId); const poolState = account?.modelPools?.[pool] ?? null; return { changed: false, value: { accountId, known: Boolean(account), status: account?.status ?? null, pool, poolState, confirmedUnavailable: confirmedUnavailable.has(poolState) } }; }, options),
     record: (accountId, evidence, { activate = false } = {}) => withPoolState(paths, state => { const summary = applyEvidence(state, accountId, { ...evidence, at: evidence.at ?? now() }); if (activate && evidence.classification === 'accepted') state.activeAccountId = accountId; return { changed: true, value: summary }; }, options),
   };
   return pool;
