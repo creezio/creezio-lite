@@ -79,7 +79,7 @@
     },
     "milestone": {
       "enum": ["delivered", "integrated", "published"],
-      "description": "Jalon d’une mission productrice : delivered (run terminal + PR + réception : l’artefact existe, il n’est PAS accepté ; une correction peut être demandée), integrated (fusionnée dans la base), published (release contenant l’intégration). Un consommateur qui exige un contrat stable dépend d’une condition d’acceptation sourcée, pas de delivered brut."
+      "description": "Jalon d’une mission productrice : delivered (run terminal + PR + réception : l’artefact existe, il n’est PAS accepté ; une correction peut être demandée), integrated (fusionnée dans la base), published (release contenant l’intégration). Un consommateur qui exige un contrat stable dépend d’une condition d’acceptation sourcée, pas de delivered brut. Une mission en statut historical atteint le jalon historical.step et ceux qui le précèdent."
     },
     "missionDependency": {
       "type": "object",

@@ -158,7 +158,7 @@
       "properties": {
         "status": {
           "enum": ["pending", "active", "delivered", "integrated", "published", "closed", "cancelled", "historical", "unknown"],
-          "description": "active : run en cours ou incertain (CREATING, RUNNING, POST incertain), compte dans la capacité et tient ses réservations. delivered : run terminal (aucun POST incertain), PR et réception disponibles ; réservations toujours tenues ; l’artefact existe mais n’est pas accepté pour autant. integrated/published/closed/cancelled/historical : réservations libérées, aucune place consommée, agent historique non compté ; jamais de launch pending/uncertain ni de run CREATING/RUNNING/UNKNOWN non réconcilié. historical : lot réellement reçu avant cet état, sélection/agent/run inconnus, jalon prouvé dans historical ; aucun resume/start proposé, toute reprise est une mission corrective distincte. unknown : l’orchestrateur ne sait pas ; ready répond code 3."
+          "description": "pending : rien n’a été lancé ; avant tout POST l’orchestrateur écrit active + launch pending, donc une entrée pending portant launch pending/uncertain ou un run CREATING/RUNNING/UNKNOWN est incohérente et rejetée (elle sous-compterait la capacité et doublerait la création) ; on ne la normalise jamais en effaçant l’incertitude, on la corrige en active. active : run en cours ou incertain (CREATING, RUNNING, POST incertain), compte dans la capacité et tient ses réservations. delivered : run terminal (aucun POST incertain), PR et réception disponibles ; réservations toujours tenues ; l’artefact existe mais n’est pas accepté pour autant. integrated/published/closed/cancelled/historical : réservations libérées, aucune place consommée, agent historique non compté ; jamais de launch pending/uncertain ni de run CREATING/RUNNING/UNKNOWN non réconcilié. historical : lot réellement reçu avant cet état, sélection/agent/run inconnus, jalon prouvé dans historical ; aucun resume/start proposé, toute reprise est une mission corrective distincte. unknown : l’orchestrateur ne sait pas ; ready répond code 3."
         },
         "historical": { "$ref": "#/$defs/historical" },
         "selection": { "$ref": "#/$defs/selection" },
@@ -173,7 +173,7 @@
         },
         "launch": {
           "enum": ["pending", "launched", "reconciled", "uncertain", "not_created", "failed"],
-          "description": "Copie de l’état du registre cursor-agents. uncertain/pending : la mission est réservée (comptée active, aucune relance) jusqu’à reconcile."
+          "description": "Copie de l’état du registre cursor-agents. uncertain/pending : la mission est réservée (comptée active, aucune relance) jusqu’à reconcile ; ces deux valeurs n’existent que sur une mission active, jamais sur pending ni sur un statut libéré."
         },
         "prUrl": { "$ref": "#/$defs/url" },
         "headSha": { "$ref": "#/$defs/sha" },
@@ -209,6 +209,15 @@
         "note": { "type": "string", "maxLength": 300 }
       },
       "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "pending" } } },
+          "then": {
+            "properties": {
+              "launch": { "not": { "enum": ["pending", "uncertain"] } },
+              "runStatus": { "not": { "enum": ["CREATING", "RUNNING", "UNKNOWN"] } }
+            }
+          }
+        },
         { "if": { "properties": { "status": { "const": "active" } } }, "then": { "required": ["selection", "branch", "base", "agentId", "launch", "assignedAt"] } },
         {
           "if": { "properties": { "status": { "const": "delivered" } } },
