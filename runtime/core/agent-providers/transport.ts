@@ -59,7 +59,7 @@ function boundedInteger(value: unknown, bounds: { default: number; min: number; 
 
 // Chemins construits par les adaptateurs uniquement : absolus, sans requête, fragment ni segment relatif.
 export function assertPath(provider: AgentProviderId, path: string) {
-  if (typeof path !== 'string' || !/^\/(?:[A-Za-z0-9._~-]+|%[0-9A-Fa-f]{2})+(?:\/(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+)*$/.test(path) || path.includes('/../') || path.endsWith('/..')) {
+  if (typeof path !== 'string' || path.length > 2_048 || !/^(?:\/(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+)+$/.test(path) || path.split('/').some(segment => /^\.+$/.test(segment))) {
     throw new ProviderFailure({ provider, code: 'invalid_request', delivery: 'not_sent', reason: 'schema', field: 'path' });
   }
   return path;
