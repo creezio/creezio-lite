@@ -1,6 +1,19 @@
 # D01 — Réception : registre, opérations et portées du kit
 
-Branche `agents/D01-lite-domain-registry`, base `4c4229a` (contrats approuvés). Contrat de référence : [docs/contracts/domain-extension.md](../contracts/domain-extension.md). Aucun secret, aucun service payant, aucun merge ni déploiement.
+Branche `agents/D01-lite-domain-registry`, base `4c4229a` (contrats approuvés), `main` repris après la fusion de B00 (`2829502`, 0.9.1). Contrat de référence : [docs/contracts/domain-extension.md](../contracts/domain-extension.md) ; contrat complet accepté côté Certivan : `docs/contracts/m01-implementation.md` (dépôt Certivan, non présent ici). Aucun secret, aucun service payant, aucun merge ni déploiement, aucun bump de version par cette branche.
+
+## Reprise après revue indépendante (head relu `6c36bec`)
+
+Quatre défauts reproduits, corrigés et couverts par des tests qui échouaient avant correction.
+
+| # | Défaut | Correction | Preuve |
+|---|---|---|---|
+| 1 | `search.ts` appliquait `recordFilter` à l’index `files` et omettait `fileFilter` : avec `recordFilter=1=1`/`fileFilter=0=1`, `GET files` vide et metadata 404 mais `search?module=files` et `lite_files_list(query)` retournaient le fichier. | `searchScope` construit un prédicat unique sur `lite_search_documents d` : `(d.module_id='files' AND fileFilter) OR (d.module_id<>'files' AND recordFilter)`, évalué dans `matches` avant COUNT, pagination et extraits ; `org_id` et politiques de recherche inchangés. `lite_files_list(query)`, `lite_search` et WebMCP passent par la même sélection. | `domain-operations` « search applies fileFilter to the files index… » : fixture du relecteur puis grants (fichier visible en recherche exactement quand `GET files` le montre ; un grant record n’ouvre jamais le fichier) ; sans provider, index visible. |
+| 2 | `validateSchema` ignorait `pattern` : `idempotencyKey='invalid key avec espace'` ⇒ 200 et handler exécuté. | `pattern` honoré (compilation mise en cache, motif non compilable ⇒ valeur refusée, jamais ignorée). `idempotencyKey` réservé porte `^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$` (ASCII sans espace, exposé dans OpenAPI). `assertJsonSchema` refuse à la déclaration (`appOperations`, donc `defineExtensions`) : pattern non compilable, pattern hors chaîne, type inconnu, bornes incohérentes, `required` non déclaré sous `additionalProperties:false`, `enum` non scalaire. | `domain-operations` « declared patterns are enforced… » : cinq corps invalides HTTP, alias `Idempotency-Key` invalide, MCP `tools/call` et WebMCP ⇒ 400/`isError`, compteur du handler à 0 ; puis clé valide ⇒ 200 ; cinq schémas invalides refusés avec `OperationCatalogError.code='invalid_schema'`. |
+| 3 | `defineExtensions` acceptait une collision avec une opération native ; chaque requête échouait ensuite en 503. | `defineExtensions(app, ext, catalog?)` du cœur exécute `assertUniqueOperations` sur `catalog ?? coreOperations(app)` + opérations déclarées. `@lite/sites-adapter/catalog` exporte `defineExtensions(app, ext)` et `nativeCatalog(app)` : le catalogue partagé complet (cœur + montages nav, demo, tasks, support, routes kernel) construit avec un contexte de déclaration sans base. Erreur `OperationCatalogError` (`name`, `code` ∈ duplicate_operation/duplicate_route/duplicate_tool/invalid_schema, `operations:[existante, déclarée]`, message `Duplicate route: GET /api/v1/… (a, b)`), identique à la déclaration et à la construction du catalogue de requête (les opérations applicatives sont ajoutées en dernier dans `operationCatalog`). | `domain-registry` « collisions with native operations… » : six collisions (`tasks.get`, alias `/api/v1/tasks/:id`, `support.message`, alias `/api/v1/core`, ID `tasks.get`, outil `lite_tasks_list`) refusées à la construction avec le code et l’ordre attendus ; message stable sur deux constructions ; extension valide acceptée puis présente au catalogue de requête. |
+| 4 | `:id` et `:recordId` n’étaient pas reconnus en collision ; le handler applicatif était masqué par le natif. | `routeKey(method, path)` normalise tout paramètre en `:*` ; `assertUniqueOperations` compare ces formes. `matchOperation` réécrit : littéral > paramètre au premier segment différent, puis à égalité exacte de forme l’opération `source:'app'` précède la native — la priorité native ne vaut que lorsqu’aucune extension ne réclame la route. | Même test : `routeKey` égal pour `:id`/`:recordId`, `defineExtensions` du cœur et `operationCatalog` refusent `GET /records/:recordId` face à `module.dossiers.get` ; résolution littéral/paramètre et égalité testées sur `matchOperation` ; lecture déclarée `modules/dossiers/latest` servie de bout en bout par le dispatcher pendant que `records/:id` reste natif. |
+
+Fusion de `main` : conflit limité à `dispatch.ts` (ligne de résolution du credential et appels `operationCatalog`). Résolution : trace B00 (`trace.credential`, `newRequestTrace`, `REQUEST_ID_HEADER`, sous-appels) conservée à l’identique ; D01 n’ajoute que `credentialKind`, `options.operations` dans les trois catalogues et le bloc `op.source==='app'`. `observability.ts` : un seul jeton ajouté, `'command_required'` dans `RUNTIME_ERROR_CODES`, parce que la liste fermée introduite par B00 refuse tout code levé hors liste et que ce code 405 est fixé par le contrat approuvé (§ Défense en profondeur). Aucune autre ligne de B00 touchée.
 
 ## Livré
 
@@ -33,7 +46,7 @@ Branche `agents/D01-lite-domain-registry`, base `4c4229a` (contrats approuvés).
 
 ### Exports étendus (justification)
 
-`runtime/core/index.ts` exporte désormais `command`, `read`, `defineExtensions`, `openScope` et les types du contrat (`Principal`, `ScopeProvider`, `AppOperationDefinition`, `AppExtensions`, …). Le dispatcher les importe via `@lite/core`, et l’application consommatrice n’a pas d’autre point d’entrée public. Aucun autre export existant n’a changé de signature ; `handleApi` et `dispatchRequest` acceptent `AppExtensions`, sur-ensemble compatible de `{beforeWrite}`.
+`runtime/core/index.ts` exporte désormais `command`, `read`, `defineExtensions`, `openScope` et les types du contrat (`Principal`, `ScopeProvider`, `AppOperationDefinition`, `AppExtensions`, …). Le dispatcher les importe via `@lite/core`, et l’application consommatrice n’a pas d’autre point d’entrée public. `runtime/core/operations.ts` exporte en plus `OperationCatalogError`, `routeKey`, `assertJsonSchema` et `schemaPattern` ; `@lite/sites-adapter/catalog` exporte `defineExtensions` et `nativeCatalog` (revue, défaut 3). Aucun autre export existant n’a changé de signature ; `handleApi` et `dispatchRequest` acceptent `AppExtensions`, sur-ensemble compatible de `{beforeWrite}` ; `defineExtensions` du cœur accepte un troisième argument facultatif.
 
 ## Contrôles réellement exécutés
 
@@ -41,8 +54,8 @@ Environnement : Node 24.21.0 (installé via nvm, le VM fournissait 22.14), pnpm 
 
 | Contrôle | Résultat |
 |---|---|
-| `npm test` (synchronise le template puis 23 fichiers) | 63 tests, 0 échec (51 existants + 12 nouveaux) |
-| `npm run check` | `ok:true`, version 0.9.0, 2 exemples |
+| `npm test` (synchronise le template puis 24 fichiers, B00 inclus) | 75 tests, 0 échec (60 existants dont 9 B00 + 15 D01) — relancé après reprise et après fusion de `main` |
+| `npm run check` | `ok:true`, version 0.9.1 (héritée de `main`), 2 exemples |
 | `pnpm typecheck` dans `template/` | exit 0 |
 | `pnpm build` dans `template/` | exit 0 (vinext) |
 | `node scripts/validate-examples.mjs` | `Atelier` et `Réserve` : install, typecheck, build validés |
@@ -61,6 +74,9 @@ Tests indispensables du brief et fichier qui les couvre :
 - fichiers download et delete ; `deleteFile` traite toute suppression sans fallback R2 (aucun `bucket.delete`, aucun audit natif, téléchargement refusé sur tombstone, 409 classé par le provider) — `domain-operations`
 - owner/admin/member/viewer et espaces croisés — `domain-registry`, `domain-operations`
 - module absent / parentField absent / cycle / 65 modules invalides — `domain-registry`
+- (revue) `fileFilter` sur l’index files pour HTTP search, `lite_search`, `lite_files_list(query)`, WebMCP — `domain-operations`
+- (revue) `pattern` appliqué sur chaque entrée, schémas invalides refusés à la déclaration, handler jamais exécuté — `domain-operations`
+- (revue) collisions natives et `:id`/`:recordId` refusées à la construction, diagnostics stables, résolution littéral/paramètre/extension — `domain-registry`
 
 ## Limites et raccordement
 
@@ -70,17 +86,20 @@ Tests indispensables du brief et fichier qui les couvre :
 - `wrangler d1 migrations apply --local` échoue sur `0003_search_index.sql` (« incomplete input ») indépendamment de D01 ; les migrations ont été appliquées via Miniflare avec le découpage `--> statement-breakpoint` déjà utilisé par `tests/miniflare.test.mjs`. À signaler séparément.
 - Les politiques `module:<id>` sont honorées par `operationAllowed` mais l’API `access/policies` n’accepte que des identifiants d’opération existants ; le test insère la ligne directement. Comportement existant, hors périmètre.
 - `docs/MODULES.md` mentionne encore « 32 modules » et les CRUD systématiques ; non modifié (doc globale hors fichiers attribués). À aligner lors de l’intégration.
-- Version du kit, CHANGELOG, package/lockfile, migrations et fichiers `agent-providers`/`observability.ts` non touchés. `dispatch.ts` a été modifié sans toucher aux lignes de traces ni aux corps de requêtes du correctif B00 ; `origin/main` était à `a9e9413` au moment de la livraison, sans fusion de PR14.
+- Version du kit, CHANGELOG, package/lockfile, migrations et fichiers `agent-providers` non touchés par cette branche (la 0.9.1 et le CHANGELOG viennent de `main`). `observability.ts` : uniquement le jeton `'command_required'` dans la liste fermée B00, motivé ci-dessus.
+- Le motif ASCII de `idempotencyKey` (`^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$`) est la contrainte du kit ; le contrat M01 §6 n’est pas lisible depuis ce dépôt. S’il exige un alphabet plus strict, le resserrer est additif (constante `idempotencyKeyPattern` de `commands.ts`).
+- Les patterns déclarés sont compilés en ECMAScript (`u`) ; un motif valide en JSON Schema mais non compilable ici est refusé à la déclaration plutôt qu’ignoré.
 
 ### Imports à raccorder dans Certivan
 
 ```ts
-import { command, read, defineExtensions, type AppExtensions, type ScopeProvider, type AppOperationContext } from '@lite/core';
+import { command, read, type AppExtensions, type ScopeProvider, type AppOperationContext } from '@lite/core';
 import { operation, objectSchema } from '@lite/core/operations';        // descripteur système jobs.*, schémas
+import { defineExtensions } from '@lite/sites-adapter/catalog';          // catalogue partagé : cœur + montages natifs
 import { dispatchRequest } from '@lite/sites-adapter/dispatch';
 ```
 
-- Déclarer `const extensions = defineExtensions(appDefinition, { beforeWrite, scope: certivanScope, operations: [...] })` puis passer `extensions` en troisième argument de `dispatchRequest` dans `app/api/v1/[...path]/route.ts`, `app/api/mcp/route.ts` et `worker.ts` (à la place de `{beforeWrite}`).
+- Déclarer `const extensions = defineExtensions(appDefinition, { beforeWrite, scope: certivanScope, operations: [...] })` **avec le `defineExtensions` de `@lite/sites-adapter/catalog`** (celui de `@lite/core` ne connaît que le catalogue cœur), au chargement du module, puis passer `extensions` en troisième argument de `dispatchRequest` dans `app/api/v1/[...path]/route.ts`, `app/api/mcp/route.ts` et `worker.ts` (à la place de `{beforeWrite}`). Une collision ou un schéma invalide lève `OperationCatalogError` au démarrage, jamais un 503 par requête.
 - `certivanScope: ScopeProvider` implémente `recordFilter`/`fileFilter` sur `cv_record_scopes`/`cv_*` (alias et colonnes fournis par le kit : `r.id`/`r.module_id`, `d.record_id`/`d.module_id`, `f.id`) et `deleteFile` selon §4.3.
 - Commandes : `command({ moduleId, name, fields, required, expectedVersion, idempotencyKey, reason, handle })` ; history : `read({ moduleId, name:'history', querySchema, handle })` ; jobs : `{ operation: operation({ kind:'system', moduleId:'certivan-jobs', ... }), handle }`.
 - Dans `brand.json`, déclarer `kind:'entity'` / `kind:'collection'` avec `parent` et `parentField` réels ; Clients reste sans `kind`.
