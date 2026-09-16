@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import {app,alice,bob,eve,client,boot,localDb} from './helpers.mjs';
 const {dispatchRequest}=await import('../runtime/modules/sites-adapter/src/dispatch.ts');
 const {operationCatalog}=await import('../runtime/modules/sites-adapter/src/catalog.ts');
-const {projectRequestLog,buildDiagnostic,errorCode,jsonrpcLabel,newRequestTrace,CAPACITY,RETENTION_DAYS,UNKNOWN_ROUTE,UNKNOWN_TOOL,REQUEST_ID_HEADER}=await import('../runtime/core/observability.ts');
+const {projectRequestLog,buildDiagnostic,errorCode,jsonrpcLabel,newRequestTrace,persistRequestLog,CAPACITY,RETENTION_DAYS,UNKNOWN_ROUTE,UNKNOWN_TOOL,REQUEST_ID_HEADER,KNOWN_ERROR_CODES,GENERIC_ERROR_CODE}=await import('../runtime/core/observability.ts');
+import {readdir,readFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {root} from './helpers.mjs';
 
 // Fictitious personal markers: none of them may appear in a stored row or in the admin listing.
 const markers={name:'ZZMARK Jean Dupont',email:'zzmark.jean.dupont@example.test',phone:'ZZMARK+33600000000',note:'ZZMARK note confidentielle',query:'ZZMARK recherche libre',token:'ZZMARK_TOKEN_'+'b'.repeat(40),cookie:'zzmark_cookie=ZZMARK_COOKIE_VALUE',tool:'lite_zzmark_jean_dupont',method:'ZZMARK/method',segment:'zzmark-jean-dupont@example.test'};
@@ -153,9 +156,92 @@ test('rows written before the minimisation never expose their stored payloads th
   }finally{db.close();}
 });
 
+// Values that look like identifiers but are personal data: a phone number, a name, a token. None of them is a runtime code.
+const forbiddenCodes=['0612345678','AliceDupont','PrivateToken_Abc123'];
+const validCodes=['record_not_found','operation_forbidden','permission_denied','not_found','tool_error','-32602','http_405'];
+
+test('error codes are taken from the closed runtime list when a row is written; anything else becomes the generic code',async()=>{
+  const {db,org}=await setup();try{
+    for(const code of forbiddenCodes)assert.equal(errorCode(code),GENERIC_ERROR_CODE,code);
+    for(const code of validCodes)assert.equal(errorCode(code),code,code);
+    assert.equal(errorCode(-32602),'-32602');assert.equal(errorCode(-1),GENERIC_ERROR_CODE);assert.equal(errorCode('http_999'),GENERIC_ERROR_CODE);assert.equal(errorCode('Error'),GENERIC_ERROR_CODE);assert.equal(errorCode(''),GENERIC_ERROR_CODE);assert.equal(errorCode(undefined),GENERIC_ERROR_CODE);
+    const operations=operationCatalog({db,user:alice,workspace:{id:org,name:'',role:'owner'}},app),c={app,env:{DB:db},identity:alice,operations},workspace={id:org,name:'',role:'owner'};
+    const write=async(source,response,jsonrpcMethod)=>{const trace={...newRequestTrace(),operation:source==='api'?'tasks.list':undefined,...(jsonrpcMethod?{jsonrpcMethod}:{})};
+      await persistRequestLog(new Request(source==='mcp'?'https://test.example/api/mcp':'https://test.example/api/v1/tasks',{method:'POST'}),response,c,workspace,source,performance.now(),trace);return JSON.parse(rows(db).at(-1).detail_json);};
+    // The three response shapes the runtime produces, each carrying a forbidden value where a code is expected.
+    const shapes=[
+      code=>['api',Response.json({error:{code,message:'Refusé.'}},{status:400})],
+      code=>['api',Response.json({ok:false,error:'Refusé.',code},{status:403})],
+      code=>['api',Response.json({ok:false,error:code},{status:404})],
+      code=>['mcp',Response.json({jsonrpc:'2.0',id:1,error:{code,message:'Refusé.'}}),'tools/call'],
+    ];
+    for(const code of forbiddenCodes)for(const shape of shapes){const detail=await write(...shape(code));assert.equal(detail.ok,false);assert.equal(detail.error,GENERIC_ERROR_CODE,code);}
+    for(const code of forbiddenCodes)assert.equal(stored(db).includes(code),false,`${code} persisted`);
+    assert.equal((await write('api',Response.json({error:{code:'record_not_found',message:'Introuvable.'}},{status:404}))).error,'record_not_found');
+    assert.equal((await write('api',Response.json({ok:false,error:'Refusé.',code:'permission_denied'},{status:403}))).error,'permission_denied');
+    assert.equal((await write('api',Response.json({ok:false,error:'not_found'},{status:404}))).error,'not_found');
+    assert.equal((await write('mcp',Response.json({jsonrpc:'2.0',id:1,error:{code:-32602,message:'Outil inconnu.'}}),'tools/call')).error,'-32602');
+    assert.equal((await write('mcp',Response.json({jsonrpc:'2.0',id:1,result:{isError:true,content:[{type:'text',text:markers.name}]}}),'tools/call')).error,'tool_error');
+    assert.equal((await write('mcp',new Response(null,{status:405,headers:{Allow:'POST'}}))).error,'http_405');
+    assert.equal((await write('api',new Response(markers.name,{status:500,headers:{'content-type':'text/plain'}}))).error,'http_500');
+    assert.equal((await write('api',Response.json({error:{code:'record_not_found'}},{status:404}))).ok,false);
+    const listing=await caller(db,alice,org)('admin/request-logs?errorsOnly=1');assert.equal(listing.status,200);assert.equal(listing.body.total,rows(db).length);
+    for(const code of forbiddenCodes)assert.equal(listing.text.includes(code),false,code);
+    assertNoMarkers(listing.text,'admin/request-logs');
+    assert.deepEqual([...new Set(listing.body.logs.map(l=>l.detail.error))].sort(),[...new Set(['error','record_not_found','permission_denied','not_found','-32602','tool_error','http_405','http_500'])].sort());
+  }finally{db.close();}
+});
+
+test('error codes stored by earlier versions or forged rows are projected through the same closed list',async()=>{
+  const {db,org,a}=await setup();try{
+    const insert=db.raw.prepare('INSERT INTO lite_request_logs(id,org_id,user_id,source,method,path,status,duration_ms,detail_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)');
+    let n=0;const now=()=>new Date(Date.now()+ ++n).toISOString();
+    forbiddenCodes.forEach((code,i)=>{
+      insert.run(`legacy-${i}`,org,alice.userId,'api','POST','/api/v1/tasks',400,5,JSON.stringify({body:{title:code},ok:false,error:code,userId:alice.userId}),now());
+      insert.run(`current-${i}`,org,alice.userId,'api','POST','/api/v1/tasks',400,5,JSON.stringify({ok:false,error:code,operation:'tasks.create',correlationId:crypto.randomUUID(),credential:'session'}),now());
+    });
+    insert.run('legacy-valid',org,alice.userId,'api','GET','/api/v1/tasks/abc',404,5,JSON.stringify({query:{},ok:false,error:'not_found',userId:alice.userId}),now());
+    insert.run('legacy-rpc',org,alice.userId,'mcp','POST','/api/mcp',200,5,JSON.stringify({jsonrpcMethod:'tools/call',tool:'lite_tasks_get',args:{recordId:'x'},ok:false,error:'-32601'}),now());
+    insert.run('current-valid',org,alice.userId,'api','POST','/api/v1/tasks',403,5,JSON.stringify({ok:false,error:'operation_forbidden',operation:'tasks.create',correlationId:crypto.randomUUID(),credential:'api_key'}),now());
+    insert.run('current-forged',org,alice.userId,'api','POST','/api/v1/'+forbiddenCodes[1],400,5,JSON.stringify({ok:false,error:forbiddenCodes[0],operation:forbiddenCodes[0],tool:forbiddenCodes[1],jsonrpcMethod:forbiddenCodes[2],calls:[{operation:forbiddenCodes[2],status:400}],correlationId:crypto.randomUUID(),credential:'session'}),now());
+    const catalog=operationCatalog({db,user:alice,workspace:{id:org,name:'',role:'owner'}},app);
+    for(const row of db.raw.prepare('SELECT id,created_at AS ts,source,method,path,status,duration_ms AS durationMs,detail_json FROM lite_request_logs').all()){
+      const projected=projectRequestLog(row,catalog);
+      if(row.id.startsWith('legacy-')||row.id.startsWith('current-'))for(const code of forbiddenCodes)assert.equal(JSON.stringify(projected).includes(code),false,`${row.id} exposes ${code}`);
+      if(/^(?:legacy|current)-\d$/.test(row.id))assert.equal(projected.detail.error,GENERIC_ERROR_CODE,row.id);
+    }
+    const listing=await a('admin/request-logs');assert.equal(listing.status,200);assert.equal(listing.body.total,10);
+    for(const code of forbiddenCodes)assert.equal(listing.text.includes(code),false,code);
+    const forged=listing.body.logs.find(l=>l.id==='current-forged');assert.equal(forged.path,UNKNOWN_ROUTE);assert.deepEqual(Object.keys(forged.detail).sort(),['correlationId','credential','error','jsonrpcMethod','ok']);assert.equal(forged.detail.error,GENERIC_ERROR_CODE);assert.equal(forged.detail.jsonrpcMethod,'unknown');
+    const byId=Object.fromEntries(listing.body.logs.map(l=>[l.id,l]));
+    forbiddenCodes.forEach((_,i)=>{assert.deepEqual(byId[`legacy-${i}`].detail,{ok:false,error:GENERIC_ERROR_CODE,legacy:true});assert.equal(byId[`current-${i}`].detail.error,GENERIC_ERROR_CODE);assert.equal(byId[`current-${i}`].detail.operation,'tasks.create');});
+    assert.deepEqual(byId['legacy-valid'].detail,{ok:false,error:'not_found',legacy:true});assert.equal(byId['legacy-valid'].path,'/api/v1/modules/tasks/:id');
+    assert.deepEqual(byId['legacy-rpc'].detail,{ok:false,error:'-32601',jsonrpcMethod:'tools/call',legacy:true});
+    assert.equal(byId['current-valid'].detail.error,'operation_forbidden');assert.equal(byId['current-valid'].detail.credential,'api_key');
+    for(const code of [...forbiddenCodes,'alicedupont','0612']){const search=await a('admin/request-logs?q='+encodeURIComponent(code));assert.equal(search.status,200);assert.equal(search.body.total,0,code);}
+    assert.equal((await a('admin/request-logs?q=operation_forbidden')).body.total,1);assert.equal((await a('admin/request-logs?q=tasks.create')).body.total,4);assert.equal((await a(`admin/request-logs?q=${GENERIC_ERROR_CODE}`)).body.total,4);
+    assert.equal((await a('admin/request-logs?q=tasks.create&limit=2&offset=3')).body.logs.length,1);
+  }finally{db.close();}
+});
+
+test('every error code raised by the runtime sources belongs to the closed list',async()=>{
+  const files=[];async function walk(dir){for(const entry of await readdir(dir,{withFileTypes:true})){if(['node_modules','dist'].includes(entry.name))continue;const path=join(dir,entry.name);if(entry.isDirectory())await walk(path);else if(/\.(?:ts|tsx|mjs)$/.test(entry.name))files.push(path);}}
+  await walk(join(root,'runtime'));
+  const found=new Map();
+  for(const file of files){const source=await readFile(file,'utf8');
+    for(const match of source.matchAll(/(?:\bfail|new ApiError)\(\s*[^,'()]+,\s*(?:[^,'()]{0,40}\?\s*)?'([a-z][a-z0-9_]*)'/g))found.set(match[1],file);
+    if(/\/runtime\/modules\/[^/]+\/src\//.test(file))for(const match of source.matchAll(/\bok:\s*false,\s*error:\s*["']([a-z][a-z0-9_]*)["']/g))found.set(match[1],file);
+  }
+  assert.ok(found.size>150,`only ${found.size} codes found`);
+  const missing=[...found].filter(([code])=>!KNOWN_ERROR_CODES.has(code));
+  assert.deepEqual(missing,[],'codes raised by the runtime but absent from KNOWN_ERROR_CODES');
+  for(const code of forbiddenCodes)assert.equal(KNOWN_ERROR_CODES.has(code),false);
+  assert.equal(KNOWN_ERROR_CODES.has(GENERIC_ERROR_CODE),true);assert.equal(KNOWN_ERROR_CODES.has('http_99'),false);assert.equal(KNOWN_ERROR_CODES.has('http_600'),false);
+});
+
 test('diagnostic builder and projection collapse anything outside the closed vocabulary',()=>{
   const catalog=operationCatalog({db:null,user:alice,workspace:{id:'w',name:'',role:'owner'}},app);
-  assert.equal(errorCode('not_found'),'not_found');assert.equal(errorCode(-32601),'-32601');assert.equal(errorCode(markers.name),'error');assert.equal(errorCode('x'.repeat(65)),'error');assert.equal(errorCode({code:'a'}),'error');
+  assert.equal(errorCode('not_found'),'not_found');assert.equal(errorCode(-32601),'-32601');assert.equal(errorCode(markers.name),'error');assert.equal(errorCode('x'.repeat(65)),'error');assert.equal(errorCode({code:'a'}),'error');assert.equal(errorCode('looks_like_a_code'),'error');
   assert.equal(jsonrpcLabel('tools/call'),'tools/call');assert.equal(jsonrpcLabel(markers.method),'unknown');assert.equal(jsonrpcLabel(undefined),'unknown');
   const trace={...newRequestTrace('oauth'),operation:'module.clients.create',tool:markers.tool,jsonrpcMethod:markers.method,calls:[{operation:'tasks.list',status:200},{operation:markers.name,status:200},{operation:'tasks.create',status:'201'}]};
   const diagnostic=buildDiagnostic(catalog,trace,false,markers.email);
