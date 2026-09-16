@@ -25,6 +25,10 @@ Cette commande ajoute la déclaration à `brand.json`. La prochaine compilation 
 
 Lire [docs/UPDATES.md](docs/UPDATES.md). Ne jamais réinitialiser une application ni écraser ses migrations, son brief ou son identité Sites. Le numéro de version et les empreintes du runtime sont dans `lite.lock.json`.
 
+## Orchestrer le développement
+
+Le générateur installe dans chaque application la compétence `.cursor/skills/lite-orchestration/` (source canonique du kit) et la règle `.cursor/rules/lite-orchestration.mdc` : Astra orchestre et décide, Cursor réalise avec une sélection de modèle choisie une fois à l’attribution (Fable 5.1 par défaut) et vérifiée par préflight. Pour une application existante, depuis le checkout du kit : `node bin/lite.mjs adopt --app /chemin/application` (inspection), puis `--apply` ; un conflit local ou un lien symbolique sur un chemin géré est refusé et signalé, les règles métier et `AGENTS.md` ne sont pas modifiés.
+
 ## Abonner l’application aux correctifs
 
 Publier son code dans son propre dépôt GitHub et activer Actions et Issues. Le template embarque la veille `.github/workflows/lite-update.yml` et son script : les nouvelles releases du kit créent une demande de mise à jour dans le dépôt applicatif. Le pilote traite cette demande par une branche testée, puis vérifie le Site existant. Lire [la procédure de maintenance](docs/MAINTENANCE.md).

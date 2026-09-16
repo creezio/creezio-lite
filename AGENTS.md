@@ -17,6 +17,7 @@ Lite est un socle autonome. Le code exécutable est dans `runtime/` ; `template/
 
 ## Missions déléguées et passage de relais
 
+- Le standard d’orchestration (Astra orchestre et décide ; Cursor réalise, Fable 5.1 par défaut ; sélection du modèle choisie une fois à l’attribution et vérifiée par préflight ; brief, checkpoints et réception compacts ; déduplication des missions) a une seule source : `.cursor/skills/lite-orchestration/SKILL.md` et son `CONTRACT.md`. Le générateur l’installe dans chaque application ; `node bin/lite.mjs adopt --app <dossier>` l’ajoute à une application existante sans toucher ses règles. Ne pas le recopier dans d’autres documents.
 - Un agent délégué livre sa branche et sa PR ; il ne fusionne pas, ne publie pas et ne lance pas un autre agent ou un lot suivant sans attribution. Respecter le brief et ses propriétaires de fichiers ; les versions et raccordements partagés sont pilotés par l’orchestrateur.
 - Terminer chaque lot avec mission, agent/run si connus, PR/SHA, tests exécutés et résultat, limites et prochaine action concrète avec responsable. Une fin de run ne prouve pas l’intégration ni le déploiement.
 - Le responsable commun de Creezio Lite possède les fusions et publications du kit. Les orchestrateurs applicatifs proposent leurs correctifs par PR et restent responsables de leurs propres mises à jour ; ils ne pilotent plus les fusions du kit. Suivre `docs/MAINTENANCE.md`, reprendre les agents existants et posséder le verrou du dépôt avant mutation.

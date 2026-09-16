@@ -1,5 +1,12 @@
 # Versions de Lite
 
+## 0.12.0 — Standard d’orchestration Astra ⇄ Cursor
+
+- Source canonique `.cursor/skills/lite-orchestration/` : compétence à chargement progressif, contrat compact (rôles, sélection, brief, checkpoints, réception, revue), sélections autorisées `cursor-model.json` (`fable` = `claude-fable-5-1` par défaut, `opus` = `claude-opus-5`, `grok` = `grok-4.6`, chacune avec sa combinaison complète relevée dans le catalogue, `fast`/`cyber` à `false` ; aucun repli).
+- `scripts/cursor-agents.mjs` : préflight du catalogue daté (identifiant exact, combinaison strictement égale à une variante ; aucune complétion ni repli), sélection choisie une fois au lancement et conservée dans le registre, lancement dédupliqué par identifiant d’agent déterministe, réconciliation des 409 et des appels incertains, checkpoints à polling progressif rappelant la sélection sans journaux complets, reprise du même agent après terminal sans champ `model`, reçu `requested/catalog/createAccepted/runAccepted/modelObserved`. Clé uniquement en environnement ; sorties sans secret.
+- Générateur : installation automatique dans les nouvelles applications ; `lite adopt --app [--apply]` pour les applications existantes, avec manifeste, idempotence, refus explicite des conflits locaux et des liens symboliques sur les chemins gérés (contrôle `lstat` avant toute écriture) ; information `orchestration` dans le doctor.
+- Documents et règles renvoient à la source unique. Aucun changement du runtime, des migrations, des secrets ni des providers IA métier ; versions API/MCP alignées.
+
 ## 0.11.0 — Registre de domaine et opérations applicatives
 
 - Ajoute les modules entity/collection, commandes et lectures déclarées, avec un catalogue commun HTTP/MCP/WebMCP et assistant.

@@ -1,0 +1,6 @@
+---
+description: Standard d’orchestration Creezio Lite — Astra orchestre, Cursor réalise (Fable 5.1 par défaut)
+alwaysApply: true
+---
+
+Lire `AGENTS.md` de cette application, puis le brief de la mission. Le standard d’orchestration (rôles, sélection du modèle choisie une fois à l’attribution, brief, checkpoints, réception, déduplication) est la compétence `.cursor/skills/lite-orchestration/SKILL.md` ; son contrat complet est `CONTRACT.md` dans le même dossier. Ces copies sont gérées par le kit (`manifest.json`) : ne pas les modifier ici, corriger le kit puis `lite adopt`. Un agent de réalisation reste sur ses fichiers attribués, livre sa branche et sa PR avec la réception compacte du contrat (head, agent/run, sélection, tests réels, CI, risques, prochaine action) ; il ne fusionne pas, ne publie pas, ne déploie pas et ne lance aucun autre agent.
