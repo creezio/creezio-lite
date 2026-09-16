@@ -23,7 +23,7 @@ Choisie **une fois** à l’attribution parmi `cursor-model.json`, puis conserv�
 2. **Brief** compact (§3 du contrat) : mission, base SHA, branche réservée, sélection, périmètre et fichiers attribués, tests attendus, interdits, prochaine action.
 3. **Lancement dédupliqué** : `cursor-agents.mjs launch --select clé` avec la clé de mission et le registre privé hors dépôt. Identifiant d’agent déterministe ; 409 ou appel incertain ⇒ réconciliation, jamais de second agent.
 4. **Checkpoints** : `cursor-agents.mjs status --mission K --follow` ; polling progressif, résumé au changement, sélection initiale rappelée, aucun journal complet.
-5. **Reprise** : `cursor-agents.mjs followup --mission K` sur le même agent, seulement après un run terminal ; aucun champ `model` envoyé.
+5. **Reprise** : `cursor-agents.mjs followup --mission K --registry f` sur le même agent : lecture de l’agent réel et de son dernier run, terminal exigé, un seul POST sans champ `model`, tentative persistée. Livraison inconnue ⇒ `reconcile --mission K` avant toute réémission (il distingue run d’avant tentative et nouveau run accepté). `followup --agent` sans registre : garde minimale, aucune idempotence.
 6. **Réception** compacte (§6 du contrat) écrite par l’agent dans la PR, puis **revue et décision** : revue Cursor indépendante proportionnée au risque, Astra tranche. Une CI verte seule ne suffit pas.
 
 ## Ressources

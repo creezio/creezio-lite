@@ -216,24 +216,43 @@ export async function launch({ mission, repo, ref, prUrl, promptText, name, auto
   await saveRegistry(registryFile, registry);
   return { command: 'launch', status: reconciled.state === 'reconciled' ? 'existing' : reconciled.state === 'not_created' ? 'unavailable' : 'uncertain', mission, agentId, reason: result.reason, ...reconciled, ...(reconciled.state === 'uncertain' ? { nextAction: 'reconcile' } : {}) };
 }
-async function reconcileEntry({ entry, key, fetchImpl, timeoutMs, now, unavailableState = 'uncertain', unavailableReason }) {
-  const result = await call({ path: `/v1/agents/${encodeURIComponent(entry.agentId)}`, key, fetchImpl, timeoutMs });
-  if (result.outcome === 'ok') {
-    const agent = agentSummary(result.data);
-    if (agent && agent.agentId === entry.agentId) { Object.assign(entry, { state: 'reconciled', updatedAt: now(), ...(agent.latestRunId ? { runId: agent.latestRunId } : {}), ...(agent.url ? { url: agent.url } : {}) }); return { state: 'reconciled', agent }; }
-    Object.assign(entry, { state: 'uncertain', reason: 'identity_mismatch', updatedAt: now() }); return { state: 'uncertain', reason: 'identity_mismatch' };
+async function readAgent({ agentId, key, fetchImpl, timeoutMs }) {
+  const result = await call({ path: `/v1/agents/${encodeURIComponent(agentId)}`, key, fetchImpl, timeoutMs });
+  if (result.outcome !== 'ok') return { failure: { status: result.outcome === 'rejected' ? 'blocked' : 'unavailable', reason: result.reason ?? result.outcome, ...(result.status ? { httpStatus: result.status } : {}), ...(result.providerCode ? { providerCode: result.providerCode } : {}) }, httpStatus: result.status };
+  const agent = agentSummary(result.data);
+  if (!agent || agent.agentId !== agentId) return { failure: { status: 'unavailable', reason: 'invalid_response' }, httpStatus: result.status };
+  return { agent };
+}
+const openFollowup = entry => entry?.followup && ['pending', 'uncertain'].includes(entry.followup.state) ? entry.followup : null;
+// Reprise en attente : l'agent tranche. latestRunId différent du run d'avant tentative ⇒ le POST de suite a été accepté (même si ce run est déjà terminé) ;
+// identique ⇒ rien n'a été créé, une réémission redevient possible. Aucun POST ici.
+function settleFollowup(entry, agent, now) {
+  const pending = openFollowup(entry);
+  if (!pending) return null;
+  if (!agent.latestRunId) { Object.assign(pending, { state: 'uncertain', reason: 'latest_run_unknown', updatedAt: now() }); return { state: 'uncertain', priorRunId: pending.priorRunId, reason: 'latest_run_unknown' }; }
+  if (agent.latestRunId !== pending.priorRunId) {
+    Object.assign(pending, { state: 'accepted', runId: agent.latestRunId, settledAt: now() }); delete pending.reason;
+    Object.assign(entry, { runId: agent.latestRunId, followups: (entry.followups ?? 0) + 1 });
+    return { state: 'accepted', priorRunId: pending.priorRunId, runId: agent.latestRunId };
   }
-  if (result.outcome === 'rejected' && result.status === 404) { Object.assign(entry, { state: 'not_created', updatedAt: now() }); return { state: 'not_created' }; }
-  Object.assign(entry, { state: unavailableState, reason: unavailableReason ?? result.reason ?? result.outcome, updatedAt: now() });
+  Object.assign(pending, { state: 'not_created', settledAt: now() }); delete pending.reason;
+  return { state: 'not_created', priorRunId: pending.priorRunId };
+}
+async function reconcileEntry({ entry, key, fetchImpl, timeoutMs, now, unavailableState = 'uncertain', unavailableReason }) {
+  const { agent, failure, httpStatus } = await readAgent({ agentId: entry.agentId, key, fetchImpl, timeoutMs });
+  if (agent) { Object.assign(entry, { state: 'reconciled', updatedAt: now(), ...(agent.latestRunId ? { runId: agent.latestRunId } : {}), ...(agent.url ? { url: agent.url } : {}) }); const followup = settleFollowup(entry, agent, now); return { state: 'reconciled', agent, ...(followup ? { followup } : {}) }; }
+  if (failure.reason === 'invalid_response' && httpStatus === 200) { Object.assign(entry, { state: 'uncertain', reason: 'identity_mismatch', updatedAt: now() }); return { state: 'uncertain', reason: 'identity_mismatch' }; }
+  // 404 ne vaut « jamais créé » que pour un lancement dont aucun run n'a été confirmé ; un agent connu puis introuvable reste incertain, jamais une permission de recréer.
+  if (httpStatus === 404 && !entry.runId && !entry.followup) { Object.assign(entry, { state: 'not_created', updatedAt: now() }); return { state: 'not_created' }; }
+  Object.assign(entry, { state: unavailableState, reason: httpStatus === 404 ? 'agent_not_found' : unavailableReason ?? failure.reason, updatedAt: now() });
   return { state: unavailableState, reason: entry.reason };
 }
 export async function reconcile({ mission, key, registryFile, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
-  const registry = await loadRegistry(registryFile);
-  const entry = registry.missions[mission];
-  if (!entry) throw new UsageError('Mission inconnue du registre.');
+  const { registry, entry } = await missionEntry({ mission, registryFile });
   const reconciled = await reconcileEntry({ entry, key, fetchImpl, timeoutMs, now });
   await saveRegistry(registryFile, registry);
-  return { command: 'reconcile', mission, agentId: entry.agentId, status: reconciled.state, ...(reconciled.agent ? { agent: reconciled.agent } : {}), ...(reconciled.reason ? { reason: reconciled.reason } : {}), ...(reconciled.state === 'not_created' ? { nextAction: 'launch autorisé sur la même clé' } : {}) };
+  const nextAction = reconciled.state === 'not_created' ? 'launch autorisé sur la même clé' : reconciled.followup?.state === 'accepted' ? 'status --mission sur le nouveau run ; aucune réémission' : reconciled.followup?.state === 'not_created' ? 'followup --mission autorisé (aucun run accepté depuis priorRunId)' : reconciled.state === 'uncertain' ? 'reconcile à nouveau ; aucune création ni réémission' : undefined;
+  return { command: 'reconcile', mission, agentId: entry.agentId, status: reconciled.state, ...(reconciled.agent ? { agent: reconciled.agent } : {}), ...(reconciled.reason ? { reason: reconciled.reason } : {}), ...(reconciled.followup ? { followup: reconciled.followup } : {}), ...(nextAction ? { nextAction } : {}) };
 }
 
 // Checkpoint : une lecture du run, diff par rapport au dernier état enregistré, résultat tronqué.
@@ -275,8 +294,9 @@ export async function status({ agentId, runId, mission, registryFile, stateFile,
   return { command: 'status', status: 'ok', changed: changes.length > 0, changes, terminal: terminalRunStatuses.has(run.status), run, ...(selection ? { selection: selectionReceipt(selection, { createAccepted: true }) } : {}) };
 }
 
-// Reprise du même agent (docs/MAINTENANCE.md : pas de doublon), seulement après un run terminal. Le POST run ne porte aucun champ model :
-// la sélection initiale s'applique telle quelle et n'est ni renvoyée ni réputée changée.
+// Reprise du même agent (docs/MAINTENANCE.md : pas de doublon). Toujours : lire l'agent réel et son latestRunId, lire ce run, exiger un état terminal,
+// puis un seul POST sans champ model (la sélection initiale s'applique telle quelle). Avec --mission, la tentative est persistée avant l'envoi et
+// une livraison inconnue impose reconcile avant toute réémission. Sans registre (--agent), garde minimale seulement : aucune idempotence.
 export async function followup({ agentId, mission, registryFile, promptText, key, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
   let registry, entry;
   if (mission !== undefined) {
@@ -287,24 +307,46 @@ export async function followup({ agentId, mission, registryFile, promptText, key
   }
   assertAgentId(agentId);
   if (typeof promptText !== 'string' || !promptText.trim() || promptText.length > 200_000) throw new UsageError('Brief de reprise vide ou trop long.');
-  const receipt = entry?.selection ? { selection: selectionReceipt(entry.selection, { createAccepted: true }), modelSent: false } : { modelSent: false };
-  if (entry?.runId) {
-    const { run, failure } = await readRun({ agentId, runId: entry.runId, key, fetchImpl, timeoutMs });
-    if (failure) return { command: 'followup', ...failure, agentId, runId: entry.runId, ...receipt };
-    if (!terminalRunStatuses.has(run.status)) return { command: 'followup', status: 'blocked', reason: 'run_active', agentId, runId: run.runId, runStatus: run.status, nextAction: 'attendre le terminal (status --follow) ; aucun second run envoyé', ...receipt };
-  }
+  const receipt = entry
+    ? { selection: entry.selection ? selectionReceipt(entry.selection, { createAccepted: true }) : undefined, modelSent: false, persistent: true }
+    : { modelSent: false, persistent: false, note: 'Sans registre : aucune idempotence ; en cas de livraison inconnue, lire l’agent (latestRunId) soi-même ; aucune répétition automatique. Utiliser --mission/--registry pour une reprise réconciliable.' };
+  const report = (fields) => ({ command: 'followup', agentId, ...fields, ...receipt });
+  const persist = async (fields) => { if (!entry) return; Object.assign(entry, fields, { updatedAt: now() }); await saveRegistry(registryFile, registry); };
+  const unresolved = openFollowup(entry);
+  if (unresolved) return report({ status: 'blocked', reason: 'followup_unresolved', followup: unresolved, nextAction: 'reconcile --mission avant toute réémission ; aucun POST envoyé' });
+  const { agent, failure: agentFailure } = await readAgent({ agentId, key, fetchImpl, timeoutMs });
+  if (agentFailure) return report({ ...agentFailure, nextAction: 'agent illisible : aucun POST envoyé ; relire plus tard' });
+  if (!agent.latestRunId) return report({ status: 'blocked', reason: 'latest_run_unknown', nextAction: 'dernier run inconnu : aucun POST envoyé' });
+  const registryRunId = entry?.runId;
+  const { run, failure: runFailure } = await readRun({ agentId, runId: agent.latestRunId, key, fetchImpl, timeoutMs });
+  if (runFailure) return report({ ...runFailure, runId: agent.latestRunId, nextAction: 'run actuel illisible : aucun POST envoyé' });
+  if (registryRunId && registryRunId !== run.runId) await persist({ runId: run.runId });
+  const stale = registryRunId && registryRunId !== run.runId ? { registryRunId } : {};
+  if (!terminalRunStatuses.has(run.status)) return report({ status: 'blocked', reason: 'run_active', runId: run.runId, runStatus: run.status, ...stale, nextAction: 'attendre le terminal (status --follow) ; aucun second run envoyé' });
+  const priorRunId = run.runId;
+  await persist({ followup: { state: 'pending', priorRunId, requestedAt: now() } });
   const result = await call({ method: 'POST', path: `/v1/agents/${encodeURIComponent(agentId)}/runs`, body: { prompt: { text: promptText } }, key, fetchImpl, timeoutMs });
   if (result.outcome === 'ok') {
-    const run = runSummary(result.data?.run);
-    if (run && run.agentId === agentId) {
-      if (entry) { Object.assign(entry, { runId: run.runId, followups: (entry.followups ?? 0) + 1, updatedAt: now() }); await saveRegistry(registryFile, registry); }
+    const accepted = runSummary(result.data?.run);
+    if (accepted && accepted.agentId === agentId && accepted.runId !== priorRunId) {
+      await persist({ runId: accepted.runId, followups: (entry?.followups ?? 0) + 1, followup: { state: 'accepted', priorRunId, runId: accepted.runId, settledAt: now() } });
       if (receipt.selection) receipt.selection.runAccepted = true;
-      return { command: 'followup', status: 'launched', agentId, runId: run.runId, runStatus: run.status, ...receipt };
+      return report({ status: 'launched', priorRunId, runId: accepted.runId, runStatus: accepted.status, ...stale });
     }
-    return { command: 'followup', status: 'uncertain', agentId, reason: 'invalid_response', nextAction: 'status sur latestRunId de l’agent', ...receipt };
+    await persist({ followup: { state: 'uncertain', priorRunId, reason: 'invalid_response', requestedAt: entry?.followup?.requestedAt } });
+    return report({ status: 'uncertain', reason: 'invalid_response', priorRunId, nextAction: entry ? 'reconcile --mission ; aucune réémission avant' : 'lire l’agent (latestRunId ≠ priorRunId ⇒ accepté) ; aucune répétition automatique' });
   }
-  if (result.outcome === 'rejected') return { command: 'followup', status: 'blocked', agentId, httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}), ...receipt };
-  return { command: 'followup', status: result.delivery === 'unknown' ? 'uncertain' : 'unavailable', agentId, reason: result.reason, ...(result.delivery === 'unknown' ? { nextAction: 'lire l’agent (latestRunId) avant toute relance' } : {}), ...receipt };
+  if (result.outcome === 'rejected') {
+    // Dont 409 agent_busy : garde complémentaire du serveur, pas la preuve du contrôle client effectué ci-dessus.
+    await persist({ followup: { state: 'rejected', priorRunId, httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}), settledAt: now() } });
+    return report({ status: 'blocked', reason: 'rejected', priorRunId, httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}) });
+  }
+  if (result.delivery === 'not_sent') {
+    await persist({ followup: { state: 'not_created', priorRunId, reason: result.reason, settledAt: now() } });
+    return report({ status: 'unavailable', reason: result.reason, priorRunId, nextAction: 'requête non émise ; followup à nouveau possible' });
+  }
+  await persist({ followup: { state: 'uncertain', priorRunId, reason: result.reason, requestedAt: entry?.followup?.requestedAt } });
+  return report({ status: 'uncertain', reason: result.reason, priorRunId, nextAction: entry ? 'reconcile --mission ; aucune réémission avant' : 'lire l’agent (latestRunId ≠ priorRunId ⇒ accepté) ; aucune répétition automatique' });
 }
 
 export function exitCodeFor(report) {
@@ -327,9 +369,11 @@ function parseArgs(args) {
 const help = `cursor-agents — orchestration Creezio Lite (clé : CURSOR_API_KEY en environnement)
   preflight [--select fable|opus|grok] [--model-file f]
   launch --mission K --repo URL (--ref BRANCHE | --pr-url URL) --prompt-file f --registry f [--select clé] [--name n] [--auto-pr] [--new-branch]
-  reconcile --mission K --registry f
+  reconcile --mission K --registry f            (tranche aussi une reprise pending/uncertain : accepté ou non créé)
   status (--mission K --registry f | --agent bc-… --run run-…) [--state f] [--follow] [--full]
-  followup (--mission K --registry f | --agent bc-…) --prompt-file f
+  followup --mission K --registry f --prompt-file f   (reprise persistée et réconciliable ; à utiliser pour les missions)
+  followup --agent bc-… --prompt-file f               (sans registre : garde minimale, aucune idempotence ; livraison inconnue ⇒ lire l’agent soi-même)
+Reprise : lecture de l’agent réel (latestRunId) puis du run actuel ; terminal exigé ; un seul POST sans champ model ; livraison inconnue ⇒ reconcile avant réémission.
 La sélection (--select, défaut : fable) est choisie une fois au lancement puis conservée pour toute la mission.
 Codes : 0 ok · 2 bloqué (modèle refusé, requête rejetée, run actif) · 3 indisponible ou incertain · 4 usage`;
 export async function main(argv = process.argv.slice(2), { env = process.env, fetchImpl, sleep = ms => new Promise(r => setTimeout(r, ms)), log = line => console.log(line) } = {}) {

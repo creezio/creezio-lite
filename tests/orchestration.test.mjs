@@ -255,39 +255,107 @@ test('status polls progressively, reports only changes, truncates results and ne
   });
 });
 
-test('followup reuses the same agent after a terminal run, keeps the initial selection and sends no model field', async () => {
-  const busy = recorder({ [`POST /v1/agents/${AGENT}/runs`]: () => json({ error: { code: 'agent_busy', message: BODY_MARKER } }, 409) });
-  const blocked = await agents.followup({ agentId: AGENT, promptText: PROMPT_MARKER, key: KEY, fetchImpl: busy.fetchImpl });
-  assert.equal(blocked.status, 'blocked'); assert.equal(blocked.providerCode, 'agent_busy'); assert.equal(busy.calls.length, 1); assert.equal(blocked.modelSent, false); assertNoLeak(blocked);
-  const RUN2 = 'run-00000000-0000-4000-8000-000000000002';
-  const ok = recorder({ [`POST /v1/agents/${AGENT}/runs`]: (request) => { assert.deepEqual(request.body, { prompt: { text: PROMPT_MARKER } }); return json({ run: runRecord({ id: RUN2 }) }); } });
-  const launched = await agents.followup({ agentId: AGENT, promptText: PROMPT_MARKER, key: KEY, fetchImpl: ok.fetchImpl });
-  assert.equal(launched.status, 'launched'); assert.equal(launched.runId, RUN2); assertNoLeak(launched);
-  const lost = await agents.followup({ agentId: AGENT, promptText: 'x', key: KEY, fetchImpl: recorder({ [`POST /v1/agents/${AGENT}/runs`]: () => { throw new Error('reset'); } }).fetchImpl });
-  assert.equal(lost.status, 'uncertain'); assert.match(lost.nextAction, /latestRunId/);
+test('followup reads the real agent and its latest run before any POST, keeps the initial selection and sends no model field', async () => {
+  const RUN2 = 'run-00000000-0000-4000-8000-000000000002', RUN3 = 'run-00000000-0000-4000-8000-000000000003', RUN4 = 'run-00000000-0000-4000-8000-000000000004', RUN5 = 'run-00000000-0000-4000-8000-000000000005';
+  const methods = r => r.calls.map(c => `${c.method} ${new URL(c.url).pathname.replace(`/v1/agents/${AGENT}`, '~')}`);
+  const noPost = r => assert.ok(r.calls.every(c => c.method !== 'POST'), `aucun POST attendu : ${methods(r)}`);
+  const agentAt = (latestRunId) => json(agentRecord({ latestRunId }));
+
+  // --agent seul : garde minimale — lire l’agent, lire son dernier run, exiger le terminal ; jamais de POST immédiat.
+  const down = recorder({ [`GET /v1/agents/${AGENT}`]: () => json({ error: { code: 'server' } }, 503) });
+  const unavailable = await agents.followup({ agentId: AGENT, promptText: PROMPT_MARKER, key: KEY, fetchImpl: down.fetchImpl });
+  assert.equal(unavailable.status, 'unavailable'); assert.equal(unavailable.persistent, false); noPost(down);
+  const gone = recorder({ [`GET /v1/agents/${AGENT}`]: () => json({ error: { code: 'not_found' } }, 404) });
+  const notFound = await agents.followup({ agentId: AGENT, promptText: PROMPT_MARKER, key: KEY, fetchImpl: gone.fetchImpl });
+  assert.equal(notFound.status, 'blocked'); assert.equal(notFound.httpStatus, 404); noPost(gone);
+  const active = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN2), [`GET /v1/agents/${AGENT}/runs/${RUN2}`]: () => json(runRecord({ id: RUN2, status: 'RUNNING' })) });
+  const busyAgent = await agents.followup({ agentId: AGENT, promptText: PROMPT_MARKER, key: KEY, fetchImpl: active.fetchImpl });
+  assert.equal(busyAgent.status, 'blocked'); assert.equal(busyAgent.reason, 'run_active'); assert.equal(busyAgent.runId, RUN2); noPost(active); assert.deepEqual(methods(active), ['GET ~', 'GET ~/runs/' + RUN2]);
+  const unknownRun = await agents.followup({ agentId: AGENT, promptText: PROMPT_MARKER, key: KEY, fetchImpl: recorder({ [`GET /v1/agents/${AGENT}`]: () => json(agentRecord({ latestRunId: undefined })) }).fetchImpl });
+  assert.equal(unknownRun.status, 'blocked'); assert.equal(unknownRun.reason, 'latest_run_unknown');
+  const runError = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN2), [`GET /v1/agents/${AGENT}/runs/${RUN2}`]: () => { throw new TypeError('fetch failed'); } });
+  const unreadable = await agents.followup({ agentId: AGENT, promptText: PROMPT_MARKER, key: KEY, fetchImpl: runError.fetchImpl });
+  assert.equal(unreadable.status, 'unavailable'); assert.equal(unreadable.reason, 'network'); noPost(runError);
+  let body;
+  const okAgent = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN2), [`GET /v1/agents/${AGENT}/runs/${RUN2}`]: () => json(runRecord({ id: RUN2, status: 'FINISHED' })), [`POST /v1/agents/${AGENT}/runs`]: (request) => { body = request.body; return json({ run: runRecord({ id: RUN3 }) }); } });
+  const launched = await agents.followup({ agentId: AGENT, promptText: PROMPT_MARKER, key: KEY, fetchImpl: okAgent.fetchImpl });
+  assert.equal(launched.status, 'launched'); assert.equal(launched.priorRunId, RUN2); assert.equal(launched.runId, RUN3); assert.deepEqual(body, { prompt: { text: PROMPT_MARKER } }); assert.deepEqual(methods(okAgent), ['GET ~', 'GET ~/runs/' + RUN2, 'POST ~/runs']);
+  assert.equal(launched.persistent, false); assert.match(launched.note, /aucune idempotence/); assertNoLeak(launched);
+  const busy = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN2), [`GET /v1/agents/${AGENT}/runs/${RUN2}`]: () => json(runRecord({ id: RUN2, status: 'FINISHED' })), [`POST /v1/agents/${AGENT}/runs`]: () => json({ error: { code: 'agent_busy', message: BODY_MARKER } }, 409) });
+  const rejected = await agents.followup({ agentId: AGENT, promptText: PROMPT_MARKER, key: KEY, fetchImpl: busy.fetchImpl });
+  assert.equal(rejected.status, 'blocked'); assert.equal(rejected.providerCode, 'agent_busy'); assert.equal(busy.calls.filter(c => c.method === 'POST').length, 1, '409 serveur : garde complémentaire, un seul POST'); assertNoLeak(rejected);
+  const lostAgentOnly = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN2), [`GET /v1/agents/${AGENT}/runs/${RUN2}`]: () => json(runRecord({ id: RUN2, status: 'FINISHED' })), [`POST /v1/agents/${AGENT}/runs`]: () => { throw new Error('reset'); } });
+  const lost = await agents.followup({ agentId: AGENT, promptText: 'x', key: KEY, fetchImpl: lostAgentOnly.fetchImpl });
+  assert.equal(lost.status, 'uncertain'); assert.equal(lost.priorRunId, RUN2); assert.match(lost.nextAction, /aucune répétition automatique/); assert.equal(lostAgentOnly.calls.filter(c => c.method === 'POST').length, 1);
 
   const config = await selections();
   await withTemp('lite-orch-followup-', async (temp) => {
     const registryFile = join(temp, 'registry.json');
+    const entryOf = async () => (await agents.loadRegistry(registryFile)).missions.O01;
     const created = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => json({ agent: agentRecord(), run: runRecord() }) });
     const first = await agents.launch({ mission: 'O01', repo: REPO, ref: 'agents/O01', promptText: 'brief', config, key: KEY, registryFile, fetchImpl: created.fetchImpl });
-    assert.equal(first.status, 'launched');
-    const running = recorder({ [`GET /v1/agents/${AGENT}/runs/${RUN}`]: () => json(runRecord({ status: 'RUNNING' })) });
-    const early = await agents.followup({ mission: 'O01', registryFile, promptText: 'suite', key: KEY, fetchImpl: running.fetchImpl });
-    assert.equal(early.status, 'blocked'); assert.equal(early.reason, 'run_active'); assert.deepEqual(running.calls.map(c => c.method), ['GET'], 'aucun second run avant le terminal');
+    assert.equal(first.status, 'launched'); assert.equal((await entryOf()).runId, RUN);
+
+    // (2) Registre périmé (RUN) alors que l’agent a un autre run actif (RUN2) : lecture réelle, refus, aucun POST, registre réaligné.
+    const stale = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN2), [`GET /v1/agents/${AGENT}/runs/${RUN2}`]: () => json(runRecord({ id: RUN2, status: 'RUNNING' })) });
+    const early = await agents.followup({ mission: 'O01', registryFile, promptText: 'suite', key: KEY, fetchImpl: stale.fetchImpl });
+    assert.equal(early.status, 'blocked'); assert.equal(early.reason, 'run_active'); assert.equal(early.runId, RUN2); assert.equal(early.registryRunId, RUN); noPost(stale);
+    assert.ok(stale.calls.every(c => !c.url.endsWith(`/runs/${RUN}`)), 'le run périmé du registre n’est pas consulté');
+    assert.equal((await entryOf()).runId, RUN2); assert.equal((await entryOf()).followup, undefined);
+
+    // Terminal réel ⇒ un seul POST sans champ model ; sélection initiale et catalogue daté conservés ; tentative persistée puis acceptée.
     let runBody;
-    const later = recorder({ [`GET /v1/agents/${AGENT}/runs/${RUN}`]: () => json(runRecord({ status: 'FINISHED' })), [`POST /v1/agents/${AGENT}/runs`]: (request) => { runBody = request.body; return json({ run: runRecord({ id: RUN2 }) }); } });
+    const later = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN2), [`GET /v1/agents/${AGENT}/runs/${RUN2}`]: () => json(runRecord({ id: RUN2, status: 'FINISHED' })), [`POST /v1/agents/${AGENT}/runs`]: (request) => { runBody = request.body; return json({ run: runRecord({ id: RUN3 }) }); } });
     const resumed = await agents.followup({ mission: 'O01', registryFile, promptText: 'suite', key: KEY, fetchImpl: later.fetchImpl });
-    assert.equal(resumed.status, 'launched'); assert.equal(resumed.runId, RUN2); assert.equal(resumed.modelSent, false);
+    assert.equal(resumed.status, 'launched'); assert.equal(resumed.priorRunId, RUN2); assert.equal(resumed.runId, RUN3); assert.equal(resumed.modelSent, false); assert.equal(resumed.persistent, true);
     assert.deepEqual(Object.keys(runBody), ['prompt'], 'le POST run ne porte aucun champ model');
     assert.deepEqual(resumed.selection.requested, first.selection.requested); assert.equal(resumed.selection.catalog.checkedAt, first.selection.catalog.checkedAt, 'sélection initiale et catalogue daté conservés, sans revalidation ni changement');
     assert.equal(resumed.selection.runAccepted, true); assert.equal(resumed.selection.modelObserved, null);
-    const entry = (await agents.loadRegistry(registryFile)).missions.O01;
-    assert.equal(entry.runId, RUN2); assert.equal(entry.followups, 1); assert.deepEqual({ modelId: entry.selection.modelId, params: entry.selection.params }, first.selection.requested);
-    const check = await agents.status({ mission: 'O01', registryFile, key: KEY, fetchImpl: recorder({ [`GET /v1/agents/${AGENT}/runs/${RUN2}`]: () => json(runRecord({ id: RUN2, status: 'RUNNING' })) }).fetchImpl });
-    assert.equal(check.status, 'ok'); assert.equal(check.run.runId, RUN2); assert.equal(check.selection.key, 'fable'); assert.deepEqual(check.selection.requested, first.selection.requested); assert.equal(check.selection.modelObserved, null);
+    let entry = await entryOf();
+    assert.equal(entry.runId, RUN3); assert.equal(entry.followups, 1); assert.deepEqual({ state: entry.followup.state, priorRunId: entry.followup.priorRunId, runId: entry.followup.runId }, { state: 'accepted', priorRunId: RUN2, runId: RUN3 });
+    assert.deepEqual({ modelId: entry.selection.modelId, params: entry.selection.params }, first.selection.requested);
+
+    // (3) POST accepté mais réponse perdue : tentative persistée uncertain ; toute réémission refusée sans appel ; reconcile tranche via latestRunId
+    // même si le run accepté (RUN4) s’est déjà terminé ; zéro second POST.
+    const lostPost = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN3), [`GET /v1/agents/${AGENT}/runs/${RUN3}`]: () => json(runRecord({ id: RUN3, status: 'FINISHED' })), [`POST /v1/agents/${AGENT}/runs`]: () => { throw new TypeError('socket hang up'); } });
+    const uncertain = await agents.followup({ mission: 'O01', registryFile, promptText: 'suite 2', key: KEY, fetchImpl: lostPost.fetchImpl });
+    assert.equal(uncertain.status, 'uncertain'); assert.equal(uncertain.priorRunId, RUN3); assert.match(uncertain.nextAction, /reconcile/);
+    entry = await entryOf(); assert.equal(entry.followup.state, 'uncertain'); assert.equal(entry.followup.priorRunId, RUN3); assert.equal(entry.runId, RUN3, 'aucun succès prétendu sur l’ancien run');
+    const silent = recorder({});
+    const refused = await agents.followup({ mission: 'O01', registryFile, promptText: 'suite 2', key: KEY, fetchImpl: silent.fetchImpl });
+    assert.equal(refused.status, 'blocked'); assert.equal(refused.reason, 'followup_unresolved'); assert.equal(silent.calls.length, 0, 'réémission refusée sans aucun appel');
+    const staleStatus = await agents.status({ mission: 'O01', registryFile, key: KEY, fetchImpl: recorder({ [`GET /v1/agents/${AGENT}/runs/${RUN3}`]: () => json(runRecord({ id: RUN3, status: 'FINISHED' })) }).fetchImpl });
+    assert.equal(staleStatus.selection.runAccepted, false, 'la suite incertaine n’est pas présentée comme acceptée');
+    const notFoundLater = recorder({ [`GET /v1/agents/${AGENT}`]: () => json({ error: { code: 'not_found' } }, 404) });
+    const still = await agents.reconcile({ mission: 'O01', key: KEY, registryFile, fetchImpl: notFoundLater.fetchImpl });
+    assert.equal(still.status, 'uncertain'); assert.equal(still.reason, 'agent_not_found'); noPost(notFoundLater);
+    entry = await entryOf(); assert.equal(entry.followup.state, 'uncertain', '404 n’autorise ni création ni réémission'); assert.equal(entry.runId, RUN3);
+    const forbidden = await agents.reconcile({ mission: 'O01', key: KEY, registryFile, fetchImpl: recorder({ [`GET /v1/agents/${AGENT}`]: () => json({ error: { code: 'forbidden' } }, 403) }).fetchImpl });
+    assert.equal(forbidden.status, 'uncertain'); assert.equal((await entryOf()).followup.state, 'uncertain');
+    const settled = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN4) });
+    const reconciled = await agents.reconcile({ mission: 'O01', key: KEY, registryFile, fetchImpl: settled.fetchImpl });
+    assert.equal(reconciled.status, 'reconciled'); assert.deepEqual(reconciled.followup, { state: 'accepted', priorRunId: RUN3, runId: RUN4 }); assert.match(reconciled.nextAction, /aucune réémission/); noPost(settled);
+    entry = await entryOf(); assert.equal(entry.runId, RUN4); assert.equal(entry.followups, 2); assert.equal(entry.followup.state, 'accepted');
+    const relecture = await agents.status({ mission: 'O01', registryFile, key: KEY, fetchImpl: recorder({ [`GET /v1/agents/${AGENT}/runs/${RUN4}`]: () => json(runRecord({ id: RUN4, status: 'FINISHED' })) }).fetchImpl });
+    assert.equal(relecture.run.runId, RUN4); assert.equal(relecture.terminal, true);
+
+    // Livraison inconnue puis reconcile sans nouveau run : not_created ⇒ réémission autorisée, un seul POST alors.
+    const lostAgain = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN4), [`GET /v1/agents/${AGENT}/runs/${RUN4}`]: () => json(runRecord({ id: RUN4, status: 'FINISHED' })), [`POST /v1/agents/${AGENT}/runs`]: () => { throw new TypeError('socket hang up'); } });
+    assert.equal((await agents.followup({ mission: 'O01', registryFile, promptText: 'suite 3', key: KEY, fetchImpl: lostAgain.fetchImpl })).status, 'uncertain');
+    const nothingNew = await agents.reconcile({ mission: 'O01', key: KEY, registryFile, fetchImpl: recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN4) }).fetchImpl });
+    assert.deepEqual(nothingNew.followup, { state: 'not_created', priorRunId: RUN4 }); assert.match(nothingNew.nextAction, /followup --mission autorisé/);
+    assert.equal((await entryOf()).followups, 2);
+    const retry = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN4), [`GET /v1/agents/${AGENT}/runs/${RUN4}`]: () => json(runRecord({ id: RUN4, status: 'FINISHED' })), [`POST /v1/agents/${AGENT}/runs`]: () => json({ run: runRecord({ id: RUN5 }) }) });
+    const reissued = await agents.followup({ mission: 'O01', registryFile, promptText: 'suite 3', key: KEY, fetchImpl: retry.fetchImpl });
+    assert.equal(reissued.status, 'launched'); assert.equal(reissued.priorRunId, RUN4); assert.equal(reissued.runId, RUN5); assert.equal(retry.calls.filter(c => c.method === 'POST').length, 1);
+    assert.equal((await entryOf()).followups, 3);
+
+    // Rejet serveur après contrôle client : persisté, pas de répétition ; usage.
+    const busyMission = recorder({ [`GET /v1/agents/${AGENT}`]: () => agentAt(RUN5), [`GET /v1/agents/${AGENT}/runs/${RUN5}`]: () => json(runRecord({ id: RUN5, status: 'FINISHED' })), [`POST /v1/agents/${AGENT}/runs`]: () => json({ error: { code: 'agent_busy' } }, 409) });
+    const rejectedMission = await agents.followup({ mission: 'O01', registryFile, promptText: 'x', key: KEY, fetchImpl: busyMission.fetchImpl });
+    assert.equal(rejectedMission.status, 'blocked'); assert.equal((await entryOf()).followup.state, 'rejected'); assert.equal((await entryOf()).runId, RUN5);
     await assert.rejects(agents.followup({ mission: 'O01', agentId: 'bc-ffffffff-ffff-4fff-8fff-ffffffffffff', registryFile, promptText: 'x', key: KEY }), /pas celui de la mission/);
-    await agents.saveRegistry(registryFile, { formatVersion: 1, missions: { O01: { ...entry, state: 'uncertain' } } });
+    entry = await entryOf(); await agents.saveRegistry(registryFile, { formatVersion: 1, missions: { O01: { ...entry, state: 'uncertain' } } });
     await assert.rejects(agents.followup({ mission: 'O01', registryFile, promptText: 'x', key: KEY }), /reconcile/);
   });
 });
