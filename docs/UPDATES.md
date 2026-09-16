@@ -90,3 +90,11 @@ Pour une application qui adopte ces ports, définir ses extensions avec le catal
 Vérifier les schémas déclarés au démarrage : les contraintes non supportées sont maintenant refusées plutôt qu'ignorées. Les schémas des commandes sont stricts ; les dates facultatives du CRUD natif restent effaçables. Adapter le traitement des erreurs structurées (code, message, requestId, details facultatif), sans utiliser les erreurs inconnues comme détails publics.
 
 Tester sessions, clés lecture/écriture, OAuth, révocations, recherche/fichiers et les refus sans écriture. Les références credential sont un instantané vérifié, pas une garde de commit. Cette release ne livre pas encore un moteur générique d'idempotence, de relations, d'outbox ou de grants par ressource.
+
+## Passage à 0.12.0 — Standard d’orchestration
+
+Le runtime, le schéma, les migrations, les secrets et les providers IA métier ne changent pas ; l’upgrade habituel du runtime ne modifie que la version du verrou. La nouveauté est hors runtime : la compétence `.cursor/skills/lite-orchestration/` (SKILL.md, CONTRACT.md, cursor-model.json, scripts/cursor-agents.mjs, manifest.json) et la règle `.cursor/rules/lite-orchestration.mdc`.
+
+Adoption dans une application existante, depuis le commit validé du kit : `node bin/lite.mjs adopt --app /chemin/application` affiche l’état de chaque fichier géré (`missing`, `current`, `outdated`, `conflict`) et les fichiers non gérés préservés ; `--apply` n’écrit que les fichiers manquants ou issus d’une version précédente du kit, puis le manifeste. Un fichier modifié localement est un conflit : la commande refuse toute écriture et le signale ; restaurer la copie du kit ou consigner le report. `AGENTS.md`, les règles métier, `lite.lock.json`, les migrations et les données ne sont jamais touchés ; ajouter soi-même la mention du standard à `AGENTS.md` de l’application (le doctor l’indique dans `orchestration`). Aucun cron n’est créé et aucun schedule existant n’est retiré.
+
+La clé `CURSOR_API_KEY` n’est lue que dans l’environnement de l’orchestrateur ; elle n’est stockée ni dans l’application ni dans ses journaux.

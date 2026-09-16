@@ -8,6 +8,8 @@ Avant une mutation, réconcilier les PR, les commits, la CI et les runs déjà e
 
 La réception examine le diff actuel, les dépendances et des preuves de régression pertinentes. Une CI verte ne remplace pas la revue. Le kit ne doit pas embarquer du métier spécifique à une seule application. Les modifications doivent conserver les contrats des autres consommateurs. Après changement de base, refaire les contrôles affectés.
 
+Les missions de réalisation déléguées à Cursor suivent le standard `.cursor/skills/lite-orchestration/` (rôles, modèle épinglé et préflight, brief, checkpoints, réception, déduplication et réconciliation des lancements). Ce dossier est la seule source ; le responsable du kit le fait évoluer par PR et le distribue par version. Les orchestrateurs applicatifs l’adoptent par `lite adopt` et conservent leurs mandats.
+
 ## Publication
 
 1. Préparer une PR avec version cohérente, changelog et instructions de migration. Maintenir package.json, package-lock.json, template/package.json, les versions API/MCP et les tests correspondants.
