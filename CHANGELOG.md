@@ -1,5 +1,14 @@
 # Versions de Lite
 
+## 0.13.0 — Planification parallèle des missions et distribution complète du standard
+
+- Contrat de planification v1 `PLANNING.md` (P1) : plan public (`docs/planning/plan.json`) et état privé hors dépôt, schémas JSON 2020-12 `planning-plan.schema.json` / `planning-state.schema.json`, exemples génériques ; dépendances par étape (`start`/`integrate`/`publish`), conditions d’acceptation sourcées distinctes de `delivered`, réservations de chemins par dépôt et de ressources sémantiques tenues jusqu’à l’intégration, statut `historical`, capacité par périmètre (`0` valide, `null` non fiable), invariants d’état refusant toute incertitude effacée.
+- Outil `scripts/plan-missions.mjs` (P2) : `validate` et `ready` en lecture seule, déterministes, sans réseau ni horloge ; graphe (mission, jalon) avec cycles nommés, propositions incrémentales `integrate`/`publish`/`resume`/`start` avec raisons fermées, codes 0/2/3/4 ; données lues par propriété propre, instants vérifiés calendairement.
+- Composition (P4) : provenance `legacySelection {reason:"model_omitted"}` exclusive de `selection` sur un jalon terminal (aucun `modelId` par défaut, jamais `start`/`resume` : `selection_unknown`), libellé `run_terminal_unreconciled` pour une mission active dont le run est déjà terminal, `unknown` tenant prudemment ses réservations, `covers` de publication sans `publish_serialized`, `start` et `resume` écrivant `active`/`launch:pending` avant tout POST, transfert explicite borné de propriété pour composer des lots livrés. Oracle §5 égal à la sortie réelle, vérifié par `check-kit` et les tests.
+- Distribution et découverte (P3) : toute ressource du dossier canonique `.cursor/skills/lite-orchestration/` est copiée par `create`/`adopt` via `manifest.json` (onze fichiers gérés) ; point d’entrée Codex/Cursor `.agents/skills/lite-orchestration/SKILL.md` généré depuis le frontmatter canonique (`manifest.generated`), confinement `lstat`, conflits refusés sans écriture partielle, compétences locales préservées ; `check-kit` contrôle la découverte, l’autonomie des scripts et la validité des exemples.
+- Template : alias public `@lite/sites-adapter/catalog` dans `tsconfig.json` (F01) avec test de build.
+- Aucun changement du runtime métier, du schéma, des migrations ni des secrets ; seules les chaînes de version API/MCP sont alignées.
+
 ## 0.12.0 — Standard d’orchestration Astra ⇄ Cursor
 
 - Source canonique `.cursor/skills/lite-orchestration/` : compétence à chargement progressif, contrat compact (rôles, sélection, brief, checkpoints, réception, revue), sélections autorisées `cursor-model.json` (`fable` = `claude-fable-5-1` par défaut, `opus` = `claude-opus-5`, `grok` = `grok-4.6`, chacune avec sa combinaison complète relevée dans le catalogue, `fast`/`cyber` à `false` ; aucun repli).

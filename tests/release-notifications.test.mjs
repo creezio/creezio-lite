@@ -41,7 +41,7 @@ test('a new validated release creates one durable issue, repeated checks create 
 });
 
 test('absent releases and up-to-date applications do not create issues', async () => {
-  for (const [f, current, expected] of [[fixture({ latest: null }), lock, 'no-release'], [fixture(), { ...lock, kitVersion: '0.10.1' }, 'current'], [fixture(), { ...lock, kitVersion: '0.12.0' }, 'current']]) {
+  for (const [f, current, expected] of [[fixture({ latest: null }), lock, 'no-release'], [fixture(), { ...lock, kitVersion: '0.10.1' }, 'current'], [fixture(), { ...lock, kitVersion: '0.13.0' }, 'current']]) {
     assert.equal((await checkUpdate({ ...f, repository: repo, lock: current })).status, expected);
     assert.equal(f.writes.length, 0);
   }
