@@ -1,5 +1,12 @@
 # Versions de Lite
 
+## 0.10.2 — Migrations D1 locales fiables
+
+- Le script local conserve les triggers SQL complets et applique chaque migration avec son marqueur dans une même transaction D1.
+- Une migration échouée est annulée ; une migration déjà appliquée ne rejoue pas, y compris après redémarrage de la base locale persistée.
+- Utilise Miniflare fourni par la version verrouillée de Wrangler ; aucune dépendance ou migration SQL nouvelle.
+- Les applications existantes doivent intégrer explicitement `scripts/migrate-local.mjs`, hors du runtime mis à jour automatiquement.
+
 ## 0.10.1 — Publication et suivi des applications
 
 - Release GitHub stable au SHA exact de main après CI réussie ; aucun déplacement de tag.
