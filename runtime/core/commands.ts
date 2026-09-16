@@ -1,5 +1,5 @@
 import type { AppDefinition, AppExtensions, AppOperationContext, AppOperationDefinition, AppOperationResult, Identity, LiteEnvironment, Principal, Role, ScopeProvider, Workspace } from './types.ts';
-import { appOperations, idSchema, objectSchema, operation, type JsonSchema, type Operation } from './operations.ts';
+import { appOperations, assertUniqueOperations, coreOperations, idSchema, objectSchema, operation, type JsonSchema, type Operation } from './operations.ts';
 import { ApiError, fail, idPattern, roles as everyRole } from './validation.ts';
 import { validateSchema } from './tools.ts';
 import { json, readJson } from './http.ts';
@@ -10,9 +10,11 @@ const namePattern=/^[a-z][a-z0-9-]{0,47}$/;
 type Requirement='required'|'optional'|'none';
 export const reservedCommandFields=['expectedVersion','idempotencyKey','reason'] as const;
 const rejectedCommandFields=['command','payload'];
+/** Replay keys are opaque ASCII tokens: letters, digits, dot, underscore, colon and dash, 1 to 160 characters, no whitespace. */
+export const idempotencyKeyPattern='^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$';
 const reservedSchemas:Record<(typeof reservedCommandFields)[number],JsonSchema>={
   expectedVersion:{type:'integer',minimum:1,description:'Version attendue de la cible modifiée'},
-  idempotencyKey:{type:'string',minLength:1,maxLength:160,description:'Clé de rejeu ; l’en-tête Idempotency-Key est un alias'},
+  idempotencyKey:{type:'string',minLength:1,maxLength:160,pattern:idempotencyKeyPattern,description:'Clé de rejeu ASCII sans espace ; l’en-tête Idempotency-Key est un alias'},
   reason:{type:'string',maxLength:500,description:'Motif borné à 500 caractères'},
 };
 
@@ -77,11 +79,17 @@ export function read(input:ReadInput):AppOperationDefinition{
   return {operation:op,handle:input.handle};
 }
 
-/** Validate the extensions once at declaration; collisions with the core catalogue are refused here. */
-export function defineExtensions(app:AppDefinition,extensions:AppExtensions={}):AppExtensions{
+/**
+ * Validate the extensions once at declaration. Every schema is checked and every collision of ID,
+ * route shape or tool name with the given catalogue is refused here, with the same stable
+ * diagnostics as the request-time catalogue. Without a catalogue the core operations of the
+ * application are used; the Sites adapter passes its complete native catalogue.
+ */
+export function defineExtensions(app:AppDefinition,extensions:AppExtensions={},catalog?:Operation[]):AppExtensions{
   if(extensions.beforeWrite!==undefined&&typeof extensions.beforeWrite!=='function')throw new Error('beforeWrite doit être une fonction.');
   resolveScope(extensions.scope);
-  appOperations(app,extensions.operations);
+  const declared=appOperations(app,extensions.operations);
+  assertUniqueOperations([...(catalog??coreOperations(app)),...declared]);
   return extensions;
 }
 

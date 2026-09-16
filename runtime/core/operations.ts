@@ -127,6 +127,50 @@ export function coreOperations(app:AppDefinition):Operation[]{
   return list;
 }
 const operationIdPattern=/^[a-z][a-z0-9_.-]{0,119}$/,methods=['GET','POST','PUT','PATCH','DELETE'];
+/** Stable diagnostics for catalogue construction failures: the code and the operations involved never vary between requests. */
+export type OperationCatalogErrorCode='duplicate_operation'|'duplicate_route'|'duplicate_tool'|'invalid_schema';
+export class OperationCatalogError extends Error{
+  readonly code:OperationCatalogErrorCode;
+  readonly operations:string[];
+  constructor(code:OperationCatalogErrorCode,message:string,operations:string[]=[]){super(message);this.name='OperationCatalogError';this.code=code;this.operations=operations;}
+}
+const schemaTypes=['object','array','string','number','integer','boolean','null'];
+const patternCache=new Map<string,RegExp>();
+/** Compile a declared JSON Schema pattern once; an invalid expression is a declaration error, never a skipped check. */
+export function schemaPattern(pattern:unknown,label='schema'):RegExp{
+  if(typeof pattern!=='string'||!pattern||pattern.length>512)throw new OperationCatalogError('invalid_schema',`Schéma invalide (${label}) : pattern doit être une expression régulière de 1 à 512 caractères.`);
+  let compiled=patternCache.get(pattern);
+  if(!compiled){try{compiled=new RegExp(pattern,'u');}catch{throw new OperationCatalogError('invalid_schema',`Schéma invalide (${label}) : pattern non compilable.`);}patternCache.set(pattern,compiled);}
+  return compiled;
+}
+/** Refuse at declaration every schema the validator could not enforce: unknown types, invalid patterns, malformed constraints. */
+export function assertJsonSchema(schema:unknown,label:string,depth=0):void{
+  const bad=(reason:string)=>{throw new OperationCatalogError('invalid_schema',`Schéma invalide (${label}) : ${reason}.`);};
+  if(!schema||typeof schema!=='object'||Array.isArray(schema))bad('objet de schéma attendu');
+  if(depth>16)bad('profondeur excessive');
+  const s=schema as JsonSchema;
+  if(s.anyOf!==undefined){if(!Array.isArray(s.anyOf)||!s.anyOf.length)bad('anyOf doit être une liste non vide');s.anyOf.forEach((option:unknown,i:number)=>assertJsonSchema(option,`${label}.anyOf[${i}]`,depth+1));}
+  if(s.type!==undefined&&(typeof s.type!=='string'||!schemaTypes.includes(s.type)))bad(`type non pris en charge : ${String(s.type)}`);
+  if(s.enum!==undefined&&(!Array.isArray(s.enum)||!s.enum.length||!s.enum.every((v:unknown)=>v===null||['string','number','boolean'].includes(typeof v))))bad('enum doit lister des valeurs scalaires');
+  if(s.pattern!==undefined){if(s.type!==undefined&&s.type!=='string')bad('pattern ne s’applique qu’à une chaîne');schemaPattern(s.pattern,label);}
+  for(const key of ['minLength','maxLength','maxItems'])if(s[key]!==undefined&&(!Number.isInteger(s[key])||s[key]<0))bad(`${key} doit être un entier positif`);
+  for(const key of ['minimum','maximum'])if(s[key]!==undefined&&(typeof s[key]!=='number'||!Number.isFinite(s[key])))bad(`${key} doit être un nombre`);
+  if(s.minLength!==undefined&&s.maxLength!==undefined&&s.minLength>s.maxLength)bad('minLength dépasse maxLength');
+  if(s.minimum!==undefined&&s.maximum!==undefined&&s.minimum>s.maximum)bad('minimum dépasse maximum');
+  if(s.format!==undefined&&!['email','date','date-time','uri'].includes(s.format))bad(`format non pris en charge : ${String(s.format)}`);
+  if(s.properties!==undefined){
+    if(!s.properties||typeof s.properties!=='object'||Array.isArray(s.properties))bad('properties doit être un objet');
+    for(const [key,child] of Object.entries(s.properties)){if(!/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(key))bad(`nom de propriété refusé : ${key}`);assertJsonSchema(child,`${label}.${key}`,depth+1);}
+  }
+  if(s.required!==undefined){
+    if(!Array.isArray(s.required)||!s.required.every((k:unknown)=>typeof k==='string'))bad('required doit lister des noms');
+    if(s.additionalProperties===false)for(const key of s.required)if(!s.properties?.[key])bad(`champ requis non déclaré : ${key}`);
+  }
+  if(s.additionalProperties!==undefined&&typeof s.additionalProperties!=='boolean'&&(typeof s.additionalProperties!=='object'||!s.additionalProperties))bad('additionalProperties doit être un booléen ou un schéma');
+  if(s.items!==undefined)assertJsonSchema(s.items,`${label}[]`,depth+1);
+}
+/** Two routes are equivalent when they differ only by the name of a parameter: /records/:id and /records/:recordId share one key. */
+export function routeKey(method:string,path:string):string{return `${method} ${path.replace(/\/$/,'').replace(/:[A-Za-z0-9_]+/g,':*')}`;}
 /**
  * Validate application operations and mark them for the generic executor.
  * Business operations belong to a declared module and never exceed its read roles;
@@ -150,6 +194,9 @@ export function appOperations(app:AppDefinition,definitions:AppOperationDefiniti
     if(op.essential)throw new Error(`Une opération applicative ne peut pas être déclarée indispensable : ${op.id}.`);
     if(typeof op.toolName!=='string'||!/^[a-z][a-z0-9_]{1,80}$/.test(op.toolName))throw new Error(`Nom d’outil invalide pour ${op.id}.`);
     if(!op.inputSchema||typeof op.inputSchema!=='object')throw new Error(`inputSchema requis pour ${op.id}.`);
+    assertJsonSchema(op.inputSchema,`${op.id}.inputSchema`);
+    if(op.bodySchema!==undefined)assertJsonSchema(op.bodySchema,`${op.id}.bodySchema`);
+    if(op.querySchema!==undefined)assertJsonSchema(op.querySchema,`${op.id}.querySchema`);
     const readers=module?(module.readRoles??roles):roles;
     const allowed=op.roles.filter(r=>readers.includes(r));
     if(!allowed.length)throw new Error(`Aucun rôle de ${op.id} ne peut lire le module ${op.moduleId}.`);
@@ -158,13 +205,18 @@ export function appOperations(app:AppDefinition,definitions:AppOperationDefiniti
   }
   return result;
 }
-/** Refuse duplicate IDs, method/path/alias routes and tool names across the whole catalogue. */
+/**
+ * Refuse duplicate IDs, method/path/alias routes and tool names across the whole catalogue.
+ * Routes are compared by shape: parameter names never distinguish two routes, so an application
+ * operation can never be silently masked by a native one that differs only by :id/:recordId.
+ */
 export function assertUniqueOperations(operations:Operation[]):Operation[]{
-  const ids=new Set<string>(),routes=new Set<string>(),tools=new Set<string>();
+  const ids=new Map<string,string>(),routes=new Map<string,string>(),tools=new Map<string,string>();
+  const collide=(code:OperationCatalogErrorCode,label:string,key:string,previous:string,current:string)=>{throw new OperationCatalogError(code,`${label}: ${key} (${previous}, ${current})`,[previous,current]);};
   for(const op of operations){
-    if(ids.has(op.id))throw Error(`Duplicate operation: ${op.id}`);ids.add(op.id);
-    for(const path of [op.path,...(op.aliases??[])]){const key=`${op.method} ${path}`;if(routes.has(key))throw Error(`Duplicate route: ${key}`);routes.add(key);}
-    if(tools.has(op.toolName))throw Error(`Duplicate tool: ${op.toolName}`);tools.add(op.toolName);
+    const previous=ids.get(op.id);if(previous!==undefined)collide('duplicate_operation','Duplicate operation',op.id,previous,op.id);ids.set(op.id,op.id);
+    for(const path of [op.path,...(op.aliases??[])]){const key=routeKey(op.method,path);const owner=routes.get(key);if(owner!==undefined)collide('duplicate_route','Duplicate route',key,owner,op.id);routes.set(key,op.id);}
+    const tool=tools.get(op.toolName);if(tool!==undefined)collide('duplicate_tool','Duplicate tool',op.toolName,tool,op.id);tools.set(op.toolName,op.id);
   }
   return operations;
 }
@@ -178,8 +230,25 @@ export function canReadModule(org:Workspace,id:string):boolean {
   const identifiers=[`module:${id}`,`module.${id}.list`,`module.${id}.get`,`${id}.list`,`${id}.get`,`${id}.detail`,...(id==='files'?['files.download']:[])];
   return !(org.operationPolicies??[]).some(p=>identifiers.includes(p.operationId)&&p.effect==='deny');
 }
+const routeMatches=(route:string,pathname:string)=>{
+  const pattern=route.replace(/\/$/,'').split('/'),actual=pathname.split('/');
+  return pattern.length===actual.length&&pattern.every((segment,i)=>segment.startsWith(':')?actual[i].length>0:segment===actual[i]);
+};
+/**
+ * Resolve a request to one operation. Literal segments beat parameters; on an exact tie of shape
+ * (impossible after assertUniqueOperations) an application operation is preferred, so a native
+ * route keeps its priority only when no extension claims it.
+ */
 export function matchOperation(operations:Operation[],method:string,path:string):Operation|undefined {
   const normalized=path.replace(/\/$/,'');
-  return [...operations].sort((a,b)=>(a.path.match(/:/g)?.length??0)-(b.path.match(/:/g)?.length??0)).find(op=>op.method===method&&[op.path,...(op.aliases??[])].some(route=>new RegExp('^'+route.split('/').map(p=>p.startsWith(':')?'[^/]+':p.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('/')+'$').test(normalized)));
+  const candidates:{op:Operation;shape:string;params:number}[]=[];
+  for(const op of operations){
+    if(op.method!==method)continue;
+    for(const route of [op.path,...(op.aliases??[])])if(routeMatches(route,normalized))candidates.push({op,shape:routeKey(method,route),params:(route.match(/\/:/g)?.length??0)});
+  }
+  // Literal beats parameter at the first differing segment; two matching literals are always equal.
+  const specificity=(a:string,b:string)=>{const x=a.split('/'),y=b.split('/');for(let i=0;i<x.length;i++){if(x[i]===y[i])continue;return x[i]===':*'?1:-1;}return 0;};
+  candidates.sort((a,b)=>a.params-b.params||specificity(a.shape,b.shape)||(a.op.source==='app'?0:1)-(b.op.source==='app'?0:1));
+  return candidates[0]?.op;
 }
 export function assertOperationAllowed(op:Operation,org:Workspace){if(!operationAllowed(op,org))fail(403,'operation_forbidden','Votre groupe n’a pas accès à cette opération.');}

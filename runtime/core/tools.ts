@@ -1,5 +1,5 @@
 import type { AppDefinition, Role, Workspace } from './types.ts';
-import { coreOperations, objectSchema, idSchema, operationAllowed, type Operation, type JsonSchema } from './operations.ts';
+import { coreOperations, objectSchema, idSchema, operationAllowed, schemaPattern, type Operation, type JsonSchema } from './operations.ts';
 import { fail } from './validation.ts';
 export {fieldSchema} from './operations.ts';
 
@@ -23,6 +23,8 @@ export function validateSchema(schema:JsonSchema,value:unknown,path='arguments')
   if(schema.type==='string'){
     if(typeof value!=='string'||(schema.minLength!==undefined&&value.length<schema.minLength)||(schema.maxLength!==undefined&&value.length>schema.maxLength))fail(400,'invalid_arguments',path+' : texte invalide.');
     if(schema.format==='email'&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))fail(400,'invalid_arguments',path+' : e-mail invalide.');
+    // A declared pattern is enforced, never skipped: an uncompilable pattern refuses the value instead of accepting it.
+    if(schema.pattern!==undefined){let expression:RegExp|null=null;try{expression=schemaPattern(schema.pattern,path);}catch{expression=null;}if(!expression||!expression.test(value))fail(400,'invalid_arguments',path+' : format invalide.');}
   }
   if(schema.type==='number'||schema.type==='integer')if(typeof value!=='number'||!Number.isFinite(value)||(schema.type==='integer'&&!Number.isInteger(value))||(schema.minimum!==undefined&&value<schema.minimum)||(schema.maximum!==undefined&&value>schema.maximum))fail(400,'invalid_arguments',path+' : nombre invalide.');
   if(schema.type==='boolean'&&typeof value!=='boolean')fail(400,'invalid_arguments',path+' : booléen requis.');

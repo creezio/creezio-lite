@@ -1,10 +1,10 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import type { AppDefinition, Identity, Principal, ScopeProvider, Workspace } from './types.ts';
+import type { AppDefinition, Identity, Principal, ScopeProvider, SqlFragment, Workspace } from './types.ts';
 import { moduleRegistry, recordHref, visibleModules, type RegisteredModule } from './registry.ts';
 import { boundedInteger, fail, requireRole } from './validation.ts';
 import { json, readJson } from './http.ts';
 import { canReadModule } from './operations.ts';
-import { openScope, recordScope } from './scope.ts';
+import { fileScope, openScope, recordScope } from './scope.ts';
 
 type SearchOptions={limit?:number;offset?:number;moduleId?:string;scope?:ScopeProvider;principal?:Principal};
 
@@ -65,6 +65,15 @@ export function searchTerms(query:string):string[] {
   return terms;
 }
 
+/** One predicate over lite_search_documents d: fileFilter for the files index, recordFilter for every other index. */
+function searchScope(org:Workspace,options:SearchOptions):SqlFragment{
+  const provided=Boolean(options.scope&&options.principal);
+  const scope=provided?options.scope!:openScope,principal:Principal=provided?options.principal!:{userId:'',role:org.role,workspaceId:org.id,credential:'session'};
+  const records=recordScope(scope,principal,{alias:'d',idColumn:'record_id',moduleColumn:'module_id'},'read');
+  const files=fileScope(scope,principal,{alias:'d',idColumn:'record_id'},'read');
+  return {sql:`((d.module_id='files' AND ${files.sql}) OR (d.module_id<>'files' AND ${records.sql}))`,bindings:[...files.bindings,...records.bindings]};
+}
+
 export async function searchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:SearchOptions={}) {
   const terms=searchTerms(query);
   const context=await searchContext(db,app,org.id);
@@ -73,8 +82,9 @@ export async function searchSelection(db:D1Database,app:AppDefinition,org:Worksp
   if(!terms.length||!policies.length)return {cte:'WITH ranked AS (SELECT id,0 AS score FROM lite_search_documents WHERE 0)',bindings:[],policies,indexing};
   // Policy filtering happens inside the query, before counts, excerpts and pagination.
   // One FTS row per field lets an administrator remove a field immediately.
-  // The record scope is evaluated in the same place: an out-of-scope document never becomes a match.
-  const scope=options.scope&&options.principal?recordScope(options.scope,options.principal,{alias:'d',idColumn:'record_id',moduleColumn:'module_id'},'read'):recordScope(openScope,{userId:'',role:org.role,workspaceId:org.id,credential:'session'},{alias:'d',idColumn:'record_id',moduleColumn:'module_id'},'read');
+  // The scope is evaluated in the same place: an out-of-scope document never becomes a match.
+  // Documents of the files index obey fileFilter, exactly like the native files routes; every other index obeys recordFilter.
+  const scope=searchScope(org,options);
   const allowed=JSON.stringify(policies.flatMap(m=>m.search.fields.map(field=>({module:m.id,field,title:field===m.titleField?1:0}))));
   const matches=`SELECT d.id,CAST(t.key AS INTEGER) AS term,CAST(json_extract(p.value,'$.title') AS INTEGER) AS title_match
     FROM json_each(?) t CROSS JOIN lite_search_fts JOIN lite_search_documents d ON d.id=lite_search_fts.document_id
