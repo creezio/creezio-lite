@@ -55,7 +55,7 @@ Appliquer la mise à jour du runtime puis fusionner explicitement les métadonn�
 
 Appliquer la mise à jour du runtime et la migration additive `0010_browser_relay.sql`. Fusionner explicitement `worker.ts` et le changement `main` dans `vite.config.ts` : les routes assistant sont servies directement par le Worker. Préserver les autres adaptations locales. Recharger les fenêtres après publication. Voir [l’audit et le fonctionnement du relais](BROWSER-RELAY.md).
 
-## Journal des requêtes minimisé (après 0.9.0)
+## Passage à 0.9.1 — Journal des requêtes minimisé
 
 Appliquer la mise à jour du runtime seul : aucune migration, aucun secret et aucune page applicative ne changent. Le journal `lite_request_logs` cesse de copier les corps, paramètres, arguments d’outils et messages ; il ne conserve que des métadonnées à vocabulaire fermé (voir [API.md](API.md#journal-des-requêtes)). Chaque réponse porte désormais l’en-tête `x-lite-request-id`, valeur du champ `correlationId` de la ligne correspondante.
 
