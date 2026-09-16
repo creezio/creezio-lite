@@ -325,6 +325,76 @@ test('files: read scope on list, metadata and download; write scope then the con
   }finally{db.close();}
 });
 
+test('search applies fileFilter to the files index on HTTP search, lite_search, lite_files_list(query) and WebMCP, before counts and snippets',async()=>{
+  const db=await localDb();const bucket=fakeBucket();try{
+    fixtureTables(db);
+    const org=await boot(client(db,alice));await boot(client(db,bob));db.raw.prepare('INSERT INTO lite_members(org_id,user_id,role) VALUES(?,?,?)').run(org,bob.userId,'member');
+    // Reviewer fixture: records fully open, files fully closed. Every surface must agree with GET files and metadata.
+    const closedFiles={recordFilter:()=>({sql:'1=1',bindings:[]}),fileFilter:()=>({sql:'0=1',bindings:[]})};
+    const owner=caller(db,alice,org,extensions(grantScope),domainApp,undefined,bucket);
+    const upload=await owner('files',{method:'POST',body:new TextEncoder().encode('contenu'),headers:{'x-file-name':'rapport-toiture.pdf'}});assert.equal(upload.status,201);
+    const fileId=upload.body.id,dossier=insertRecord(db,org,'dossiers',{title:'Toiture Zermatt',status:'Ouvert'});
+    const closed=caller(db,alice,org,extensions(closedFiles),domainApp,undefined,bucket);
+    assert.equal((await closed('files')).body.items.length,0);assert.equal((await closed(`files/${fileId}/metadata`)).status,404);
+    const search=await closed('search?q=rapport&module=files');
+    assert.equal(search.status,200,JSON.stringify(search.body));assert.equal(search.body.total,0);assert.deepEqual(search.body.items,[]);
+    assert.equal(JSON.stringify(search.body).includes('rapport-toiture'),false,'no snippet leaks a hidden file');
+    const mixed=await closed('search?q=toiture');
+    assert.deepEqual(mixed.body.items.map(i=>[i.index,i.id]),[['dossiers',dossier]],'records stay governed by recordFilter, files by fileFilter');assert.equal(mixed.body.total,1);
+    const tool=await closed('/api/mcp',{method:'POST',body:rpc('lite_files_list',{query:'rapport'})});
+    assert.equal(tool.body.result.isError,undefined,JSON.stringify(tool.body));assert.equal(tool.body.result.structuredContent.total,0);assert.deepEqual(tool.body.result.structuredContent.items,[]);
+    assert.equal((await closed('/api/mcp',{method:'POST',body:rpc('lite_search',{query:'rapport',moduleId:'files'})})).body.result.structuredContent.total,0);
+    const web=await closed('mcp/call',{method:'POST',body:{name:'lite_files_list',arguments:{query:'rapport'}}});
+    assert.equal(web.status,200,JSON.stringify(web.body));assert.equal(web.body.total,0);
+    // Grants: the same member sees the file in search exactly when GET files shows it; the record grant never opens the file.
+    const member=caller(db,bob,org,extensions(grantScope),domainApp,undefined,bucket);
+    grant(db,bob.userId,dossier,'read');
+    assert.equal((await member('files')).body.items.length,0);assert.equal((await member('search?q=rapport')).body.total,0);
+    assert.deepEqual((await member('search?q=toiture')).body.items.map(i=>i.index),['dossiers']);
+    db.raw.prepare('INSERT INTO fx_file_grants(user_id,file_id,action) VALUES(?,?,?)').run(bob.userId,fileId,'read');
+    assert.equal((await member('files')).body.items.length,1);
+    const granted=await member('search?q=toiture');
+    assert.deepEqual(granted.body.items.map(i=>[i.index,i.id]).sort(),[['dossiers',dossier],['files',fileId]].sort());assert.equal(granted.body.total,2);
+    assert.equal((await member('/api/mcp',{method:'POST',body:rpc('lite_files_list',{query:'rapport'})})).body.result.structuredContent.items[0]?.id,fileId);
+    // Without a provider the files index stays fully visible to the workspace.
+    assert.equal((await caller(db,bob,org,{},domainApp,undefined,bucket)('search?q=rapport')).body.total,1);
+  }finally{db.close();}
+});
+
+test('declared patterns are enforced on every entry and invalid schemas are refused at declaration; the handler never runs on an invalid string',async()=>{
+  const db=await localDb();try{
+    fixtureTables(db);
+    let executed=0;
+    const ext=defineExtensions(domainApp,{operations:[
+      command({moduleId:'dossiers',moduleName:'Dossiers',name:'tag',description:'Étiqueter',target:'module',fields:{code:{type:'string',pattern:'^[A-Z]{3}$'}},required:['code'],async handle(ctx){executed++;return {body:{result:{code:ctx.body.code,key:ctx.body.idempotencyKey},events:[]}};}}),
+    ]});
+    const org=await boot(client(db,alice)),owner=caller(db,alice,org,ext);
+    const invalid=[['invalid key avec espace','ABC'],['clé-accentuée','ABC'],['ok-key','abc'],['ok-key','ABCD'],['',' ABC']];
+    for(const [idempotencyKey,code] of invalid){
+      const r=await owner('modules/dossiers/commands/tag',{method:'POST',body:{idempotencyKey,code}});
+      assert.equal(r.status,400,JSON.stringify([idempotencyKey,code,r.body]));assert.equal(r.body.error.code,'invalid_arguments');
+    }
+    assert.equal((await owner('modules/dossiers/commands/tag',{method:'POST',body:{code:'ABC'},headers:{'idempotency-key':'header avec espace'}})).status,400,'the header alias is validated after normalisation');
+    assert.equal(executed,0,'the handler never ran on an invalid string');
+    const ok=await owner('modules/dossiers/commands/tag',{method:'POST',body:{idempotencyKey:'demo.remplacement:001',code:'ABC'}});
+    assert.equal(ok.status,200,JSON.stringify(ok.body));assert.equal(executed,1);
+    // MCP and WebMCP share the same validation before the executor.
+    const viaMcp=await owner('/api/mcp',{method:'POST',body:rpc('lite_command_dossiers_tag',{body:{idempotencyKey:'invalid key avec espace',code:'ABC'}})});
+    assert.equal(viaMcp.body.result.isError,true,JSON.stringify(viaMcp.body));
+    assert.equal((await owner('mcp/call',{method:'POST',body:{name:'lite_command_dossiers_tag',arguments:{body:{idempotencyKey:'x y',code:'ABC'}}}})).status,400);
+    assert.equal(executed,1);
+    const openapi=(await owner('openapi.json')).body;
+    assert.equal(openapi.paths['/api/v1/modules/dossiers/commands/tag'].post.requestBody.content['application/json'].schema.properties.idempotencyKey.pattern,'^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$');
+    // Invalid schemas never reach the catalogue: uncompilable pattern, pattern on a non string, unknown type, undeclared required field.
+    const declare=(fields,required=[])=>()=>defineExtensions(domainApp,{operations:[command({moduleId:'dossiers',moduleName:'Dossiers',name:'bad',description:'d',target:'module',idempotencyKey:'none',fields,required,async handle(){return {body:{}};}})]});
+    assert.throws(declare({code:{type:'string',pattern:'['}}),{name:'OperationCatalogError',code:'invalid_schema'});
+    assert.throws(declare({code:{type:'integer',pattern:'^a$'}}),/pattern/);
+    assert.throws(declare({code:{type:'weird'}}),/type non pris en charge/);
+    assert.throws(declare({code:{type:'string',minLength:5,maxLength:2}}),/minLength/);
+    assert.throws(()=>defineExtensions(domainApp,{operations:[read({moduleId:'dossiers',moduleName:'Dossiers',name:'bad',description:'d',querySchema:{type:'object',properties:{q:{type:'string'}},required:['missing'],additionalProperties:false},async handle(){return {body:{}};}})]}),/champ requis non déclaré/);
+  }finally{db.close();}
+});
+
 test('a handler failure never leaks details and deferred work completes before the response is final without defer',async()=>{
   const db=await localDb();try{
     fixtureTables(db);

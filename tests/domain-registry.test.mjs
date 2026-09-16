@@ -2,13 +2,13 @@ import './register-native-loader.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { app, alice, bob, client, boot, localDb } from './helpers.mjs';
-import { defineApp } from '../runtime/core/index.ts';
+import { defineApp, defineExtensions as defineCoreExtensions, read } from '../runtime/core/index.ts';
 import { moduleRegistry, recordHref, navigableModules } from '../runtime/core/registry.ts';
-import { coreOperations, appOperations, assertUniqueOperations, operation } from '../runtime/core/operations.ts';
+import { coreOperations, appOperations, assertUniqueOperations, operation, matchOperation, routeKey, OperationCatalogError } from '../runtime/core/operations.ts';
 import { MODULE_LIMIT } from '../runtime/core/validation.ts';
 const { dispatchRequest } = await import('../runtime/modules/sites-adapter/src/dispatch.ts');
 const { nativeEntries } = await import('../runtime/modules/sites-adapter/src/nav.ts');
-const { operationCatalog } = await import('../runtime/modules/sites-adapter/src/catalog.ts');
+const { operationCatalog, defineExtensions, nativeCatalog } = await import('../runtime/modules/sites-adapter/src/catalog.ts');
 
 const text=(key,label,extra={})=>({key,label,type:'text',...extra});
 const domainModules=[
@@ -156,5 +156,55 @@ test('catalogue collisions on identifiers, routes and tool names are refused at 
     assert.equal(marked[0].source,'app');
     const readers=appOperations(defineApp(variant(a=>{a.modules[1].readRoles=['owner','admin'];})),[declared({id:'read.dossiers.ok',method:'GET',path:'/api/v1/modules/dossiers/ok',roles:['owner','viewer']})]);
     assert.deepEqual(readers[0].roles,['owner'],'roles never exceed the module read roles');
+  }finally{db.close();}
+});
+
+test('collisions with native operations and equivalent :id/:recordId routes are refused when the extension is built, with stable diagnostics',async()=>{
+  const db=await localDb();try{
+    const handle=async()=>({body:{}});
+    const declared=(value)=>({operation:operation({kind:'business',moduleId:'dossiers',moduleName:'Dossiers',description:'Test',roles:['owner'],...value}),handle});
+    const system=(value)=>({operation:operation({kind:'system',moduleId:'fixture-jobs',moduleName:'Traitements',description:'Test',roles:['owner'],...value}),handle});
+    // Parameter names never distinguish two routes.
+    assert.equal(routeKey('GET','/api/v1/modules/dossiers/records/:recordId'),routeKey('GET','/api/v1/modules/dossiers/records/:id/'));
+    assert.notEqual(routeKey('GET','/api/v1/modules/dossiers/records/:id'),routeKey('POST','/api/v1/modules/dossiers/records/:id'));
+    // The core catalogue alone (defineExtensions of @lite/core) already refuses an equivalent route.
+    const shadow=declared({id:'read.dossiers.shadow',method:'GET',path:'/api/v1/modules/dossiers/records/:recordId'});
+    assert.throws(()=>defineCoreExtensions(domainApp,{operations:[shadow]}),(error)=>error instanceof OperationCatalogError&&error.name==='OperationCatalogError'&&error.code==='duplicate_route'&&error.operations.join(',')==='module.dossiers.get,read.dossiers.shadow'&&/Duplicate route: GET \/api\/v1\/modules\/dossiers\/records\/:\* \(module.dossiers.get, read.dossiers.shadow\)/.test(error.message));
+    assert.throws(()=>operationCatalog({db,user:alice,workspace:{id:'w',name:'',role:'owner'}},domainApp,[shadow]),{code:'duplicate_route'});
+    // The shared catalogue of the Sites adapter also knows the native mounts: tasks, support, nav, demo and the kernel routes.
+    const native=nativeCatalog(domainApp);
+    assert.ok(native.some(o=>o.id==='tasks.get')&&native.some(o=>o.id==='core.kernel_health'),'native mounts are part of the declaration-time catalogue');
+    const collisions=[
+      [system({id:'jobs.task',method:'GET',path:'/api/v1/modules/tasks/:taskId'}),'duplicate_route','tasks.get'],
+      [system({id:'jobs.task-alias',method:'PATCH',path:'/api/v1/tasks/:taskId'}),'duplicate_route','tasks.update'],
+      [system({id:'jobs.support',method:'POST',path:'/api/v1/platform/platform-support/:ticket/messages'}),'duplicate_route','support.message'],
+      [system({id:'jobs.kernel',method:'GET',path:'/api/v1/core'}),'duplicate_route','core.kernel_health'],
+      [system({id:'tasks.get',method:'GET',path:'/api/v1/jobs/:id'}),'duplicate_operation','tasks.get'],
+      [system({id:'jobs.tool',method:'GET',path:'/api/v1/jobs/:id',toolName:'lite_tasks_list'}),'duplicate_tool','tasks.list'],
+    ];
+    for(const [definition,code,other] of collisions){
+      assert.throws(()=>defineExtensions(domainApp,{operations:[definition]}),(error)=>error instanceof OperationCatalogError&&error.code===code&&error.operations[0]===other&&error.operations[1]===definition.operation.id,`${definition.operation.id} collides with ${other}`);
+    }
+    // Repeated construction yields the same diagnostic; a valid extension passes and the request-time catalogue agrees.
+    const first=(()=>{try{defineExtensions(domainApp,{operations:[collisions[0][0]]});}catch(e){return e.message;}})();
+    const second=(()=>{try{defineExtensions(domainApp,{operations:[collisions[0][0]]});}catch(e){return e.message;}})();
+    assert.equal(first,second);
+    const valid=defineExtensions(domainApp,{operations:[system({id:'jobs.get',method:'GET',path:'/api/v1/jobs/:id'})]});
+    assert.ok(operationCatalog({db,user:alice,workspace:{id:'w',name:'',role:'owner'}},domainApp,valid.operations).some(o=>o.id==='jobs.get'));
+    // Resolution: a literal segment beats a parameter, and a declared read is never masked by a native parameterised route.
+    const ops=[...coreOperations(domainApp),...appOperations(domainApp,[declared({id:'read.dossiers.latest',method:'GET',path:'/api/v1/modules/dossiers/records/latest'})])];
+    assert.equal(matchOperation(ops,'GET','/api/v1/modules/dossiers/records/latest').id,'read.dossiers.latest');
+    assert.equal(matchOperation(ops,'GET','/api/v1/modules/dossiers/records/abc').id,'module.dossiers.get');
+    const a=operation({id:'x.a',moduleId:'x',moduleName:'X',method:'GET',path:'/api/v1/a/:p/b',description:'',roles:['owner']}),b=operation({id:'x.b',moduleId:'x',moduleName:'X',method:'GET',path:'/api/v1/a/c/:q',description:'',roles:['owner']});
+    assert.equal(matchOperation([a,b],'GET','/api/v1/a/c/b').id,'x.b','the literal wins at the first differing segment');
+    assert.equal(matchOperation([b,a],'GET','/api/v1/a/c/b').id,'x.b');
+    const nativeOp=operation({id:'x.native',moduleId:'x',moduleName:'X',method:'GET',path:'/api/v1/a/:id',description:'',roles:['owner']}),appOp={...operation({id:'x.app',moduleId:'x',moduleName:'X',method:'GET',path:'/api/v1/a/:recordId',description:'',roles:['owner']}),source:'app'};
+    assert.equal(matchOperation([nativeOp,appOp],'GET','/api/v1/a/1').id,'x.app','on an exact tie the extension wins; native priority holds only when no extension claims the route');
+    assert.equal(matchOperation([nativeOp],'GET','/api/v1/a/1').id,'x.native');
+    // End to end: the declared read answers through the dispatcher while the native detail keeps its route.
+    const org=await boot(client(db,alice));
+    const ext=defineExtensions(domainApp,{operations:[read({moduleId:'dossiers',moduleName:'Dossiers',name:'latest',target:'module',description:'Dernier dossier',async handle(){return {body:{latest:true}};}})]});
+    assert.deepEqual((await caller(db,alice,org,domainApp,ext)('modules/dossiers/latest')).body,{latest:true});
+    assert.equal((await caller(db,alice,org,domainApp,ext)('modules/dossiers/records/unknown')).status,404);
   }finally{db.close();}
 });
