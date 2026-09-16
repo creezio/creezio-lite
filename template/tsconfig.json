@@ -170,6 +170,9 @@
       "@lite/sites-adapter/support": [
         "./runtime/modules/sites-adapter/src/support.ts"
       ],
+      "@lite/sites-adapter/catalog": [
+        "./runtime/modules/sites-adapter/src/catalog.ts"
+      ],
       "@lite/interactive-demo/ui": [
         "./runtime/modules/interactive-demo/ui/index.ts"
       ],
