@@ -666,7 +666,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
     throw new UsageError(`Commande inconnue : ${command}`);
   } catch (error) {
     // Erreurs du pool (coffre, déchiffrement, verrou, état) : indisponibilité explicite sans secret ; le reste remonte comme erreur d’usage.
-    if (error && error.name === 'PoolError') return emit({ command, status: 'unavailable', reason: error.code, message: String(error.message), ...(error.accountId ? { accountId: error.accountId } : {}), ...(error.holder ? { holder: error.holder } : {}) });
+    if (error && error.name === 'PoolError') return emit({ command, status: 'unavailable', reason: error.code, message: String(error.message), ...(error.accountId ? { accountId: error.accountId } : {}), ...(error.stage ? { stage: error.stage } : {}), ...(error.exitCode !== undefined ? { exitCode: error.exitCode } : {}), ...(error.holder ? { holder: error.holder } : {}) });
     throw error;
   }
 }
