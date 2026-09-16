@@ -1,10 +1,49 @@
 import type { ApiContext, Workspace } from './types.ts';
+import type { Operation } from './operations.ts';
+import { coreOperations, matchOperation } from './operations.ts';
 import { json, readJson } from './http.ts';
 import { fail, requireRole, boundedInteger } from './validation.ts';
 import { getProductivityReport } from './productivity.ts';
 
-const CAPACITY=1000;
+/** Per-workspace ceiling of stored request rows and their maximum age. Both are enforced on every write and on every read. */
+export const CAPACITY=1000;
+export const RETENTION_DAYS=30;
+/** Neutral labels: an unresolved route or tool name is never copied into the diagnostics. */
+export const UNKNOWN_ROUTE='/api/v1/[route-inconnue]';
+export const UNKNOWN_TOOL='[outil-inconnu]';
+export const MCP_PATH='/api/mcp';
+export const REQUEST_ID_HEADER='x-lite-request-id';
+const JSONRPC_METHODS=new Set(['initialize','ping','tools/list','tools/call','notifications/initialized','notifications/cancelled']);
+const HTTP_METHODS=new Set(['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']);
+const CREDENTIALS=new Set(['session','api_key','oauth']);
+const CODE=/^-?[A-Za-z0-9_.]{1,64}$/,TOOL=/^(?:lite|custom)_[a-z][a-z0-9_]{0,120}$/,UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const SKIPPED_OPERATIONS=/^(?:logs\.|analytics\.|mcp\.(?:metrics|status)$|session\.(?:heartbeat|me)$)/;
+const SKIPPED_PATHS=/^\/api\/v1\/(admin\/(request-logs|analytics|mcp\/(metrics|status))|analytics\/events|desktop\/heartbeat|auth\/me)/;
+
+export type RequestCredential='session'|'api_key'|'oauth';
+/** Mutable collector filled by the dispatcher while a request runs. Only catalogue identifiers and neutral labels enter it. */
+export type RequestTrace={correlationId:string;credential:RequestCredential;operation?:string;tool?:string;jsonrpcMethod?:string;calls:{operation?:string;status:number}[]};
+/** Closed diagnostic persisted in lite_request_logs.detail_json and returned by the admin listing. */
+export type RequestDiagnostic={ok:boolean;error?:string;operation?:string;tool?:string;jsonrpcMethod?:string;calls?:{operation:string;status:number}[];correlationId?:string;credential?:RequestCredential;legacy?:true};
+
+export function newRequestTrace(credential:RequestCredential='session'):RequestTrace{return {correlationId:crypto.randomUUID(),credential,calls:[]};}
+export function jsonrpcLabel(value:unknown):string{return typeof value==='string'&&JSONRPC_METHODS.has(value)?value:'unknown';}
+/** Error codes are our own snake_case identifiers or JSON-RPC integers; anything else collapses to a neutral code. */
+export function errorCode(value:unknown):string{const text=typeof value==='number'&&Number.isInteger(value)?String(value):typeof value==='string'?value:'';return CODE.test(text)?text:'error';}
+const knownOperation=(catalog:Operation[],id:unknown)=>typeof id==='string'?catalog.find(o=>o.id===id):undefined;
+const toolLabel=(value:unknown)=>value===UNKNOWN_TOOL||(typeof value==='string'&&TOOL.test(value))?value as string:undefined;
+const knownCalls=(catalog:Operation[],value:unknown)=>Array.isArray(value)?value.slice(0,20).flatMap(step=>{const op=knownOperation(catalog,step?.operation);return op&&Number.isInteger(step.status)?[{operation:op.id,status:Number(step.status)}]:[];}):[];
+
+/** Builds the closed diagnostic from a trace; every field is re-validated against the catalogue or a closed vocabulary. */
+export function buildDiagnostic(catalog:Operation[],trace:RequestTrace,ok:boolean,error?:string):RequestDiagnostic{
+  const op=knownOperation(catalog,trace.operation),tool=toolLabel(trace.tool),calls=knownCalls(catalog,trace.calls);
+  return {ok,...(error?{error:errorCode(error)}:{}),...(op?{operation:op.id}:{}),...(tool?{tool}:{}),...(trace.jsonrpcMethod!==undefined?{jsonrpcMethod:jsonrpcLabel(trace.jsonrpcMethod)}:{}),...(calls.length?{calls}:{}),correlationId:UUID.test(trace.correlationId)?trace.correlationId:crypto.randomUUID(),credential:CREDENTIALS.has(trace.credential)?trace.credential:'session'};
+}
+export function retentionCutoff(now=Date.now()){return new Date(now-RETENTION_DAYS*86400000).toISOString();}
+
 const safeText=(value:unknown,max=300)=>String(value??'').replace(/lite_[a-f0-9]{64}|Bearer\s+\S+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+/gi,'[masqué]').slice(0,max);
+function safePath(path:unknown){try{return new URL(String(path),'https://local.invalid').pathname.slice(0,300);}catch{return '';}}
+/** Kept for the assistant conversation trace; the request log no longer stores arbitrary payloads. */
 export function redactDiagnostic(value:unknown,depth=0):unknown {
   if(depth>5)return '[…]';if(value===undefined||value===null)return null;
   if(typeof value==='string')return safeText(value,400);
@@ -13,21 +52,40 @@ export function redactDiagnostic(value:unknown,depth=0):unknown {
   if(typeof value==='object')return Object.fromEntries(Object.entries(value).slice(0,40).map(([k,v])=>[k,/password|passwd|secret|token|authorization|cookie|api.?key|jwt|bearer|credential/i.test(k)?'[masqué]':redactDiagnostic(v,depth+1)]));
   return null;
 }
-function safePath(path:unknown){try{return new URL(String(path),'https://local.invalid').pathname.slice(0,300);}catch{return '';}}
-export async function persistRequestLog(request:Request,response:Response,c:ApiContext,org:Workspace,source:'api'|'mcp',started:number,detail:Record<string,unknown>={}){
-  const path=new URL(request.url).pathname;
-  if(/^\/api\/v1\/(admin\/(request-logs|analytics|mcp\/(metrics|status))|analytics\/events|desktop\/heartbeat|auth\/me)/.test(path))return;
-  let errorCode:string|undefined,ok=response.ok;
+
+export async function persistRequestLog(request:Request,response:Response,c:ApiContext,org:Workspace,source:'api'|'mcp',started:number,trace:RequestTrace){
+  const pathname=new URL(request.url).pathname,catalog=c.operations??coreOperations(c.app);
+  if(SKIPPED_OPERATIONS.test(trace.operation??'')||SKIPPED_PATHS.test(pathname))return;
+  let ok=response.ok,error:string|undefined;
   if(response.headers.get('content-type')?.includes('json')&&(source==='mcp'||!response.ok)){
-    const result=await response.clone().json().catch(()=>({})) as any;
-    ok=ok&&!result.error&&!result.result?.isError;errorCode=result.error?.code??(result.result?.isError?'tool_error':undefined);
+    const result=await response.clone().json().catch(()=>null) as any;
+    const rpcError=result?.error,toolError=result?.result?.isError===true;
+    if(rpcError||toolError){ok=false;error=toolError?'tool_error':errorCode(rpcError&&typeof rpcError==='object'?rpcError.code:rpcError);}
   }
-  if(path.startsWith('/api/v1/email')||/^lite_mail_/.test(String(detail.tool??'')))detail={tool:detail.tool};
-  const diagnostic={...redactDiagnostic(detail) as Record<string,unknown>,ok,...(errorCode?{error:safeText(errorCode,100)}:{}),userId:c.identity!.userId};
+  if(!ok&&!error)error=`http_${response.status}`;
+  const diagnostic=buildDiagnostic(catalog,trace,ok,error);
+  const path=source==='mcp'?MCP_PATH:knownOperation(catalog,diagnostic.operation)?.path??UNKNOWN_ROUTE;
   await c.env.DB.batch<Record<string,any>>([
-    c.env.DB.prepare('INSERT INTO lite_request_logs(id,org_id,user_id,source,method,path,status,duration_ms,detail_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(crypto.randomUUID(),org.id,c.identity!.userId,source,request.method,safePath(path),response.status,Math.max(0,Math.round(performance.now()-started)),JSON.stringify(diagnostic),new Date().toISOString()),
+    c.env.DB.prepare('INSERT INTO lite_request_logs(id,org_id,user_id,source,method,path,status,duration_ms,detail_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(crypto.randomUUID(),org.id,c.identity!.userId,source,HTTP_METHODS.has(request.method)?request.method:'OTHER',path,response.status,Math.max(0,Math.round(performance.now()-started)),JSON.stringify(diagnostic),new Date().toISOString()),
+    c.env.DB.prepare('DELETE FROM lite_request_logs WHERE org_id=? AND created_at<?').bind(org.id,retentionCutoff()),
     c.env.DB.prepare('DELETE FROM lite_request_logs WHERE org_id=? AND id NOT IN (SELECT id FROM lite_request_logs WHERE org_id=? ORDER BY created_at DESC,id DESC LIMIT ?)').bind(org.id,org.id,CAPACITY),
   ]);
+}
+
+export type StoredRequestLog={id:string;ts:string;source:string;method:string;path:string;status:number;durationMs:number;detail_json:string};
+/** Projects a stored row onto the closed vocabulary. Rows written before this minimisation carry no correlation id: only their status, error code and JSON-RPC method survive, and their path is re-resolved through the catalogue. */
+export function projectRequestLog(row:StoredRequestLog,catalog:Operation[]){
+  let stored:Record<string,any>={};try{const parsed=JSON.parse(String(row.detail_json));if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))stored=parsed;}catch{}
+  const legacy=!UUID.test(String(stored.correlationId??'')),method=HTTP_METHODS.has(row.method)?row.method:'OTHER';
+  const detail:RequestDiagnostic={ok:stored.ok===true,...(stored.error!==undefined&&stored.error!==null?{error:errorCode(stored.error)}:{}),...(stored.jsonrpcMethod!==undefined?{jsonrpcMethod:jsonrpcLabel(stored.jsonrpcMethod)}:{})};
+  let path:string;
+  if(legacy){detail.legacy=true;path=row.path===MCP_PATH?MCP_PATH:matchOperation(catalog,method,safePath(row.path))?.path??UNKNOWN_ROUTE;}
+  else{
+    const op=knownOperation(catalog,stored.operation),tool=toolLabel(stored.tool),calls=knownCalls(catalog,stored.calls);
+    Object.assign(detail,op?{operation:op.id}:{},tool?{tool}:{},calls.length?{calls}:{},{correlationId:stored.correlationId as string},CREDENTIALS.has(stored.credential)?{credential:stored.credential as RequestCredential}:{});
+    path=row.path===MCP_PATH||row.path===UNKNOWN_ROUTE||catalog.some(o=>o.path===row.path)?row.path:UNKNOWN_ROUTE;
+  }
+  return {id:row.id,ts:row.ts,source:row.source==='mcp'?'mcp':'api',method,path,status:Number(row.status),durationMs:Number(row.durationMs),detail};
 }
 
 export async function observabilityRoute(request:Request,c:ApiContext,org:Workspace):Promise<Response|null>{
@@ -47,13 +105,15 @@ export async function observabilityRoute(request:Request,c:ApiContext,org:Worksp
   requireRole(org.role,['owner','admin']);
   if(path==='admin/request-logs'){
     if(request.method==='DELETE'){await db.prepare('DELETE FROM lite_request_logs WHERE org_id=?').bind(org.id).run();return json({ok:true});}
-    const conditions=['org_id=?'],params:unknown[]=[org.id],source=url.searchParams.get('source'),q=url.searchParams.get('q')??'';
+    const conditions=['org_id=?','created_at>=?'],params:unknown[]=[org.id,retentionCutoff()],source=url.searchParams.get('source'),q=url.searchParams.get('q')??'';
     if(source&&source!=='all'){if(!['api','mcp'].includes(source))fail(400,'invalid_source','Source inconnue.');conditions.push('source=?');params.push(source);}
     if(url.searchParams.get('errorsOnly')==='1')conditions.push("(status>=400 OR json_extract(detail_json,'$.ok')=0)");
-    if(q){if(q.length>120)fail(400,'invalid_query','Recherche trop longue.');conditions.push('(instr(lower(path),lower(?))>0 OR instr(lower(detail_json),lower(?))>0)');params.push(q,q);}
+    // Search only the closed fields of minimised rows; legacy rows are never matched by their stored payloads.
+    if(q){if(q.length>120)fail(400,'invalid_query','Recherche trop longue.');conditions.push("(json_extract(detail_json,'$.correlationId') IS NOT NULL AND instr(lower(path||' '||COALESCE(json_extract(detail_json,'$.operation'),'')||' '||COALESCE(json_extract(detail_json,'$.tool'),'')||' '||COALESCE(json_extract(detail_json,'$.error'),'')||' '||COALESCE(json_extract(detail_json,'$.jsonrpcMethod'),'')||' '||COALESCE(json_extract(detail_json,'$.calls'),'')||' '||json_extract(detail_json,'$.correlationId')),lower(?))>0)");params.push(q);}
     const limit=boundedInteger(url.searchParams.get('limit'),200,1000),offset=boundedInteger(url.searchParams.get('offset'),0,100000),where=conditions.join(' AND ');
     const [logs,count]=await db.batch<Record<string,any>>([db.prepare(`SELECT id,created_at AS ts,source,method,path,status,duration_ms AS durationMs,detail_json FROM lite_request_logs WHERE ${where} ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?`).bind(...params,limit,offset),db.prepare(`SELECT COUNT(*) AS n FROM lite_request_logs WHERE ${where}`).bind(...params)]);
-    return json({logs:logs.results.map(({detail_json,...r})=>({...r,detail:JSON.parse(String(detail_json))})),total:count.results[0]?.n??0,capacity:CAPACITY});
+    const catalog=c.operations??coreOperations(c.app);
+    return json({logs:logs.results.map(row=>projectRequestLog(row as StoredRequestLog,catalog)),total:count.results[0]?.n??0,capacity:CAPACITY,retentionDays:RETENTION_DAYS});
   }
   if(path==='admin/analytics/events'&&request.method==='DELETE'){await db.prepare('DELETE FROM lite_usage_events WHERE org_id=?').bind(org.id).run();return json({ok:true});}
   const period=url.searchParams.get('period')??'week',days=({day:1,week:7,month:30,year:365} as Record<string,number>)[period];if(!days)fail(400,'invalid_period','Période inconnue.');
