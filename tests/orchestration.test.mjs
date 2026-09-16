@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm, mkdir, cp, readdir } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, mkdir, cp, readdir, symlink, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -373,6 +373,59 @@ test('adopt inspects, applies once, preserves local rules and unmanaged files, a
     await assert.rejects(adopt(temp), /brand\.json/);
     const cli = spawnSync(process.execPath, [join(root, 'bin/lite.mjs'), 'adopt', '--app', join(temp, 'nowhere')], { encoding: 'utf8' });
     assert.equal(cli.status, 1); assert.match(cli.stderr, /brand\.json/);
+  });
+});
+
+// Un lien symbolique (ou une jonction) sur un chemin géré ou un de ses parents ferait écrire adopt hors de l’application : refus avant toute écriture.
+test('adopt refuses symlinked managed paths and parents before any write, and reports a corrupt manifest without touching anything', async () => {
+  await withTemp('lite-orch-symlink-', async (temp) => {
+    const app = join(temp, 'app'), outside = join(temp, 'outside');
+    await createApp({ out: app, spec: join(root, 'examples/catalogue.json') });
+    await rm(join(app, '.cursor'), { recursive: true, force: true });
+    await mkdir(join(app, '.cursor'), { recursive: true });
+    const snapshot = async (dir) => { const out = {}; try { for (const f of await readdir(dir, { recursive: true })) { const path = join(dir, f); const info = await lstat(path); out[f] = info.isDirectory() ? 'dir' : info.isSymbolicLink() ? 'link' : createHash('sha256').update(await readFile(path)).digest('hex'); } } catch (error) { if (error.code !== 'ENOENT') throw error; return null; } return out; };
+    const refused = async (pattern) => {
+      const outsideBefore = await snapshot(outside), appBefore = await snapshot(join(app, '.cursor'));
+      await assert.rejects(adopt(app), pattern); await assert.rejects(adopt(app, true), pattern);
+      assert.deepEqual(await snapshot(outside), outsideBefore, 'cibles externes intactes'); assert.deepEqual(await snapshot(join(app, '.cursor')), appBefore, 'application intacte');
+      assert.equal((await doctor(app)).orchestration.status, 'invalid');
+    };
+
+    // 1. .cursor/rules → dossier externe.
+    await mkdir(join(outside, 'rules'), { recursive: true });
+    await symlink(join(outside, 'rules'), join(app, '.cursor/rules'), 'dir');
+    await refused(/Lien symbolique .*\.cursor[\\/]rules.*Aucune modification effectuée/);
+    assert.deepEqual(await readdir(join(outside, 'rules')), []);
+    await rm(join(app, '.cursor/rules'));
+
+    // 2. .cursor/skills/lite-orchestration → dossier externe (parent déjà existant).
+    await mkdir(join(app, '.cursor/skills'), { recursive: true }); await mkdir(join(outside, 'skill'), { recursive: true });
+    await symlink(join(outside, 'skill'), join(app, '.cursor/skills/lite-orchestration'), 'dir');
+    await refused(/Lien symbolique .*lite-orchestration.*Aucune modification effectuée/);
+    assert.deepEqual(await readdir(join(outside, 'skill')), []);
+    await rm(join(app, '.cursor/skills/lite-orchestration'));
+
+    // 3. Fichier géré symlinké vers une cible externe, avec manifeste le déclarant outdated.
+    const normal = await adopt(app, true); assert.equal(normal.applied, true); assert.equal(normal.written.length, 5);
+    const skillPath = join(app, orchestrationDir, 'SKILL.md'), target = join(outside, 'target.md');
+    const stale = 'ancienne copie externe\n'; await writeFile(target, stale);
+    await rm(skillPath); await symlink(target, skillPath, 'file');
+    const manifestPath = join(app, orchestrationManifest), manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    manifest.files[`${orchestrationDir}/SKILL.md`] = createHash('sha256').update(stale).digest('hex'); manifest.kitVersion = '0.11.9';
+    await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+    await refused(/Lien symbolique .*SKILL\.md.*Aucune modification effectuée/);
+    assert.equal(await readFile(target, 'utf8'), stale, 'cible externe non écrasée');
+    assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.11.9', 'manifeste non réécrit');
+    await rm(skillPath); await writeFile(skillPath, stale);
+    const repaired = await adopt(app, true); assert.deepEqual(repaired.written, [`${orchestrationDir}/SKILL.md`]);
+    assert.equal((await adopt(app, true)).changed, false, 'adoption normale et idempotence toujours vertes');
+
+    // Manifeste JSON corrompu : erreur claire, aucune écriture.
+    await writeFile(manifestPath, '{ "formatVersion": 1, "files": {');
+    const before = await snapshot(join(app, '.cursor'));
+    await assert.rejects(adopt(app, true), /Manifeste d’orchestration illisible .*JSON invalide.*Aucune modification effectuée/);
+    assert.deepEqual(await snapshot(join(app, '.cursor')), before);
+    assert.equal((await doctor(app)).orchestration.status, 'invalid');
   });
 });
 
