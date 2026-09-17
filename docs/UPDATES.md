@@ -124,3 +124,9 @@ Hors périmètre (empreintes brutes **préexistantes**, pas le parser corrigé) 
 Réception fiable : checkout isolé exact en LF, sans changer la configuration Git globale — `git -c core.autocrlf=false` et `core.eol=lf` à la création ou au checkout. Ne jamais falsifier `lite.lock.json` ni `manifest.json`, ni écraser de vraies modifications locales. Un clone d’application déjà converti en CRLF exige une réception explicite depuis les octets Git, pas un `adopt --apply` forcé et silencieux.
 
 Les ressources distribuées du standard sont **inchangées** par rapport à 0.13.0. Le CLI 0.13.1 suffit au parser ; une adoption 0.13 déjà valide n’a **ni ré-adoption ni upgrade runtime** à faire pour fermer W01. La normalisation globale des empreintes CRLF reste un lot distinct. Aucune migration, aucun secret, aucune fusion de pages applicatives.
+
+## Passage à 0.14.0 — Références secondaires du transport Cursor
+
+Capacité additive du standard d’orchestration : `lite adopt --apply` met à jour `scripts/cursor-agents.mjs`, `CONTRACT.md` et `SKILL.md`. Le runtime métier, le schéma, les migrations et les secrets ne changent pas ; l’upgrade du runtime ne fait qu’aligner les chaînes de version API/MCP.
+
+Usage pilote : `launch --mission K --repo <cible> --ref <branche> --references-file refs.json --prompt-file f --registry f` avec `refs.json` = `[{ "url": "https://github.com/org/source", "sha": "<40 hex>" }]`. L’autorisation de lecture des sources est fournie explicitement par le pilote sur le compte qui lance. `followup` ne peut pas ajouter de dépôt ; un nouveau besoin exige une nouvelle mission. Version **pas encore livrée** tant que la release GitHub n’est pas publiée.

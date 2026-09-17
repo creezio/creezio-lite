@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.14.0 — Références secondaires explicites dans le transport Cursor
+
+- `cursor-agents.mjs` : `--references-file` JSON strict `[{url,sha}]` (SHA 40 hex immuable, ≤19 sources, URL GitHub HTTPS sans userinfo/query/fragment). La cible unique reste `--repo`/`--ref` ou `--pr-url`. Doublons normalisés et source = cible refusés. Pas de branche/tag mouvant ni de `prUrl` source.
+- Avant POST, `GET /v1/repositories` paginé du compte sélectionné doit lister la cible et chaque source ; un manquant bloque sans POST. Le reçu distingue `demanded` / `visible` / `attached` / `checkout.observed: null` : visibilité catalogue ≠ clonage pod. Lecture seule des sources : consigne d’orchestration, pas une ACL fournisseur.
+- Références immuables persistées (ordre canonique) et validées à l’idempotence ; entrée ancienne sans `references` inchangée. Input différent sur une mission existante ⇒ `input_changed`. `followup` conserve l’ensemble initial ; `successor` recopie les SHA et revalide le catalogue du compte cible. 404/timeout/409/uncertain inchangés. Tests sur mocks ; pas de sonde API réelle. Aucun changement du pool DPAPI, du runtime métier, du schéma ni de `docs/contracts/public-ingress*`.
+
 ## 0.13.1 — Frontmatter de compétence LF et CRLF dans le CLI (`create`/`adopt` seulement)
 
 - `skillFrontmatter` dans `bin/lite.mjs` accepte les délimiteurs `---` et les fins de ligne LF ou CRLF ; `name` et `description` restent exigés sur une seule ligne, le frontmatter malformé est toujours refusé sans écriture partielle.
