@@ -1,5 +1,12 @@
 # Versions de Lite
 
+## 0.14.2 — Lecture de secours Cursor pour les missions connues
+
+- En cas de timeout, erreur réseau ou 5xx sur la lecture agent, le transport peut retrouver le dernier run via la liste ordonnée du même compte, puis relire ce run exact. Le run déjà connu doit être présent ; identités, dates et ordre sont vérifiés. Aucun changement de compte ou de modèle.
+- Une liste inchangée ne résout pas une reprise dont le POST est incertain. Les créations sans run connu restent en attente de réconciliation. Aucun POST répété automatiquement.
+- Tests de régression sur fixtures : réponses incohérentes, run actif, liste périmée, clé refusée et POST incertain. Cette correction ne rétablit pas le service Cursor et ne livre pas les runtimes natifs en préparation.
+- Version candidate jusqu’à publication de la release GitHub au SHA validé.
+
 ## 0.14.1 — Contrats C01 et ACCESS, propositions acceptées
 
 - Reprend `0.14.0` déjà publié (`92e557e26c2d0ab2251965efbe7d416831d2fb90`). Transport Cursor **identique** à `main` 0.14.0. Aucun runtime livré (ingress ou accès). **Pas d’upgrade forcé.**
