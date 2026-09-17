@@ -8,6 +8,19 @@ export function checkOrigin(request: Request) {
   const expected = new URL(request.url).origin;
   if (request.headers.get('origin') !== expected || request.headers.get('sec-fetch-site') === 'cross-site') fail(403, 'invalid_origin', 'Origine de la requête non autorisée.');
 }
+/** HTTP method compared to public entries: uppercase, no query string involved. */
+export function normalizedMethod(request: Request) {
+  return request.method.trim().toUpperCase();
+}
+/** Pathname only; the query string never participates in routing or tenant selection. */
+export function requestPathname(request: Request) {
+  return new URL(request.url).pathname;
+}
+export function requestQuery(request: Request): Readonly<Record<string, string>> {
+  const query: Record<string, string> = {};
+  for (const [key, value] of new URL(request.url).searchParams) if (!(key in query)) query[key] = value;
+  return query;
+}
 export async function readBytes(request: Request, maximum: number) {
   const size = request.headers.get('content-length');
   if (size && (!/^\d+$/.test(size) || Number(size) > maximum)) fail(413, 'payload_too_large', 'Le fichier ou la requête dépasse la taille autorisée.');
@@ -18,6 +31,17 @@ export async function readBytes(request: Request, maximum: number) {
   const bytes = new Uint8Array(total); let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
   return bytes;
+}
+/**
+ * Single raw read for a public entry. GET does not require JSON or a Content-Type;
+ * any declared or actual body is still read once so the engine can refuse it.
+ */
+export async function readPublicBytes(request: Request, maximum: number) {
+  if (normalizedMethod(request) === 'GET') {
+    const size = request.headers.get('content-length');
+    if ((!size || size === '0') && !request.body) return new Uint8Array();
+  }
+  return readBytes(request, maximum);
 }
 export async function readJson(request: Request): Promise<Record<string, unknown>> {
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) fail(415, 'json_required', 'Une requête JSON est attendue.');

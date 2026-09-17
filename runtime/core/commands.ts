@@ -4,6 +4,7 @@ import { ApiError, errorBody, fail, idPattern, roles as everyRole } from './vali
 import { validateSchema } from './tools.ts';
 import { json, readJson } from './http.ts';
 import { resolveScope, sessionCredential } from './scope.ts';
+import { PublicIngressDeclarationError, validatePublicIngressDeclaration } from './public-ingress-engine.ts';
 
 const writers:Role[]=['owner','admin','member'];
 const namePattern=/^[a-z][a-z0-9-]{0,47}$/;
@@ -85,12 +86,20 @@ export function read(input:ReadInput):AppOperationDefinition{
  * route shape or tool name with the given catalogue is refused here, with the same stable
  * diagnostics as the request-time catalogue. Without a catalogue the core operations of the
  * application are used; the Sites adapter passes its complete native catalogue.
+ * publicIngress exige ce catalogue complet : `operations: []` ou son omission ne prouvent
+ * pas l’absence de collision avec les routes privées.
  */
 export function defineExtensions(app:AppDefinition,extensions:AppExtensions={},catalog?:Operation[]):AppExtensions{
   if(extensions.beforeWrite!==undefined&&typeof extensions.beforeWrite!=='function')throw new Error('beforeWrite doit être une fonction.');
   resolveScope(extensions.scope);
   const declared=appOperations(app,extensions.operations);
-  assertUniqueOperations([...(catalog??coreOperations(app)),...declared]);
+  const privateOperations=assertUniqueOperations([...(catalog??coreOperations(app)),...declared]);
+  if(extensions.publicIngress!==undefined){
+    if(!Array.isArray(catalog)||catalog.length<1){
+      throw new PublicIngressDeclarationError('operations_catalog_required','Le catalogue complet des opérations privées doit être fourni explicitement ; son absence ou operations:[] ne prouve pas l’unicité des routes publiques.');
+    }
+    validatePublicIngressDeclaration(extensions.publicIngress,{operations:privateOperations});
+  }
   return extensions;
 }
 

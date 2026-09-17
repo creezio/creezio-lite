@@ -1,4 +1,5 @@
 import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
+import type { PublicIngressDeclaration } from './public-ingress-engine.ts';
 export type Role = 'owner' | 'admin' | 'member' | 'viewer';
 export type Identity = { userId: string; email: string; displayName: string };
 export type Field = {
@@ -107,4 +108,6 @@ export type AppExtensions = {
   beforeWrite?: BeforeWrite;
   operations?: AppOperationDefinition[];
   scope?: ScopeProvider;
+  /** Opt-in additif, distinct de `access`. Absent ⇒ aucune route publique. */
+  publicIngress?: PublicIngressDeclaration;
 };
