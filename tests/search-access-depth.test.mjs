@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {fileURLToPath} from 'node:url';
-import {app,alice,client,boot,clientData} from './helpers.mjs';
+import {app,alice,bob,client,boot,clientData} from './helpers.mjs';
 import {localDatabase,migrate} from '../template/scripts/migrate-local.mjs';
 import {coreOperations} from '../runtime/core/operations.ts';
 import {searchData,searchSelection} from '../runtime/core/search.ts';
@@ -17,6 +17,10 @@ test('D1 materializes deep access predicates without changing visibility, rankin
   const visible=await create('Alpha visible'),hidden=await create('Alpha secret'),other=await create('Other visible');
   for(const [id,action,resource]of [['extra-visible-audit','clients.update',visible],['orphan-audit','removed.update','secret-orphan']])await db.prepare('INSERT INTO lite_audit(id,org_id,user_id,action,resource_id,details,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,org,'alice',action,resource,'{}','2026-01-01T00:00:00Z').run();
   for(const id of ['file-visible','file-hidden'])await db.prepare('INSERT INTO lite_files(id,org_id,name,object_key,size,content_type,created_by,created_at) VALUES(?,?,?,?,1,?,?,?)').bind(id,org,'Alpha '+id,id,'text/plain','alice','2026-01-01T00:00:00Z').run();
+  const foreignOwner=client(db,bob),foreignOrg=await boot(foreignOwner);
+  const foreign=await foreignOwner('modules/clients/records?workspace='+foreignOrg,{method:'POST',body:{data:{...clientData,name:'Alpha foreign',notes:'Alpha shared'}}});assert.equal(foreign.status,201);
+  // Same referenced resource ID in another workspace must not cross the audit fence.
+  await db.prepare('INSERT INTO lite_audit(id,org_id,user_id,action,resource_id,details,created_at) VALUES(?,?,?,?,?,?,?)').bind('foreign-audit',foreignOrg,'bob','clients.update',visible,'{}','2026-01-01T00:00:00Z').run();
   const declaration={catalogRevision:'deep-v1',capabilities:[{id:'read',operations:['module.clients.list','files.list','search.query']}],profiles:[{id:'reader',revision:1,capabilities:['read'],receivableBy:['owner'],assignableBy:['owner'],assignmentApproval:'owner'}]};
   await db.prepare('INSERT INTO lite_access_groups(org_id,id,name,members_json,version,created_at) VALUES(?,?,?,?,1,?)').bind(org,'readers','Readers','["alice"]','2026-01-01T00:00:00Z').run();
   await db.prepare('INSERT INTO lite_access_receipts(org_id,receipt_json,version,updated_at) VALUES(?,?,1,?)').bind(org,JSON.stringify({catalogRevision:'deep-v1',bindings:[{groupId:'readers',profileId:'reader',profileRevision:1}]}),'2026-01-01T00:00:00Z').run();
@@ -30,7 +34,7 @@ test('D1 materializes deep access predicates without changing visibility, rankin
   for(const [query,extra]of [['Alpha',{}],['Alpha shared',{}],['Alpha',{moduleId:'clients'}],['Alpha',{limit:1,offset:1}],[visible,{moduleId:'audit'}],['secret-orphan',{}],['secret',{}]]){
    const expected=await searchData(db,app,workspace,query,{...options(false),...extra});
    const actual=await searchData(measured,app,workspace,query,{...options(true),...extra});
-   assert.deepEqual(actual,expected,query+JSON.stringify(extra));assert.equal(JSON.stringify(actual).includes(hidden),false);assert.equal(actual.items.some(x=>x.id==='file-hidden'||x.id==='orphan-audit'),false);
+   assert.deepEqual(actual,expected,query+JSON.stringify(extra));assert.equal(JSON.stringify(actual).includes(hidden),false);assert.equal(actual.items.some(x=>x.id==='file-hidden'||x.id==='orphan-audit'||x.id==='foreign-audit'||x.id===foreign.body.record.id),false);
   }
   const records=await searchData(db,app,workspace,'Alpha',{...options(true),moduleId:'clients'});assert.equal(records.total,2);assert.equal(records.items[0].id,visible);assert.ok(records.items.some(x=>x.id===other));
   const audits=await searchData(db,app,workspace,visible,{...options(true),moduleId:'audit'});assert.equal(audits.total,2);assert.equal(new Set(audits.items.map(x=>x.id)).size,2);
