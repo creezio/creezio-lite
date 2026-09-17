@@ -145,9 +145,9 @@ function changesOf(result: { meta?: { changes?: number } } | undefined): number 
   return Number(result?.meta?.changes ?? 0);
 }
 
-function rowOf(result: { results?: ClaimRow[] } | undefined): ClaimRow | undefined {
-  const row = result?.results?.[0];
-  return row && typeof row === 'object' ? row : undefined;
+function rowOf(result: unknown): ClaimRow | undefined {
+  const row = (result as { results?: unknown[] } | undefined)?.results?.[0];
+  return row && typeof row === 'object' ? row as ClaimRow : undefined;
 }
 
 function newToken(): string {
