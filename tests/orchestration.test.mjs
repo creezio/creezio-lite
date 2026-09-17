@@ -46,12 +46,13 @@ function assertNoLeak(value) {
   for (const marker of [KEY, BODY_MARKER, PROMPT_MARKER, 'Bearer ']) assert.ok(!text.includes(marker), `fuite de « ${marker.trim()} » dans ${text.slice(0, 200)}`);
 }
 async function withTemp(prefix, run) { const temp = await mkdtemp(join(tmpdir(), prefix)); try { return await run(temp); } finally { await rm(temp, { recursive: true, force: true }); } }
-// Ressources distribuées par le standard composé (O01 transport + P1 contrat de planification + P2 outil) : liste explicite, jamais dérivée du code testé.
+// Ressources distribuées par le standard composé (O01 transport + P1 contrat de planification + P2 outil + P5 adaptateur du pool de comptes) : liste explicite, jamais dérivée du code testé.
 export const DISTRIBUTED = [
   orchestrationRule,
   `${orchestrationDir}/SKILL.md`, `${orchestrationDir}/CONTRACT.md`, `${orchestrationDir}/cursor-model.json`, `${orchestrationDir}/scripts/cursor-agents.mjs`,
   `${orchestrationDir}/PLANNING.md`, `${orchestrationDir}/planning-plan.schema.json`, `${orchestrationDir}/planning-state.schema.json`, `${orchestrationDir}/examples/planning-plan.json`, `${orchestrationDir}/examples/planning-state.json`,
   `${orchestrationDir}/scripts/plan-missions.mjs`,
+  `${orchestrationDir}/scripts/cursor-account-pool.mjs`,
 ].sort();
 
 test('the canonical skill has a valid frontmatter, fixed selections without fallback and no private data', async () => {
@@ -61,13 +62,13 @@ test('the canonical skill has a valid frontmatter, fixed selections without fall
   const description = front[1].match(/^description: (.+)$/m); assert.ok(description && description[1].length > 40 && description[1].length <= 1024);
   for (const link of ['CONTRACT.md', 'cursor-model.json', 'scripts/cursor-agents.mjs']) assert.ok(skill.includes(link) && (await readdir(join(root, orchestrationDir, link.includes('/') ? 'scripts' : '.'))).includes(link.split('/').pop()));
   const sources = await orchestrationSources();
-  assert.deepEqual(Object.keys(sources).sort(), DISTRIBUTED, 'onze ressources distribuées : transport O01, cinq ressources du contrat de planification, outil plan-missions');
+  assert.deepEqual(Object.keys(sources).sort(), DISTRIBUTED, 'douze ressources distribuées : transport O01, cinq ressources du contrat de planification, outil plan-missions, adaptateur du pool de comptes');
   for (const source of Object.values(sources)) {
     const content = await readFile(source, 'utf8');
     assert.doesNotMatch(content, /bc-[0-9a-f]{8}-[0-9a-f]{4}|run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}|\/home\/|\/Users\/|[A-Z]:\\|key_[A-Za-z0-9]{20}|sk-[A-Za-z0-9]{20}/, `donnée privée dans ${source}`);
     assert.ok(!content.includes('Codex ') || /pas de|aucun|ni /i.test(content));
   }
-  for (const script of ['cursor-agents.mjs', 'plan-missions.mjs']) {
+  for (const script of ['cursor-agents.mjs', 'plan-missions.mjs', 'cursor-account-pool.mjs']) {
     const imports = [...(await readFile(sources[`${orchestrationDir}/scripts/${script}`], 'utf8')).matchAll(/^import .* from ['"]([^'"]+)['"]/gm)].map(m => m[1]);
     assert.ok(imports.length > 0 && imports.every(i => i.startsWith('node:')), `${script} doit rester autonome, sans import du kit : ${imports}`);
   }
@@ -207,12 +208,31 @@ test('launch deduplicates missions, fixes the selection once in the payload and 
     assert.equal((await agents.loadRegistry(registryFile)).missions.O01.state, 'reconciled');
 
     await agents.saveRegistry(registryFile, { formatVersion: 1, missions: {} });
+    // Livraison inconnue (délai/réseau après le POST) puis 404 : le fournisseur a peut-être reçu la requête ; un 404 — immédiat ou répété — ne prouve pas l’absence.
+    // L’entrée reste uncertain (raison de livraison persistée), launch se déduplique sans second POST, aucune borne de temps n’est inventée ; seule une attestation humaine explicite conclut.
     const lost = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => { throw new TypeError('socket hang up'); }, [`GET /v1/agents/${AGENT}`]: () => json({ error: { code: 'not_found' } }, 404) });
-    const notCreated = await agents.launch({ ...base, fetchImpl: lost.fetchImpl });
-    assert.equal(notCreated.status, 'unavailable'); assert.equal(notCreated.state, 'not_created'); assert.equal(notCreated.reason, 'network');
-    assert.equal((await agents.loadRegistry(registryFile)).missions.O01.state, 'not_created');
+    const unknownDelivery = await agents.launch({ ...base, fetchImpl: lost.fetchImpl });
+    assert.equal(unknownDelivery.status, 'uncertain'); assert.equal(unknownDelivery.state, 'uncertain'); assert.equal(unknownDelivery.reason, 'not_found_after_unknown_delivery'); assert.equal(unknownDelivery.deliveryReason, 'network');
+    assert.match(unknownDelivery.nextAction, /404 ne prouve pas l’absence/); assert.match(unknownDelivery.nextAction, /--confirm-absent/); assertNoLeak(unknownDelivery);
+    let persisted = (await agents.loadRegistry(registryFile)).missions.O01;
+    assert.equal(persisted.state, 'uncertain'); assert.deepEqual({ state: persisted.delivery.state, reason: persisted.delivery.reason }, { state: 'unknown', reason: 'network' });
+    for (let i = 0; i < 3; i++) { const again = await agents.reconcile({ mission: 'O01', key: KEY, registryFile, fetchImpl: lost.fetchImpl }); assert.equal(again.status, 'uncertain'); assert.equal(again.reason, 'not_found_after_unknown_delivery'); assert.equal(again.delivery.state, 'unknown'); }
+    assert.equal((await agents.launch({ ...base, fetchImpl: lost.fetchImpl })).status, 'deduplicated', 'aucun POST tant que la livraison est inconnue');
+    assert.equal(lost.calls.filter(c => c.method === 'POST').length, 1, 'un seul POST malgré timeout, 404 répétés et reconcile répétés');
+    const attested = await agents.reconcile({ mission: 'O01', confirmAbsent: true, key: KEY, registryFile, fetchImpl: lost.fetchImpl });
+    assert.equal(attested.status, 'not_created'); assert.equal(attested.attested, true); assert.equal(attested.delivery.state, 'attested_absent'); assert.equal(attested.delivery.attestedBy, 'human'); assert.match(attested.nextAction, /attestée par l’orchestrateur/);
+    persisted = (await agents.loadRegistry(registryFile)).missions.O01; assert.equal(persisted.state, 'not_created'); assert.equal(persisted.delivery.state, 'attested_absent', 'décision humaine tracée au registre');
+    assert.equal(lost.calls.filter(c => c.method === 'POST').length, 1);
     const relaunch = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => json({ agent: agentRecord(), run: runRecord() }) });
-    assert.equal((await agents.launch({ ...base, fetchImpl: relaunch.fetchImpl })).status, 'launched', 'not_created autorise une relance sur la même clé');
+    assert.equal((await agents.launch({ ...base, fetchImpl: relaunch.fetchImpl })).status, 'launched', 'not_created attesté autorise une relance sur la même clé');
+    // Refus fournisseur explicite (4xx reçu au POST) : rien n’a été créé, aucune lecture 404 nécessaire ; distinct d’une livraison inconnue.
+    await agents.saveRegistry(registryFile, { formatVersion: 1, missions: {} });
+    const refusedPost = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => json({ error: { code: 'invalid_request', message: BODY_MARKER } }, 400) });
+    const explicit = await agents.launch({ ...base, fetchImpl: refusedPost.fetchImpl });
+    assert.equal(explicit.status, 'blocked'); assert.equal(explicit.reason, 'rejected'); assert.equal(explicit.httpStatus, 400); assert.deepEqual(refusedPost.calls.map(c => c.method), ['GET', 'POST']); assertNoLeak(explicit);
+    assert.equal((await agents.loadRegistry(registryFile)).missions.O01.state, 'failed');
+    const notApplicable = await agents.reconcile({ mission: 'O01', confirmAbsent: true, key: KEY, registryFile, fetchImpl: recorder({}).fetchImpl });
+    assert.equal(notApplicable.status, 'blocked'); assert.equal(notApplicable.reason, 'confirm_absent_not_applicable', 'l’attestation d’absence ne s’applique qu’à une livraison inconnue');
 
     await agents.saveRegistry(registryFile, { formatVersion: 1, missions: {} });
     const unknown = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => { throw new TypeError('socket hang up'); }, [`GET /v1/agents/${AGENT}`]: () => json({}, 503) });
