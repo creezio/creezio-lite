@@ -17,6 +17,14 @@ Les missions de réalisation déléguées à Cursor suivent le standard `.cursor
 3. Le workflow `release.yml` attend la réussite du workflow `Lite` sur le commit exact de main. Il publie `vX.Y.Z`, son SHA et les notes de version. Une release ou un tag existants ne sont jamais déplacés. Un main plus récent rend la tentative précédente obsolète.
 4. Vérifier la réussite réelle de la publication. Une fusion seule n'est pas une release ; une erreur de publication reste une prochaine action à traiter. Le déclenchement manuel reprend le même contrôle de CI et de version.
 
+## Fermeture de cycle et branches
+
+Fermer une livraison kit dans cet ordre, avec preuves SHA et PR à chaque palier : réception compacte → revue indépendante du delta → CI de la tête exacte de la PR → fusion par le responsable commun au SHA attendu → CI de `main` au SHA fusionné → release GitHub (`vX.Y.Z` au SHA de main, tag immuable) → notification des applications (une issue par version) → suppression de la branche de travail.
+
+`delete_branch_on_merge` est activé sur ce dépôt : GitHub supprime la branche **après une fusion**. Ne jamais supprimer une branche encore active ou non fusionnée. Une branche candidate bloquée (capacité non prouvée) reste jusqu’à décision explicite du responsable.
+
+La boucle active du skill n’est pas une routine planifiée : aucun cron, aucun daemon, aucune promesse de processus autonome après la fin de session. Elle ne réveille pas un processus terminé ni une application fermée. Les applications conservent leur mandat. Une copie personnelle de compétence n’est pas écrasée. Une évolution documentaire du skill s’intègre par `node <checkout-kit>/bin/lite.mjs adopt --app <dossier>` (puis `--apply`) ; pas d’upgrade runtime forcé pour cette doc.
+
 ## Distribution et réception applicative
 
 Chaque dépôt applicatif embarque `scripts/check-lite-update.mjs` et `.github/workflows/lite-update.yml`. Le générateur les copie automatiquement aux nouvelles applications. La veille consulte la dernière release stable, résout le tag en SHA exact et vérifie sa version dans package.json. Elle utilise uniquement le jeton GitHub Actions du dépôt applicatif, avec lecture des contenus et écriture des issues.
@@ -33,4 +41,4 @@ Le responsable conserve un registre privé : application, dépôt/source, Site, 
 
 Pour un Site sans dépôt GitHub applicatif, notifier sa tâche propriétaire et enregistrer le suivi dans ce registre. Une nouvelle application doit être inscrite au registre et recevoir la veille ; son absence de dépôt ou de pilote reste un écart explicite, pas un succès simulé.
 
-Une routine du responsable reprend les PR, les releases et ce registre toutes les 30 minutes. Pendant un tour actif, elle enchaîne les actions disponibles sans attendre le prochain réveil. Elle signale uniquement les publications, intégrations, erreurs ou décisions nécessaires et reste silencieuse si rien ne change. Cette routine coordonne les tâches applicatives mais ne remplace pas leurs tests ni leurs mandats de publication.
+Une routine du responsable reprend les PR, les releases et ce registre toutes les 30 minutes. Pendant un tour actif, elle enchaîne les actions disponibles sans attendre le prochain réveil. Elle signale uniquement les publications, intégrations, erreurs ou décisions nécessaires et reste silencieuse si rien ne change. Cette routine coordonne les tâches applicatives mais ne remplace pas leurs tests ni leurs mandats de publication. Elle n’est pas la boucle active du skill et n’ajoute aucun cron applicatif.

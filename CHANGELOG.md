@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.13.2 — Boucle active d’orchestration et fermeture de cycle
+
+- `SKILL.md` : section boucle active (rester dans le tour, outils existants, polling progressif borné ; `RUNNING`/CI pending n’est pas une fin). `status --follow` émet au changement et continue tant que non terminal. Frontières kit/app. Renvoi court `CONTRACT.md` §10. Pas de moteur ni de daemon.
+- `docs/MAINTENANCE.md` : fermeture de cycle réception → revue → CI de la tête exacte → fusion → CI de `main` → release → notification → suppression de branche, avec preuves SHA/PR. Pas de suppression d’une branche active ou non fusionnée ; `delete_branch_on_merge` est configuré. Aucune routine/cron pour cette boucle ; pas de processus autonome après fin de session.
+- Pas de `--references-file`, pas de nouveau runtime métier. Chaînes de version API/MCP alignées. Le skill se met à jour par `lite adopt` ; pas d’upgrade runtime forcé pour cette documentation. Copies personnelles de compétence non écrasées.
+
 ## 0.13.1 — Frontmatter de compétence LF et CRLF dans le CLI (`create`/`adopt` seulement)
 
 - `skillFrontmatter` dans `bin/lite.mjs` accepte les délimiteurs `---` et les fins de ligne LF ou CRLF ; `name` et `description` restent exigés sur une seule ligne, le frontmatter malformé est toujours refusé sans écriture partielle.
