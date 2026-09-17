@@ -133,6 +133,12 @@ Ce n’est **pas** `--references-file`, pas une capacité multi-dépôts, pas un
 
 Mise à jour du skill : `node <checkout-kit>/bin/lite.mjs adopt --app <dossier>` puis `--apply` depuis un checkout de cette version. **Pas d’upgrade runtime forcé** pour cette documentation ; l’upgrade habituel, s’il est lancé, n’aligne que le verrou et les chaînes de version API/MCP. Aucune migration, aucun secret.
 
+## Correction 0.14.1 — Contrat d’entrées publiques (C01)
+
+Documentation seulement : `docs/contracts/public-ingress.md` et `docs/contracts/public-ingress-tests.md`, identiques à `f005bac1001a3fef0b963268baccb90439f7572c` (acceptés par revue indépendante C01-R). Contrat proposé et **accepté** pour de futures implémentations. **Aucun runtime d’ingress actuellement.**
+
+Ce n’est **pas** une capacité livrée, pas une modification du transport Cursor, des docs d’accès, du schéma, des migrations ni des tests. Le runtime métier et les secrets ne changent pas. L’upgrade du runtime, s’il est lancé, n’aligne que le verrou et les chaînes de version API/MCP ; **pas d’upgrade runtime forcé** pour cette documentation. Aucune migration, aucun secret. Version **candidate** jusqu’à la release GitHub.
+
 ## Passage à 0.14.0 — Références secondaires du transport Cursor
 
 Capacité additive du standard d’orchestration, **candidate** jusqu’à la release GitHub : `lite adopt --apply` met à jour `scripts/cursor-agents.mjs`, `CONTRACT.md` et `SKILL.md` depuis un checkout de cette branche. Reprend le skill 0.13.2 déjà publié. Le runtime métier, le schéma, les migrations et les secrets ne changent pas ; l’upgrade du runtime ne fait qu’aligner les chaînes de version API/MCP. Cette note n’est pas une publication.

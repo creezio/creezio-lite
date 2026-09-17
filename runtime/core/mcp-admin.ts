@@ -58,7 +58,7 @@ export async function mcpAdminRoute(request:Request,c:ApiContext,org:Workspace,o
   }
   if(path==='admin/mcp/diagnostics'||path==='admin/mcp/diagnostics/export'){
     const checks=[{id:'oauth',ok:Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='lite_oauth_tokens'").first()),message:'OAuth disponible avec autorisation et révocation des connexions'},{id:'database',ok:Boolean(await db.prepare('SELECT id FROM lite_orgs WHERE id=?').bind(org.id).first()),message:'Base de données accessible'},{id:'catalog',ok:operations.every(o=>o.description&&o.id),message:'Catalogue des opérations documenté'},{id:'bindings',ok:bindings.every(t=>operations.some(o=>o.id===t.operationId)),message:'Chaque outil est rattaché à une API'},{id:'access',ok:true,message:'Droits contrôlés à chaque appel HTTP et MCP'}];
-    const response=json({healthy:checks.every(c=>c.ok),checks,version:'0.14.0',operations:operations.length,tools:bindings.length});if(path.endsWith('/export'))response.headers.set('Content-Disposition','attachment; filename="lite-mcp-diagnostic.json"');return response;
+    const response=json({healthy:checks.every(c=>c.ok),checks,version:'0.14.1',operations:operations.length,tools:bindings.length});if(path.endsWith('/export'))response.headers.set('Content-Disposition','attachment; filename="lite-mcp-diagnostic.json"');return response;
   }
   if(path==='admin/mcp/metrics'){
     const rows=(await db.prepare("SELECT status,duration_ms,detail_json FROM lite_request_logs WHERE org_id=? AND source='mcp' ORDER BY created_at DESC LIMIT 1000").bind(org.id).all<{status:number;duration_ms:number;detail_json:string}>()).results;
