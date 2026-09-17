@@ -563,11 +563,15 @@ test('launch in pool mode: deterministic account in configured order, owner atta
       // Livraison incertaine (5xx, réseau) : le 404 immédiat ne conclut pas « non créé » ; seul un reconcile explicite le fait. Refus explicite (4xx) : non créé.
       const state = (await agents.loadRegistry(registryFile)).missions.M2.state;
       if (uncertain) {
-        assert.equal(out.status, 'uncertain'); assert.equal(out.reason, 'not_found_after_unknown_delivery'); assert.ok(['server', 'network'].includes(out.deliveryReason)); assert.equal(state, 'uncertain'); assert.match(out.nextAction, /404 immédiat ne prouve pas l’absence/);
-        assert.equal((await agents.launch({ ...base, mission: 'M2', ref: 'agents/M2', account: 'acct-c', fetchImpl: recorder({}).fetchImpl })).status, 'deduplicated', 'aucun POST tant que non résolu');
-        const settled = await agents.reconcile({ mission: 'M2', registryFile, access, fetchImpl: r.fetchImpl });
-        assert.equal(settled.status, 'not_created'); assert.match(settled.nextAction, /launch autorisé/); assert.equal(r.posts().length, 1);
-      } else assert.ok(['failed', 'not_created'].includes(state), `refus explicite ⇒ ${state}`);
+        assert.equal(out.status, 'uncertain'); assert.equal(out.reason, 'not_found_after_unknown_delivery'); assert.ok(['server', 'network'].includes(out.deliveryReason)); assert.equal(state, 'uncertain'); assert.match(out.nextAction, /404 ne prouve pas l’absence/); assert.match(out.nextAction, /--confirm-absent/);
+        const persisted = (await agents.loadRegistry(registryFile)).missions.M2; assert.equal(persisted.delivery.state, 'unknown'); assert.equal(persisted.delivery.reason, out.deliveryReason, 'raison de livraison persistée');
+        // 404 répétés : jamais « non créé », jamais un second POST ; seule l’attestation humaine conclut.
+        for (let i = 0; i < 3; i++) { const again = await agents.reconcile({ mission: 'M2', registryFile, access, fetchImpl: r.fetchImpl }); assert.equal(again.status, 'uncertain'); assert.equal(again.reason, 'not_found_after_unknown_delivery'); assert.equal(again.delivery.state, 'unknown'); }
+        assert.equal((await agents.launch({ ...base, mission: 'M2', ref: 'agents/M2', account: 'acct-c', fetchImpl: r.fetchImpl })).status, 'deduplicated', 'aucun POST tant que non résolu');
+        assert.equal(r.posts().length, 1, 'un seul POST malgré timeout + 404 répétés + reconcile répétés');
+        const attested = await agents.reconcile({ mission: 'M2', confirmAbsent: true, registryFile, access, fetchImpl: r.fetchImpl });
+        assert.equal(attested.status, 'not_created'); assert.equal(attested.attested, true); assert.equal(attested.delivery.state, 'attested_absent'); assert.match(attested.nextAction, /launch autorisé/); assert.match(attested.nextAction, /attestée par l’orchestrateur/); assert.equal(r.posts().length, 1);
+      } else { assert.ok(['failed', 'not_created'].includes(state), `refus explicite ⇒ ${state}`); const e = (await agents.loadRegistry(registryFile)).missions.M2; if (state === 'not_created') assert.equal(e.delivery.state, 'refused', 'refus explicite avant création, distinct d’une livraison inconnue'); }
     }
     // Plan manquant (403 exact) ⇒ deux pools indisponibles.
     const plan = recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': () => providerError(403, 'plan_required', PLAN), [`GET /v1/agents/${M2}`]: () => providerError(404, 'not_found', '') });
@@ -676,16 +680,26 @@ test('successor: only when the owner is confirmed unavailable for the current se
     const SHA2 = 'b'.repeat(40);
     const lostPost = recorder({ [`GET /v1/agents/${S1b}`]: () => json(agentOf(S1b, RUN1, 'IDLE')), [`GET /v1/agents/${S1b}/runs/${RUN1}`]: () => json(runOf(S1b, RUN1, 'FINISHED')), 'GET /v1/models': catalog, 'POST /v1/agents': () => { throw new TypeError('socket hang up'); }, [`GET /v1/agents/${S1c}`]: () => providerError(404, 'not_found', '') });
     const lostSucc = await agents.successor({ ...base, checkpoint: SHA2, fetchImpl: lostPost.fetchImpl });
-    assert.equal(lostSucc.status, 'uncertain'); assert.equal(lostSucc.reason, 'not_found_after_unknown_delivery'); assert.equal(lostSucc.deliveryReason, 'network'); assert.equal(lostSucc.account.id, 'acct-c'); assert.equal(lostSucc.attempt, 2); assert.equal(lostPost.posts()[0].body.agentId, S1c); assert.match(lostSucc.nextAction, /404 immédiat ne prouve pas l’absence/);
-    entry = await entryOf(); assert.equal(entry.state, 'uncertain'); assert.equal(entry.agentId, S1c); assert.equal(entry.predecessors.length, 2); assert.equal(entry.predecessors[1].agentId, S1b); assert.equal(entry.predecessors[1].checkpoint.sha, SHA2);
+    assert.equal(lostSucc.status, 'uncertain'); assert.equal(lostSucc.reason, 'not_found_after_unknown_delivery'); assert.equal(lostSucc.deliveryReason, 'network'); assert.equal(lostSucc.account.id, 'acct-c'); assert.equal(lostSucc.attempt, 2); assert.equal(lostPost.posts()[0].body.agentId, S1c); assert.match(lostSucc.nextAction, /404 ne prouve pas l’absence/);
+    entry = await entryOf(); assert.equal(entry.state, 'uncertain'); assert.equal(entry.agentId, S1c); assert.deepEqual({ state: entry.delivery.state, reason: entry.delivery.reason }, { state: 'unknown', reason: 'network' }); assert.equal(entry.predecessors.length, 2); assert.equal(entry.predecessors[1].agentId, S1b); assert.equal(entry.predecessors[1].checkpoint.sha, SHA2);
     await assert.rejects(agents.successor({ ...base, checkpoint: SHA2, fetchImpl: silent.fetchImpl }), /reconcile avant tout successeur/); assert.equal(silent.calls.length, 0, 'aucun nouvel identifiant depuis une incertitude');
     const stillAbsent = recorder({ [`GET /v1/agents/${S1c}`]: () => providerError(404, 'not_found', '') });
-    const concluded = await agents.reconcile({ mission: 'S1', registryFile, access, fetchImpl: stillAbsent.fetchImpl });
-    assert.equal(concluded.status, 'not_created'); assert.match(concluded.nextAction, /successor --mission --checkpoint <même SHA>/); assert.match(concluded.nextAction, /jamais launch/); assert.deepEqual(concluded.lineage, { successorOf: S1b, predecessors: 2 }); assert.deepEqual(stillAbsent.keysUsed(), [KEY_C]);
+    const stillUnknown = await agents.reconcile({ mission: 'S1', registryFile, access, fetchImpl: stillAbsent.fetchImpl });
+    assert.equal(stillUnknown.status, 'uncertain'); assert.equal(stillUnknown.reason, 'not_found_after_unknown_delivery', 'un 404 répété ne prouve pas l’absence');
+    await assert.rejects(agents.followup({ mission: 'S1', registryFile, promptText: 'x', access, fetchImpl: silent.fetchImpl }), /reconcile avant/); assert.equal(silent.calls.length, 0);
+    const concluded = await agents.reconcile({ mission: 'S1', confirmAbsent: true, registryFile, access, fetchImpl: stillAbsent.fetchImpl });
+    assert.equal(concluded.status, 'not_created'); assert.equal(concluded.attested, true); assert.match(concluded.nextAction, /successor --mission --checkpoint <même SHA>/); assert.match(concluded.nextAction, /followup --mission si le propriétaire/); assert.match(concluded.nextAction, /jamais launch/); assert.deepEqual(concluded.lineage, { successorOf: S1b, predecessors: 2 }); assert.deepEqual(stillAbsent.keysUsed(), [KEY_C]); assert.equal(stillAbsent.posts().length, 0);
     const blockedLaunch = await agents.launch({ mission: 'S1', repo: REPO, ref: 'agents/S1', promptText: 'brief', config, access, registryFile, now, fetchImpl: silent.fetchImpl });
     assert.equal(blockedLaunch.status, 'blocked'); assert.equal(blockedLaunch.reason, 'mission_has_lineage'); assert.match(blockedLaunch.nextAction, /successor --mission --checkpoint/); assert.equal(silent.calls.length, 0);
     entry = await entryOf(); assert.equal(entry.agentId, S1c); assert.equal(entry.successorOf, S1b); assert.equal(entry.accountId, 'acct-c'); assert.equal(entry.predecessors.length, 2, 'chaîne et propriétaire intacts');
-    await assert.rejects(agents.followup({ mission: 'S1', registryFile, promptText: 'x', access, fetchImpl: silent.fetchImpl }), /successor --checkpoint/);
+    // Successeur non créé, propriétaire du prédécesseur (acct-b) confirmé indisponible : blocage unique vers successor, aucun POST, aucune boucle.
+    const noOwnerYet = await agents.followup({ mission: 'S1', registryFile, promptText: 'x', access, fetchImpl: silent.fetchImpl });
+    assert.equal(noOwnerYet.status, 'blocked'); assert.equal(noOwnerYet.reason, 'predecessor_owner_unavailable'); assert.deepEqual(noOwnerYet.predecessor, { agentId: S1b, accountId: 'acct-b' }); assert.match(noOwnerYet.nextAction, /successor --mission S1 --checkpoint/); assert.equal(silent.calls.length, 0);
+    // Raccourci --agent sans registre en mode pool : refusé (propriétaire, pool, startBlock et chaîne non vérifiables) ; lecture seule toujours possible avec la clé du propriétaire.
+    const shortcut = await agents.followup({ agentId: S1b, account: 'acct-b', promptText: 'x', access, fetchImpl: silent.fetchImpl });
+    assert.equal(shortcut.status, 'blocked'); assert.equal(shortcut.reason, 'registry_required'); assert.match(shortcut.nextAction, /followup --mission K --registry f/); assert.equal(silent.calls.length, 0);
+    const readOnly = recorder({ [`GET /v1/agents/${S1b}/runs/${RUN1}`]: r => { assert.equal(r.key, KEY_B); return json(runOf(S1b, RUN1, 'FINISHED')); } });
+    assert.equal((await agents.status({ agentId: S1b, runId: RUN1, account: 'acct-b', access, fetchImpl: readOnly.fetchImpl })).status, 'ok');
     // B2 : chaque nouvelle tentative relit le prédécesseur via son compte. Autre checkpoint avec run inchangé : refusé après relecture ; run actif : bloqué ;
     // reprise externe (nouveau run terminal) : la preuve enregistrée est périmée ⇒ blocage avec le même SHA, nouvelle attestation exigée.
     const unchanged = recorder({ [`GET /v1/agents/${S1b}`]: () => json(agentOf(S1b, RUN1, 'IDLE')), [`GET /v1/agents/${S1b}/runs/${RUN1}`]: () => json(runOf(S1b, RUN1, 'FINISHED')) });
@@ -819,11 +833,70 @@ test('identity mismatch keeps the identifiers the API really returned; a 404 on 
     const neither = recorder({ [`GET /v1/agents/${I1}`]: () => providerError(404, 'not_found', ''), [`GET /v1/agents/${OTHER}`]: () => providerError(404, 'not_found', '') });
     const gone = await agents.reconcile({ mission: 'I1', registryFile, access, fetchImpl: neither.fetchImpl });
     assert.equal(gone.status, 'uncertain'); assert.equal(gone.returnedAgent.found, false); assert.equal((await entryOf()).state, 'uncertain');
+    const refusedAttestation = await agents.reconcile({ mission: 'I1', confirmAbsent: true, registryFile, access, fetchImpl: neither.fetchImpl });
+    assert.equal(refusedAttestation.status, 'blocked'); assert.equal(refusedAttestation.reason, 'confirm_absent_refused'); assert.equal(refusedAttestation.returned.agentId, OTHER); assert.equal((await entryOf()).state, 'uncertain', 'identité inattendue : aucune attestation d’absence');
     // Si l’identifiant attendu finit par répondre, la mission est réconciliée normalement.
     const ours = recorder({ [`GET /v1/agents/${I1}`]: () => json(agentOf(I1, RUN2)) });
     const fixed = await agents.reconcile({ mission: 'I1', registryFile, access, fetchImpl: ours.fetchImpl });
     assert.equal(fixed.status, 'reconciled'); assert.equal(fixed.agent.latestRunId, RUN2); assert.equal((await entryOf()).reason, undefined);
     assertNoSecret(read); assertNoSecret(await entryOf());
+  });
+});
+
+test('after an explicitly failed successor, a re-eligible predecessor owner resumes the terminal predecessor through followup (lineage and selection kept, no new agent); startBlock and uncertainty still block; no successor/followup loop', async () => {
+  const config = await agents.loadSelections();
+  await withTemp('lite-pool-resume-', async (temp) => {
+    const { access, accountOf, registryFile } = await openVault(temp);
+    const R1 = agents.missionAgentId(REPO, 'R1'), R1b = agents.missionAgentId(REPO, 'R1~s1'), R1c = agents.missionAgentId(REPO, 'R1~s2');
+    const SHA = '1'.repeat(40);
+    const exhaust = id => access.pool.record(id, access.pool.classify({ callKind: 'run', modelId: 'claude-fable-5-1', result: { outcome: 'unavailable', status: 429, reason: 'quota', providerCode: 'rate_limit_exceeded', providerMessage: INCLUDED } }));
+    // Réactivation : décision humaine hors transport (état du pool édité sous verrou), jamais une inférence du code.
+    const reactivate = id => pool.withPoolState({ stateFile: access.pool.stateFile, lockFile: access.pool.lockFile }, state => { const a = state.accounts.find(x => x.id === id); a.status = 'active'; delete a.inactiveReason; delete a.inactiveAt; a.modelPools.custom = 'recheck_required'; return { changed: true }; }, { now });
+    await agents.launch({ mission: 'R1', repo: REPO, ref: 'agents/R1', promptText: 'brief', config, access, registryFile, now, fetchImpl: recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': () => json({ agent: agentOf(R1, RUN1), run: runOf(R1, RUN1) }) }).fetchImpl });
+    const entryOf = async () => (await agents.loadRegistry(registryFile)).missions.R1;
+    assert.equal((await entryOf()).accountId, 'acct-a');
+    await exhaust('acct-a');
+    // Successeur refusé explicitement (400 générique) sur acct-b : failed, identifiant R1b consommé.
+    const refused = recorder({ [`GET /v1/agents/${R1}`]: () => json(agentOf(R1, RUN1, 'IDLE')), [`GET /v1/agents/${R1}/runs/${RUN1}`]: () => json(runOf(R1, RUN1, 'FINISHED')), 'GET /v1/models': catalog, 'POST /v1/agents': () => providerError(400, 'invalid_request', MESSAGE_MARKER) });
+    const failed = await agents.successor({ mission: 'R1', registryFile, promptText: 'suite', checkpoint: SHA, config, access, now, fetchImpl: refused.fetchImpl });
+    assert.equal(failed.status, 'blocked'); assert.equal(failed.reason, 'rejected'); assert.equal(failed.agentId, R1b); assert.equal(failed.account.id, 'acct-b');
+    let entry = await entryOf(); assert.equal(entry.state, 'failed'); assert.equal(entry.agentId, R1b); assert.equal(entry.successorOf, R1); assert.equal(entry.predecessors.length, 1);
+    const silent = recorder({});
+    // Propriétaire du prédécesseur toujours confirmé indisponible : blocage unique vers successor (pas de boucle), aucun POST.
+    const blockedOwner = await agents.followup({ mission: 'R1', registryFile, promptText: 'x', access, fetchImpl: silent.fetchImpl });
+    assert.equal(blockedOwner.reason, 'predecessor_owner_unavailable'); assert.equal(silent.calls.length, 0); assert.equal((await entryOf()).agentId, R1b, 'entrée inchangée');
+    // Propriétaire réactivé (décision humaine hors transport) mais en startBlock : reprise seulement par --account explicite.
+    await reactivate('acct-a'); assert.equal((await accountOf('acct-a')).status, 'active');
+    await access.pool.record('acct-a', access.pool.classify({ callKind: 'run', modelId: 'claude-fable-5-1', result: rejected(400, 'usage_limit_exceeded', HARD_LIMIT) }));
+    const capped = await agents.followup({ mission: 'R1', registryFile, promptText: 'x', access, fetchImpl: silent.fetchImpl });
+    assert.equal(capped.status, 'blocked'); assert.equal(capped.reason, 'predecessor_owner_start_blocked'); assert.match(capped.nextAction, /--account acct-a/); assert.equal(silent.calls.length, 0); assert.equal((await entryOf()).agentId, R1b);
+    // Reprise sûre et réconciliée du prédécesseur : l’entrée redevient R1/acct-a, chaîne reculée, tentative abandonnée tracée, sélection initiale conservée ; agent relu, run terminal exigé, un seul POST run.
+    const resume = recorder({ [`GET /v1/agents/${R1}`]: r => { assert.equal(r.key, KEY_A); return json(agentOf(R1, RUN1, 'IDLE')); }, [`GET /v1/agents/${R1}/runs/${RUN1}`]: () => json(runOf(R1, RUN1, 'FINISHED')), [`POST /v1/agents/${R1}/runs`]: r => { assert.equal(r.key, KEY_A); assert.equal(r.body.model, undefined); return json({ run: runOf(R1, RUN2) }); } });
+    const resumed = await agents.followup({ mission: 'R1', account: 'acct-a', registryFile, promptText: 'reprise', access, fetchImpl: resume.fetchImpl });
+    assert.equal(resumed.status, 'launched'); assert.equal(resumed.agentId, R1); assert.equal(resumed.account.id, 'acct-a'); assert.equal(resumed.runId, RUN2);
+    assert.deepEqual(resumed.resumedPredecessor, { abandonedSuccessors: [{ agentId: R1b, accountId: 'acct-b', attempt: 1, state: 'failed' }], lineage: { successorOf: null, predecessors: 0 } });
+    assert.deepEqual(resume.calls.map(c => `${c.method} ${c.path.replace(R1, 'PRED')}`), ['GET /v1/agents/PRED', `GET /v1/agents/PRED/runs/${RUN1}`, 'POST /v1/agents/PRED/runs']); assert.deepEqual(resume.keysUsed(), [KEY_A]);
+    entry = await entryOf();
+    assert.equal(entry.agentId, R1); assert.equal(entry.accountId, 'acct-a'); assert.equal(entry.state, 'reconciled'); assert.equal(entry.followup.state, 'accepted'); assert.equal(entry.runId, RUN2); assert.equal(entry.successorOf, undefined); assert.deepEqual(entry.predecessors, []); assert.equal(entry.successorAttempts, 1, 'compteur conservé : R1b ne sera jamais réutilisé');
+    assert.equal(entry.abandonedSuccessors.length, 1); assert.equal(entry.abandonedSuccessors[0].agentId, R1b); assert.equal(entry.abandonedSuccessors[0].httpStatus, 400); assert.equal(entry.selection.modelId, 'claude-fable-5-1'); assert.equal(entry.currentSelection, undefined); assert.equal(entry.ref, 'agents/R1'); assertNoSecret(entry);
+    assert.equal((await accountOf('acct-a')).startBlock, null, 'départ accepté : blocage levé');
+    // Un successeur ultérieur repart du bon prédécesseur (R1) avec un identifiant jamais utilisé (R1~s2).
+    await exhaust('acct-a');
+    const later = recorder({ [`GET /v1/agents/${R1}`]: () => json(agentOf(R1, RUN2, 'IDLE')), [`GET /v1/agents/${R1}/runs/${RUN2}`]: () => json(runOf(R1, RUN2, 'FINISHED')), 'GET /v1/models': catalog, 'POST /v1/agents': r => json({ agent: agentOf(r.body.agentId, RUN1), run: runOf(r.body.agentId, RUN1) }) });
+    const next = await agents.successor({ mission: 'R1', registryFile, promptText: 'suite', checkpoint: '2'.repeat(40), config, access, now, fetchImpl: later.fetchImpl });
+    assert.equal(next.status, 'launched'); assert.equal(next.agentId, R1c); assert.equal(next.attempt, 2); assert.equal(next.predecessor.agentId, R1); assert.equal(next.account.id, 'acct-b');
+    entry = await entryOf(); assert.equal(entry.predecessors.length, 1); assert.equal(entry.abandonedSuccessors.length, 1);
+    // Successeur incertain (livraison inconnue) : jamais repris comme « non créé ».
+    await exhaust('acct-b');
+    const U1 = agents.missionAgentId(REPO, 'U1'), U1b = agents.missionAgentId(REPO, 'U1~s1');
+    await agents.launch({ mission: 'U1', repo: REPO, ref: 'agents/U1', promptText: 'brief', config, access, registryFile, now, fetchImpl: recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': () => json({ agent: agentOf(U1, RUN1), run: runOf(U1, RUN1) }) }).fetchImpl });
+    assert.equal((await agents.loadRegistry(registryFile)).missions.U1.accountId, 'acct-c'); await exhaust('acct-c');
+    await reactivate('acct-a');
+    const lostU = recorder({ [`GET /v1/agents/${U1}`]: () => json(agentOf(U1, RUN1, 'IDLE')), [`GET /v1/agents/${U1}/runs/${RUN1}`]: () => json(runOf(U1, RUN1, 'FINISHED')), 'GET /v1/models': catalog, 'POST /v1/agents': () => { throw new TypeError('socket hang up'); }, [`GET /v1/agents/${U1b}`]: () => providerError(404, 'not_found', '') });
+    assert.equal((await agents.successor({ mission: 'U1', registryFile, promptText: 'suite', checkpoint: SHA, config, access, now, fetchImpl: lostU.fetchImpl })).status, 'uncertain');
+    await reactivate('acct-c');
+    await assert.rejects(agents.followup({ mission: 'U1', registryFile, promptText: 'x', access, fetchImpl: silent.fetchImpl }), /reconcile avant/); assert.equal(silent.calls.length, 0);
+    assert.equal((await agents.loadRegistry(registryFile)).missions.U1.agentId, U1b, 'successeur incertain jamais abandonné sans attestation');
   });
 });
 
@@ -852,8 +925,15 @@ test('reconcile keeps an open followup uncertain when the agent has no latest ru
     entry = (await agents.loadRegistry(registryFile)).missions.O1; assert.equal(entry.state, 'reconciled'); assert.equal(entry.runId, RUN1);
     await agents.saveRegistry(registryFile, { formatVersion: 1, missions: { O1: { agentId: O1, repo: REPO, ref: 'agents/O1', selection: fable, state: 'pending', updatedAt: T0 } } });
     const gone = recorder({ [`GET /v1/agents/${O1}`]: () => providerError(404, 'not_found', '') });
+    // pending orphelin + 404 : le POST a peut-être été émis ; l’absence n’est pas prouvée, l’attestation humaine seule conclut.
     const absent = await agents.reconcile({ mission: 'O1', key, registryFile, fetchImpl: gone.fetchImpl });
-    assert.equal(absent.status, 'not_created'); assert.match(absent.nextAction, /launch autorisé/); assert.equal(gone.posts().length, 0);
+    assert.equal(absent.status, 'uncertain'); assert.equal(absent.reason, 'not_found_after_unknown_delivery'); assert.deepEqual(absent.delivery, { state: 'unknown', reason: 'pending_orphan' }); assert.match(absent.nextAction, /--confirm-absent/); assert.equal(gone.posts().length, 0);
+    assert.equal((await agents.launch({ mission: 'O1', repo: REPO, ref: 'agents/O1', promptText: 'x', config, key, registryFile, fetchImpl: gone.fetchImpl })).status, 'deduplicated'); assert.equal(gone.posts().length, 0);
+    const attested = await agents.reconcile({ mission: 'O1', confirmAbsent: true, key, registryFile, fetchImpl: gone.fetchImpl });
+    assert.equal(attested.status, 'not_created'); assert.equal(attested.attested, true); assert.equal(attested.delivery.state, 'attested_absent'); assert.match(attested.nextAction, /launch autorisé/); assert.equal(gone.posts().length, 0);
+    // --confirm-absent ne s’applique ni à une entrée non incertaine ni à une identité inattendue.
+    const notApplicable = await agents.reconcile({ mission: 'O1', confirmAbsent: true, key, registryFile, fetchImpl: gone.fetchImpl });
+    assert.equal(notApplicable.status, 'blocked'); assert.equal(notApplicable.reason, 'confirm_absent_not_applicable');
   });
 });
 
