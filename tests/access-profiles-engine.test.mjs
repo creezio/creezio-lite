@@ -30,9 +30,6 @@ const catalog = [
     id: op.id, roles: op.roles, method: op.method, moduleId: op.moduleId, tokenAllowed: op.tokenAllowed,
     ...(op.essential ? { essential: true } : {}),
   })),
-  ...['access.receipt.update', 'access.bind', 'access.unbind'].map(id => Object.freeze({
-    id, roles: ['owner', 'admin'], method: 'POST', moduleId: 'access', tokenAllowed: false,
-  })),
 ];
 const byId = Object.fromEntries(catalog.map(entry => [entry.id, entry]));
 const entryOf = id => { const entry = byId[id]; assert.ok(entry, `catalogue kit sans ${id}`); return entry; };

@@ -1,3 +1,4 @@
+import { createRequestAccessContext, disposeRequestAccessContext } from '@lite/core/access-profiles-store';
 import type { ApiContext, AppExtensions, CredentialContext, Workspace } from '@lite/core';
 import { handleApi } from '@lite/core';
 import { executeAppOperation } from '@lite/core/commands';
@@ -127,11 +128,13 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       if(credential)current=authorizeTokenRequest(current,credential.access,op);
       assertOperationAllowed(op,org);
       url=new URL(current.url);url.searchParams.set('workspace',org.id);current=new Request(url,current);
-      const scoped={...trusted,workspace:org,operations};
+      const access=options.access===undefined?undefined:await createRequestAccessContext({db:context.env.DB,request:current,requestId:trace.correlationId,workspace:org,identity:trusted.identity,credential:credentialContext,declaration:options.access,catalog:operations});
+      const scoped={...trusted,workspace:org,operations,...(access?{access}:{})};
+      try{
       if(op.source==='app'){
         // Application handlers run after identity, workspace, role, policy, credential and origin checks, before the native kernel.
         const definition=options.operations?.find(d=>d.operation.id===op.id);if(!definition)fail(404,'not_found','Route introuvable.');
-        return await executeAppOperation(current,definition,{app:context.app,env:context.env,identity:trusted.identity,workspace:org,principal:principalOf(trusted.identity,org,credentialContext),credential:credentialContext,scope:options.scope,requestId:trace.correlationId,defer:context.defer});
+        return await executeAppOperation(current,definition,{app:context.app,env:context.env,identity:trusted.identity,workspace:org,principal:principalOf(trusted.identity,org,credentialContext),credential:credentialContext,scope:options.scope,access,requestId:trace.correlationId,defer:context.defer});
       }
       if(path==='admin/endpoints')return json({generatedAt:new Date().toISOString(),source:'operation-registry',openapiUrl:'/api/v1/openapi.json',endpoints:operations.flatMap(o=>[o.path,...(o.aliases??[])].map(path=>({...o,path,documented:true,summary:o.description,tags:[o.moduleName]})))});
       if(path==='openapi.json')return json(openApiDocument(operations,context.app,org));
@@ -159,7 +162,8 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
         return dataTools(context.app,liveOrg.role,liveCall,true,{operations:liveOps,workspace:liveOrg,bindings:await toolBindings({...scoped,workspace:liveOrg},liveOrg,liveOps)});
       }});
       if(assistant)return assistant;
-      return await mailRoute(current,scoped,org)??await integrationsRoute(current,scoped,org)??await accessRoute(current,scoped,org,operations)??await mcpAdminRoute(current,scoped,org,operations)??await observabilityRoute(current,scoped,org)??await handleNativeApi(current,scoped)??await handleApi(current,scoped,options);
+      return await mailRoute(current,scoped,org)??await integrationsRoute(current,scoped,org)??await accessRoute(current,scoped,org,operations,options)??await mcpAdminRoute(current,scoped,org,operations)??await observabilityRoute(current,scoped,org)??await handleNativeApi(current,scoped)??await handleApi(current,scoped,options);
+      }finally{disposeRequestAccessContext(access);}
     };
     if(source==='mcp'){
       if(!trusted.identity)fail(401,'authentication_required','Authentification requise.');
