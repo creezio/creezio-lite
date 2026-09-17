@@ -67,13 +67,28 @@ export function searchTerms(query:string):string[] {
 }
 
 /** One predicate over lite_search_documents d: fileFilter for the files index, recordFilter for every other index. */
-function searchScope(app:AppDefinition,org:Workspace,options:SearchOptions):SqlFragment{
+function searchScope(app:AppDefinition,org:Workspace,options:SearchOptions):SqlFragment&{ctes?:string}{
   const provided=Boolean(options.scope&&options.principal);
   const scope=provided?options.scope!:openScope,principal:Principal=provided?options.principal!:{userId:'',role:org.role,workspaceId:org.id,credential:'session'};
   const records=recordScope(scope,principal,{alias:'d',idColumn:'record_id',moduleColumn:'module_id'},'read',options.access);
   const files=fileScope(scope,principal,{alias:'d',idColumn:'record_id'},'read',options.access);
-  if(options.access){const audit=auditScope(scope,principal,app,org,options.access);return {sql:`((d.module_id='files' AND ${files.sql}) OR (d.module_id='audit' AND EXISTS(SELECT 1 FROM lite_audit a WHERE a.org_id=d.org_id AND a.id=d.record_id AND ${audit.sql})) OR (d.module_id NOT IN ('files','audit') AND ${records.sql}))`,bindings:[...files.bindings,...audit.bindings,...records.bindings]};}
-  return {sql:`((d.module_id='files' AND ${files.sql}) OR (d.module_id<>'files' AND ${records.sql}))`,bindings:[...files.bindings,...records.bindings]};
+  if(!options.access)return {sql:`((d.module_id='files' AND ${files.sql}) OR (d.module_id<>'files' AND ${records.sql}))`,bindings:[...files.bindings,...records.bindings]};
+  // MATERIALIZED fences keep complex application predicates out of the FTS/audit
+  // expression tree. Every set is workspace-bound and filtered before ranking/counts.
+  const auditRecords=recordScope(scope,principal,{alias:'r',idColumn:'id',moduleColumn:'module_id'},'read',options.access);
+  const auditFiles=fileScope(scope,principal,{alias:'f',idColumn:'id'},'read',options.access);
+  const audit=auditScope(scope,principal,app,org,options.access,{
+    records:{sql:'r.id IN (SELECT id FROM search_visible_records)',bindings:[]},
+    files:{sql:'f.id IN (SELECT id FROM search_visible_files)',bindings:[]},
+  });
+  const ctes=`search_visible_records AS MATERIALIZED (SELECT r.id FROM lite_records r WHERE r.org_id=? AND ${auditRecords.sql}),
+    search_visible_files AS MATERIALIZED (SELECT f.id FROM lite_files f WHERE f.org_id=? AND ${auditFiles.sql}),
+    search_visible_audit AS MATERIALIZED (SELECT a.id FROM lite_audit a WHERE a.org_id=? AND ${audit.sql}),
+    search_visible_documents AS MATERIALIZED (
+      SELECT d.id FROM lite_search_documents d WHERE d.org_id=? AND d.module_id='files' AND ${files.sql}
+      UNION ALL SELECT d.id FROM lite_search_documents d WHERE d.org_id=? AND d.module_id='audit' AND d.record_id IN (SELECT id FROM search_visible_audit)
+      UNION ALL SELECT d.id FROM lite_search_documents d WHERE d.org_id=? AND d.module_id NOT IN ('files','audit') AND ${records.sql})`;
+  return {ctes,sql:'d.id IN (SELECT id FROM search_visible_documents)',bindings:[org.id,...auditRecords.bindings,org.id,...auditFiles.bindings,org.id,...audit.bindings,org.id,...files.bindings,org.id,org.id,...records.bindings]};
 }
 
 export async function searchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:SearchOptions={}) {
@@ -92,8 +107,8 @@ export async function searchSelection(db:D1Database,app:AppDefinition,org:Worksp
     FROM json_each(?) t CROSS JOIN lite_search_fts JOIN lite_search_documents d ON d.id=lite_search_fts.document_id
     JOIN json_each(?) p ON json_extract(p.value,'$.module')=d.module_id AND json_extract(p.value,'$.field')=lite_search_fts.field_key
     WHERE lite_search_fts MATCH t.value AND d.org_id=? AND ${scope.sql}`;
-  const bindings=[JSON.stringify(terms.map(t=>'"'+t.replaceAll('"','""')+'"*')),allowed,org.id,...scope.bindings];
-  const cte=`WITH matches AS (${matches}), ranked AS (SELECT id,SUM(title_match) AS score FROM matches GROUP BY id HAVING COUNT(DISTINCT term)=?)`;
+  const bindings=[...(scope.ctes?scope.bindings:[]),JSON.stringify(terms.map(t=>'"'+t.replaceAll('"','""')+'"*')),allowed,org.id,...(scope.ctes?[]:scope.bindings)];
+  const cte=`WITH ${scope.ctes?scope.ctes+', ':''}matches AS (${matches}), ranked AS (SELECT id,SUM(title_match) AS score FROM matches GROUP BY id HAVING COUNT(DISTINCT term)=?)`;
   return {cte,bindings:[...bindings,terms.length],policies,indexing};
 }
 

@@ -1,5 +1,10 @@
 # Mises à jour
 
+## Candidate 0.15.1 — Correction de profondeur de recherche D1
+
+Cette patch release corrige la composition des scopes de recherche opt-in sans modifier les permissions ni les donnees. Aucune migration n'est ajoutee. Adopter le runtime par le processus habituel puis tester recherche, fichiers et audit avec les vrais filtres applicatifs. Une recette locale ne prouve pas une activation ou un deploiement d'application. Publication uniquement apres revue et CI du SHA exact.
+
+
 ## Candidate 0.15.0 — runtimes natifs ingress et profils d’accès
 
 Les capacités sont implémentées dans cette candidate ; seule une release GitHub au SHA validé en établit la disponibilité publiée. Suivre le [guide d’adoption native](runtime-adoption.md) pour choisir les opt-ins, préparer le reçu d’accès et conserver les filtres applicatifs. Les migrations additives 0011/0012 imposent une fusion explicite du schéma et des métadonnées ; `upgrade --apply` ne les installe pas. Ne recalculer le verrou qu’après vérification des sources fusionnées et du schéma D1 réel local. Préserver les SQL déjà appliqués et les migrations métier. Aucun déploiement ni adoption d’application n’est implicite.

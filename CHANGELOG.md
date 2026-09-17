@@ -1,5 +1,12 @@
 # Versions de Lite
 
+## 0.15.1 — Recherche D1 avec scopes complexes
+
+- Corrige l'erreur D1 de profondeur d'expression en recherche avec profils d'acces actifs et filtres applicatifs complexes. Des ensembles de visibilite materialises separent les scopes des expressions FTS/audit.
+- Permissions, filtrage avant comptes/extraits/pagination, classement et refus des ressources hors scope conserves ; parcours legacy inchange. Aucun changement de schema ni migration.
+- Regression reproduite sur D1 local reel ; equivalence verifiee avec scopes profonds, fichiers, audit, isolation entre espaces, termes multiples et pagination. La limite intrinseque D1 reste applicable aux predicats applicatifs.
+
+
 ## 0.15.0 — Entrées publiques et profils d’accès natifs
 
 - Candidate : publication seulement après revue et CI du commit exact de main, puis tag immuable.
