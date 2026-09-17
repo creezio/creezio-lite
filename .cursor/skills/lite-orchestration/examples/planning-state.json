@@ -92,11 +92,13 @@
       "runStatus": "FINISHED",
       "launch": "launched",
       "prUrl": "https://github.com/example/kit/pull/41",
+      "headSha": "8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d",
       "followups": 0,
       "readyAt": "2026-09-16T12:00:00Z",
       "assignedAt": "2026-09-16T12:15:00Z",
       "deliveredAt": "2026-09-16T18:25:00Z",
-      "closedAt": "2026-09-16T18:30:00Z"
+      "closedAt": "2026-09-16T18:30:00Z",
+      "note": "Verdict rendu dans la PR de A01 sur le head revu ; preuve terminale conservée pour une réouverture explicite (§3.1.2)"
     },
     "B01": {
       "status": "active",

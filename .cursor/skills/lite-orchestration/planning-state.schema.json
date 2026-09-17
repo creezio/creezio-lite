@@ -182,7 +182,7 @@
       "properties": {
         "status": {
           "enum": ["pending", "active", "delivered", "integrated", "published", "closed", "cancelled", "historical", "unknown"],
-          "description": "pending : rien n’a été lancé ; avant tout POST l’orchestrateur écrit active + launch pending, donc une entrée pending portant launch pending/uncertain ou un run CREATING/RUNNING/UNKNOWN est incohérente et rejetée (elle sous-compterait la capacité et doublerait la création) ; on ne la normalise jamais en effaçant l’incertitude, on la corrige en active. active : run en cours ou incertain (CREATING, RUNNING, POST incertain), compte dans la capacité et tient ses réservations. delivered : run terminal (aucun POST incertain), head réel et réception disponibles (PR exigée pour un dev ; une review/investigation peut livrer sur branche + headSha sans PR) ; réservations toujours tenues, aucune place active ; l’artefact existe mais n’est pas accepté pour autant. closed : review/investigation terminée ; rouvrable explicitement vers delivered (événement reopened, preuve terminale conservée), puis resume sur le même agent via correction.requested. integrated/published/closed/cancelled/historical : réservations libérées, aucune place consommée, agent historique non compté ; jamais de launch pending/uncertain ni de run CREATING/RUNNING/UNKNOWN non réconcilié. historical : lot réellement reçu avant cet état, sélection/agent/run inconnus, jalon prouvé dans historical ; aucun resume/start proposé, toute reprise est une mission corrective distincte. unknown : l’orchestrateur ne sait pas ; ready répond code 3."
+          "description": "pending : rien n’a été lancé ; avant tout POST l’orchestrateur écrit active + launch pending, donc une entrée pending portant launch pending/uncertain ou un run CREATING/RUNNING/UNKNOWN est incohérente et rejetée (elle sous-compterait la capacité et doublerait la création) ; on ne la normalise jamais en effaçant l’incertitude, on la corrige en active. active : run en cours ou incertain (CREATING, RUNNING, POST incertain), compte dans la capacité et tient ses réservations. delivered : run terminal (aucun POST incertain), head réel et réception disponibles (PR exigée pour un dev ; une review/investigation peut livrer sur branche + headSha sans PR) ; réservations toujours tenues, aucune place active ; l’artefact existe mais n’est pas accepté pour autant. closed : review/investigation terminée ; conserve la preuve terminale (branch, base, agentId, run terminal, launch réconcilié, headSha, jalons ; provenance selection ou legacySelection, jamais un modèle inventé) afin de rester rouvrable explicitement vers delivered (événement reopened), puis resume sur le même agent via correction.requested. integrated/published/closed/cancelled/historical : réservations libérées, aucune place consommée, agent historique non compté ; jamais de launch pending/uncertain ni de run CREATING/RUNNING/UNKNOWN non réconcilié. historical : lot réellement reçu avant cet état, sélection/agent/run inconnus, jalon prouvé dans historical ; aucun resume/start proposé, toute reprise est une mission corrective distincte. unknown : l’orchestrateur ne sait pas ; ready répond code 3."
         },
         "historical": { "$ref": "#/$defs/historical" },
         "selection": { "$ref": "#/$defs/selection" },
@@ -264,7 +264,16 @@
         },
         { "if": { "properties": { "status": { "const": "integrated" } } }, "then": { "required": ["prUrl", "headSha", "deliveredAt", "integratedAt"] } },
         { "if": { "properties": { "status": { "const": "published" } } }, "then": { "required": ["prUrl", "headSha", "integratedAt", "publishedAt"] } },
-        { "if": { "properties": { "status": { "const": "closed" } } }, "then": { "required": ["deliveredAt", "closedAt"] } },
+        {
+          "if": { "properties": { "status": { "const": "closed" } } },
+          "then": {
+            "required": ["branch", "base", "agentId", "launch", "runStatus", "headSha", "assignedAt", "deliveredAt", "closedAt"],
+            "properties": {
+              "launch": { "enum": ["launched", "reconciled"] },
+              "runStatus": { "$ref": "#/$defs/terminalRunStatus" }
+            }
+          }
+        },
         {
           "if": { "properties": { "status": { "const": "historical" } } },
           "then": {

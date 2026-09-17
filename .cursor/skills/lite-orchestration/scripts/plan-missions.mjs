@@ -203,10 +203,11 @@ export function decide(plan, state) {
   for (const mission of missions) {
     const entry = entryOf(mission.id); const { status } = entry; const base = { status, mission, entry };
     if (status === 'active') {
-      // Toujours comptée et réservée. Libellé honnête : POST incertain ⇒ launch_uncertain ; run déjà terminal mais non reclassé ⇒ run_terminal_unreconciled (jamais « run_active ») ; sinon run_active.
+      // Toujours comptée et réservée. Libellé honnête : POST incertain ⇒ launch_uncertain ; run déjà terminal mais non reclassé ⇒ run_terminal_unreconciled ;
+      // lancement accepté mais aucune lecture de run (absente ou UNKNOWN) ⇒ run_status_unread — jamais décrit comme un run certainement en cours ; run_active seulement sur CREATING/RUNNING lu.
       const uncertain = ['pending', 'uncertain'].includes(entry.launch); const runStatus = entry.runStatus ?? null;
       active.push({ mission: mission.id, kind: mission.kind, runStatus, launch: entry.launch, counted: true });
-      const reason = uncertain ? { code: 'launch_uncertain', nextAction: 'reconcile' } : TERMINAL_RUN.has(runStatus) ? { code: 'run_terminal_unreconciled', runStatus, nextAction: 'reconcile' } : { code: 'run_active', runStatus };
+      const reason = uncertain ? { code: 'launch_uncertain', nextAction: 'reconcile' } : TERMINAL_RUN.has(runStatus) ? { code: 'run_terminal_unreconciled', runStatus, nextAction: 'reconcile' } : runStatus === null || runStatus === 'UNKNOWN' ? { code: 'run_status_unread', runStatus, nextAction: 'reconcile' } : { code: 'run_active', runStatus };
       report[mission.id] = { status, outcome: 'active', step: null, reasons: [reason] }; continue;
     }
     if (status === 'cancelled') { report[mission.id] = { status, outcome: 'cancelled', step: null, reasons: [] }; continue; }
@@ -251,7 +252,7 @@ export function decide(plan, state) {
     for (const candidate of group(['resume', 'start'])) {
       const reasons = [];
       if (free <= 0) reasons.push({ code: 'capacity_full' });
-      if (candidate.step === 'start' && candidate.mission.kind === 'dev' && backlog.count >= backlog.max) reasons.push({ code: 'review_backlog_full' });
+      if (candidate.step === 'start' && candidate.mission.kind === 'dev' && backlog.count >= backlog.max) reasons.push({ code: 'review_backlog_full', count: backlog.count, max: backlog.max });
       if (candidate.step === 'start') reasons.push(...collisions(candidate.mission, proposedHolds));
       if (reasons.length) { settle(candidate, 'waiting', reasons); continue; }
       free -= 1; proposed += 1;

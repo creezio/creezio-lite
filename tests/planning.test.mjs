@@ -28,7 +28,7 @@ const engaged = (id, status, extra = {}) => {
   if (['delivered', 'integrated', 'published'].includes(status)) Object.assign(base, { prUrl: `https://github.com/example/kit/pull/${id.length + 10}`, headSha: SHA('2'), deliveredAt: '2026-09-16T12:00:00Z' });
   if (['integrated', 'published'].includes(status)) Object.assign(base, { integratedAt: '2026-09-16T13:00:00Z' });
   if (status === 'published') Object.assign(base, { publishedAt: '2026-09-16T14:00:00Z' });
-  if (status === 'closed') Object.assign(base, { deliveredAt: '2026-09-16T12:00:00Z', closedAt: '2026-09-16T13:00:00Z' });
+  if (status === 'closed') Object.assign(base, { headSha: SHA('2'), deliveredAt: '2026-09-16T12:00:00Z', closedAt: '2026-09-16T13:00:00Z' });
   return { ...base, ...extra };
 };
 const ready = (p, s) => evaluate('ready', { plan: p, state: s, schemas });
@@ -300,7 +300,7 @@ test('legacySelection (model omitted) documents a delivered lot without inventin
   assert.deepEqual(delivered.report.missions.L, { status: 'delivered', outcome: 'proposed', step: 'integrate', reasons: [] });
   assert.deepEqual(delivered.report.missions.N.reasons, [{ code: 'reservation_conflict', with: 'L', path: 'legacy/', holderStatus: 'delivered' }]);
   assert.deepEqual(delivered.report.missions.K.reasons, [{ code: 'reservation_conflict', with: 'L', resource: 'kit:version', holderStatus: 'delivered' }]);
-  assert.deepEqual(delivered.report.missions.F.reasons, [{ code: 'review_backlog_full' }], 'le lot legacy compte dans le backlog de revue jusqu’à sa fusion');
+  assert.deepEqual(delivered.report.missions.F.reasons, [{ code: 'review_backlog_full', count: 1, max: 1 }], 'le lot legacy compte dans le backlog de revue jusqu’à sa fusion');
   assert.deepEqual(delivered.report.capacity.reviewBacklog, { count: 1, max: 1 }); assert.equal(delivered.report.capacity.active, 0); assert.deepEqual(delivered.report.active, []);
   assert.equal(JSON.stringify(delivered.report).includes('modelId'), false, 'aucun modèle reconstitué');
   assert.equal(JSON.stringify(delivered.report).includes('claude-fable-5-1'), false);
@@ -436,6 +436,54 @@ test('an active mission whose last run is already terminal stays counted and hel
   assert.deepEqual(uncertainTerminal.missions.A.reasons, [{ code: 'launch_uncertain', nextAction: 'reconcile' }], 'l’incertitude du POST prime sur le statut du run lu');
 });
 
+test('an accepted launch without any run reading is counted and held but reported run_status_unread, never as a run certainly in progress', () => {
+  const p = plan([mission('A', { reserves: { paths: ['a/'] } }), mission('B', { reserves: { paths: ['a/b.ts'] } })]);
+  const noReading = engaged('A', 'active'); delete noReading.runStatus;
+  for (const [entry, runStatus] of [[noReading, null], [engaged('A', 'active', { runStatus: 'UNKNOWN' }), 'UNKNOWN'], [engaged('A', 'active', { launch: 'reconciled', runStatus: 'UNKNOWN' }), 'UNKNOWN']]) {
+    const r = ready(p, state({ A: entry }));
+    assert.equal(r.code, exitCodes.ok);
+    assert.deepEqual(r.report.missions.A, { status: 'active', outcome: 'active', step: null, reasons: [{ code: 'run_status_unread', runStatus, nextAction: 'reconcile' }] });
+    assert.deepEqual(r.report.active, [{ mission: 'A', kind: 'dev', runStatus, launch: entry.launch, counted: true }]); assert.equal(r.report.capacity.active, 1, 'place tenue par prudence');
+    assert.deepEqual(r.report.missions.B.reasons, [{ code: 'reservation_conflict', with: 'A', path: 'a/', holderStatus: 'active' }], 'réservations tenues par prudence');
+    assert.equal(JSON.stringify(r.report).includes('run_active'), false, 'aucune lecture ⇒ jamais annoncé comme run en cours');
+  }
+  assert.deepEqual(ready(p, state({ A: engaged('A', 'active', { runStatus: 'RUNNING' }) })).report.missions.A.reasons, [{ code: 'run_active', runStatus: 'RUNNING' }], 'run_active seulement sur une lecture CREATING/RUNNING');
+});
+
+test('a closed review keeps the terminal proof promised for reopening; a legacy provenance is accepted without any invented model', () => {
+  const p = plan([mission('RV', { kind: 'review' }), mission('INV', { kind: 'investigation' })]);
+  const ok = validate(p, state({ RV: engaged('RV', 'closed') })); assert.equal(ok.code, exitCodes.ok); assert.deepEqual(ok.report.errors, []);
+  const withoutPr = engaged('INV', 'closed'); delete withoutPr.prUrl; assert.equal(validate(p, state({ INV: withoutPr })).code, exitCodes.ok, 'closed sans PR reste valide (verdict sur branche + head)');
+  const legacyClosed = engaged('RV', 'closed', { legacySelection: { reason: 'model_omitted', requestedAt: '2026-09-14T09:00:00Z', evidence: 'https://github.com/example/kit/pull/12#reception : création sans champ model' } }); delete legacyClosed.selection;
+  const legacy = validate(p, state({ RV: legacyClosed })); assert.equal(legacy.code, exitCodes.ok); assert.equal(JSON.stringify(legacy.report).includes('modelId'), false);
+  for (const field of ['branch', 'base', 'agentId', 'launch', 'runStatus', 'headSha', 'assignedAt', 'deliveredAt', 'closedAt']) {
+    const lost = engaged('RV', 'closed'); delete lost[field];
+    const r = validate(p, state({ RV: lost })); assert.equal(r.code, exitCodes.invalid, field); assert.equal(r.report.errors[0].code, 'schema_invalid'); assert.match(r.report.errors[0].message, new RegExp(field));
+  }
+  for (const bad of [{ launch: 'not_created' }, { launch: 'failed' }, { runStatus: 'RUNNING' }]) { const r = validate(p, state({ RV: engaged('RV', 'closed', bad) })); assert.equal(r.code, exitCodes.invalid, JSON.stringify(bad)); assert.equal(r.report.errors[0].code, 'schema_invalid'); }
+  const neither = engaged('RV', 'closed'); delete neither.selection; assert.equal(validate(p, state({ RV: neither })).code, exitCodes.invalid, 'aucune provenance ⇒ invalide, jamais un modèle par défaut');
+});
+
+test('a local review backlog can deadlock a dependent integration; the pilot re-evaluates its own local threshold with a traced reason and recomputes', () => {
+  // A (dev, delivered) n’intègre qu’après B.delivered ; B (dev, pending) ne démarre pas tant que le backlog local (1) est plein… par A. Rien n’est contourné automatiquement.
+  const p = plan([mission('A', { priority: 1, dependencies: { integrate: [{ mission: 'B', step: 'delivered' }] } }), mission('B', { priority: 2 })]);
+  const capacity = { ...state().capacity, maxActiveRuns: 3, maxReviewBacklog: 1 };
+  const stuck = ready(p, state({ A: engaged('A', 'delivered') }, { capacity })).report;
+  assert.deepEqual(stuck.missions.A, { status: 'delivered', outcome: 'blocked', step: 'integrate', reasons: [{ code: 'dependency_unmet', on: { mission: 'B', step: 'delivered' } }] });
+  assert.deepEqual(stuck.missions.B, { status: 'pending', outcome: 'waiting', step: 'start', reasons: [{ code: 'review_backlog_full', count: 1, max: 1 }] });
+  assert.deepEqual(stuck.proposals, []); assert.equal(stuck.capacity.free, 3, 'des places libres mais aucun départ : le seuil local est la seule cause, lisible dans la raison');
+  assertEveryNonProposalExplained(stuck);
+  // Le pilote réévalue explicitement SON plafond local (origin configured) avec raison tracée, puis recalcule : B démarre ; capacité, pauses et réservations restent appliquées.
+  const raised = { ...capacity, maxReviewBacklog: 2, note: 'Seuil local de revue porté de 1 à 2 : A attend B.delivered pour intégrer (interblocage constaté au cycle précédent)' };
+  const unstuck = ready(p, state({ A: engaged('A', 'delivered') }, { capacity: raised })).report;
+  assert.deepEqual(proposedSteps(unstuck), ['B:start']); assert.deepEqual(unstuck.capacity.reviewBacklog, { count: 1, max: 2 });
+  assert.equal(unstuck.missions.A.outcome, 'blocked', 'l’intégration attend toujours la livraison réelle de B');
+  const still = ready(p, state({ A: engaged('A', 'delivered') }, { capacity: { ...raised, maxActiveRuns: 0 } })).report;
+  assert.deepEqual(still.missions.B.reasons, [{ code: 'capacity_full' }], 'le seuil de revue ne contourne ni la capacité ni une réservation');
+  const paused = ready(p, state({ A: engaged('A', 'delivered') }, { capacity: raised, pauses: [{ scope: 'mission', target: 'B', reason: 'Arbitrage', since: T }] })).report;
+  assert.equal(paused.missions.B.reasons[0].code, 'paused');
+});
+
 test('active missions count, hold and are never relaunched; an uncertain POST asks for reconcile; observed runs raise the count to the maximum', () => {
   const p = plan([mission('A', { priority: 1, reserves: { paths: ['a/'] } }), mission('B', { priority: 2, reserves: { paths: ['a/x.ts'] } }), mission('C', { priority: 3 }), mission('D', { priority: 4 })]);
   const uncertain = { status: 'active', selection: SELECTION, branch: 'agents/a', base: SHA('1'), agentId: 'bc-test-a', runId: null, runStatus: 'UNKNOWN', launch: 'uncertain', assignedAt: T };
@@ -518,10 +566,10 @@ test('review backlog bounds new dev starts only: reviews, corrections, integrati
   const { report } = ready(p, s);
   assert.deepEqual(report.capacity.reviewBacklog, { count: 2, max: 2 });
   assert.deepEqual(proposedSteps(report), ['D1:integrate', 'Z:publish', 'D2:resume', 'R:start', 'INV:start']);
-  assert.deepEqual(report.missions.N, { status: 'pending', outcome: 'waiting', step: 'start', reasons: [{ code: 'review_backlog_full' }] });
+  assert.deepEqual(report.missions.N, { status: 'pending', outcome: 'waiting', step: 'start', reasons: [{ code: 'review_backlog_full', count: 2, max: 2 }] });
   assertEveryNonProposalExplained(report);
   const both = ready(p, state(s.missions, { capacity: { ...s.capacity, maxActiveRuns: 0 } })).report;
-  assert.deepEqual(both.missions.N.reasons, [{ code: 'capacity_full' }, { code: 'review_backlog_full' }]);
+  assert.deepEqual(both.missions.N.reasons, [{ code: 'capacity_full' }, { code: 'review_backlog_full', count: 2, max: 2 }]);
 });
 
 test('pauses target a mission, a lot, a repo or everything; running missions, integrations and publications are untouched', () => {
