@@ -1,3 +1,5 @@
+import { accessRoute } from './access.ts';
+import { createRequestAccessContext, assertRequestAccessContext, disposeRequestAccessContext, commitAccessMutation, type RequestAccessContext } from './access-profiles-store.ts';
 import type { D1Database } from "@cloudflare/workers-types";
 import type { ApiContext, AppExtensions, Identity, Principal, Role, ScopeAction, ScopeProvider, Workspace } from './types.ts';
 import { ApiError, boundedInteger, errorBody, fail, moduleNavigable, moduleWritable, requireModuleRole, requireRole, roles, validateData } from './validation.ts';
@@ -44,6 +46,7 @@ async function getRecord(db: D1Database, org: string, mod: string, id: string, s
 export async function handleApi(request: Request, context: ApiContext, options: AppExtensions = {}): Promise<Response> {
   // The dispatcher correlation id is reused verbatim; a direct call without dispatcher still gets one id per request.
   const requestId = context.requestId ?? uuid(),started=performance.now();
+  let ownAccess:RequestAccessContext|undefined;
   try {
     const url = new URL(request.url);
     const path = url.pathname.replace(/^\/api\/v1\/?/, '').replace(/\/$/,'');
@@ -103,6 +106,9 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     if(declared)assertOperationAllowed(declared,org);
     const credential=context.credential??sessionCredential;
     const scoped:Scoped={scope:resolveScope(options.scope),principal:principalOf(user,org,credential)};
+    const access=context.access??(options.access===undefined?undefined:ownAccess=await createRequestAccessContext({db,request,requestId,workspace:org,identity:user,credential,declaration:options.access,catalog:context.operations??coreOperations(context.app)}));
+    if(access)assertRequestAccessContext(access,request,requestId,org.id,user.userId);
+    if(path.startsWith('access/'))return (await accessRoute(request,{...context,requestId,access},org,context.operations??coreOperations(context.app),options))!;
     const searchResponse=await searchRoute(request,db,context.app,org,user,scoped);if(searchResponse){searchResponse.headers.set('Server-Timing',`app;dur=${(performance.now()-started).toFixed(1)}`);return searchResponse;}
     const tokenResponse=await accessTokenRoute(request,context,org);if(tokenResponse)return tokenResponse;
     if (path === 'workspaces/current' && request.method === 'PATCH') {
@@ -146,8 +152,11 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       requireRole(org.role,['owner','admin']); const body=await readJson(request);
       const email=label(body.email,254).toLowerCase(); const role=body.role as Role;
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !(org.role==='owner'?['admin','member','viewer']:['member','viewer']).includes(role)) fail(400,'invalid_invite','Adresse ou rôle invalide.');
-      const id=uuid(), token=inviteToken(), now=timestamp(), expiry=new Date(Date.now()+7*86400000).toISOString();
-      await db.batch([db.prepare('INSERT INTO lite_invites(id,org_id,email,role,token_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,org.id,email,role,await hash(token),expiry,now),audit(db,org.id,user.userId,'invite.create',id,{role})]);
+      const id=uuid(), token=inviteToken(), now=timestamp(), expiry=new Date(Date.now()+7*86400000).toISOString(),tokenHash=await hash(token);
+      if(access){await commitAccessMutation(access,{kind:'inviteCreate',role},undefined,guard=>[
+        db.prepare(`INSERT INTO lite_invites(id,org_id,email,role,token_hash,expires_at,created_at) SELECT ?,?,?,?,?,?,? WHERE ${guard.sql}`).bind(id,org.id,email,role,tokenHash,expiry,now,...guard.bindings),
+      ],{action:'invite.create',resourceId:id});}
+      else await db.batch([db.prepare('INSERT INTO lite_invites(id,org_id,email,role,token_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,org.id,email,role,tokenHash,expiry,now),audit(db,org.id,user.userId,'invite.create',id,{role})]);
       return json({id,email,role,token,expiresAt:expiry},201);
     }
     const invitationMatch=path.match(/^invites\/([^/]+)$/);
@@ -162,7 +171,14 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       const target=await db.prepare('SELECT role FROM lite_members WHERE org_id=? AND user_id=?').bind(org.id,memberMatch[1]).first<{role:Role}>();
       if (!target) fail(404,'member_not_found','Membre introuvable.');
       if (target.role==='owner') fail(403,'owner_protected','Le propriétaire ne peut pas être retiré ni rétrogradé.');
-      if (request.method==='DELETE') await db.batch([db.prepare("DELETE FROM lite_members WHERE org_id=? AND user_id=? AND role!='owner'").bind(org.id,memberMatch[1]),audit(db,org.id,user.userId,'member.remove',memberMatch[1],{},'WHERE changes()=1')]);
+      if(access){
+        const body=request.method==='PATCH'?await readJson(request):{};
+        if(request.method==='PATCH'&&!['admin','member','viewer'].includes(String(body.role)))fail(400,'invalid_role','Invalid role.');
+        await commitAccessMutation(access,request.method==='DELETE'?{kind:'memberRemove',userId:memberMatch[1]}:{kind:'memberRole',userId:memberMatch[1],role:body.role as Role},undefined,guard=>[
+          request.method==='DELETE'?db.prepare(`DELETE FROM lite_members WHERE org_id=? AND user_id=? AND role!='owner' AND ${guard.sql}`).bind(org.id,memberMatch[1],...guard.bindings):db.prepare(`UPDATE lite_members SET role=? WHERE org_id=? AND user_id=? AND role!='owner' AND ${guard.sql}`).bind(body.role,org.id,memberMatch[1],...guard.bindings),
+        ],{action:request.method==='DELETE'?'member.remove':'member.role',resourceId:memberMatch[1]});
+      }
+      else if (request.method==='DELETE') await db.batch([db.prepare("DELETE FROM lite_members WHERE org_id=? AND user_id=? AND role!='owner'").bind(org.id,memberMatch[1]),audit(db,org.id,user.userId,'member.remove',memberMatch[1],{},'WHERE changes()=1')]);
       else {const body=await readJson(request); if(!['admin','member','viewer'].includes(String(body.role))) fail(400,'invalid_role','Rôle invalide.'); await db.batch([db.prepare("UPDATE lite_members SET role=? WHERE org_id=? AND user_id=? AND role!='owner'").bind(body.role,org.id,memberMatch[1]),audit(db,org.id,user.userId,'member.role',memberMatch[1],{role:body.role},'WHERE changes()=1')]);}
       return json({ok:true});
     }
@@ -198,7 +214,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       }
       if(request.method==='POST' && !id) {
         const body=await readJson(request),data=validateData(mod,body.data);
-        await options.beforeWrite?.({module:mod,data,previous:null,workspace:org,identity:user});
+        await options.beforeWrite?.({module:mod,data,previous:null,workspace:org,identity:user,...(access?{access}:{})});
         const recordId=uuid(),now=timestamp();
         await db.batch([
           db.prepare('INSERT INTO lite_records(id,org_id,module_id,data,search_text,version,created_by,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?,?)').bind(recordId,org.id,mod.id,JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),user.userId,now,now),
@@ -210,7 +226,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         const body=await readJson(request),expected=version(body.version),previous=await getRecord(db,org.id,mod.id,id,scoped,'write');
         if(previous.version!==expected) fail(409,'version_conflict','Ce document a été modifié. Rechargez-le avant d’enregistrer.');
         const data=validateData(mod,body.data);
-        await options.beforeWrite?.({module:mod,data,previous:previous.data,workspace:org,identity:user});
+        await options.beforeWrite?.({module:mod,data,previous:previous.data,workspace:org,identity:user,...(access?{access}:{})});
         const writeFilter=recordScope(scoped.scope,scoped.principal,recordRef,'write');
         const result=await db.batch([
           db.prepare(`UPDATE lite_records SET data=?,search_text=?,version=version+1,updated_at=? WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM lite_records r WHERE r.id=lite_records.id AND ${writeFilter.sql})`).bind(JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),timestamp(),id,org.id,mod.id,expected,...writeFilter.bindings),
@@ -267,7 +283,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         // The configured policy owns every native deletion of this workspace after the access checks above.
         // The kit performs neither tombstone nor bucket.delete here, in parallel or as a fallback.
         const deferred:Promise<unknown>[]=[];
-        const result=await scoped.scope.deleteFile({db,env:context.env,principal:scoped.principal,credential,workspace:org,fileId:file.id,requestId,now:timestamp(),defer:p=>{if(context.defer)context.defer(p);else deferred.push(p.catch(()=>{}));}});
+        const result=await scoped.scope.deleteFile({db,env:context.env,principal:scoped.principal,credential,workspace:org,fileId:file.id,requestId,...(access?{access}:{}),now:timestamp(),defer:p=>{if(context.defer)context.defer(p);else deferred.push(p.catch(()=>{}));}});
         if(deferred.length)await Promise.all(deferred);
         if(!result||!['queued','complete'].includes(result.cleanup))fail(503,'service_unavailable','La politique de suppression n’a pas confirmé le résultat.');
         return json({ok:true,cleanup:result.cleanup});
@@ -287,5 +303,5 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     // Do not log user payloads, invitation tokens, credentials or SQL bindings.
     console.error(JSON.stringify({event:'lite.api-error',requestId,type:error instanceof Error?error.name:'UnknownError'}));
     return json({error:{code:'service_unavailable',message:'Le service est momentanément indisponible. Vos modifications n’ont pas été confirmées.',requestId}},503);
-  }
+  }finally{disposeRequestAccessContext(ownAccess);}
 }

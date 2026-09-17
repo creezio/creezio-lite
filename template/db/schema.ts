@@ -172,3 +172,13 @@ export const publicIngressClaims = sqliteTable('lite_public_ingress_claims', {
   check('ingress_claim_attempts', sql`${t.attempts} >= 1`),
   check('ingress_claim_snapshot_json', sql`${t.snapshotJson} IS NULL OR json_valid(${t.snapshotJson})`),
 ]);
+
+// Native adoption receipts. The epoch guards every group/membership/policy/receipt mutation.
+export const accessReceipts = sqliteTable('lite_access_receipts', {
+  orgId:text('org_id').primaryKey().notNull().references(()=>organizations.id,{onDelete:'cascade'}),
+  receiptJson:text('receipt_json').notNull(),version:integer('version').notNull().default(1),updatedAt:text('updated_at').notNull(),
+},t=>[check('access_receipt_json',sql`json_valid(${t.receiptJson})`),check('access_receipt_version',sql`${t.version} >= 1`)]);
+export const accessEpochs = sqliteTable('lite_access_epochs', {
+  orgId:text('org_id').primaryKey().notNull().references(()=>organizations.id,{onDelete:'cascade'}),
+  revision:integer('revision').notNull().default(0),writeToken:text('write_token'),
+},t=>[check('access_epoch_revision',sql`${t.revision} >= 0`)]);

@@ -1,3 +1,5 @@
+import { validateAccessDeclaration } from './access-profiles-engine.ts';
+import { assertRequestAccessContext, type RequestAccessContext } from './access-profiles-store.ts';
 import type { AppDefinition, AppExtensions, AppOperationContext, AppOperationDefinition, AppOperationResult, CredentialContext, Identity, LiteEnvironment, Principal, Role, ScopeProvider, Workspace } from './types.ts';
 import { appOperations, assertUniqueOperations, coreOperations, idSchema, objectSchema, operation, type JsonSchema, type Operation } from './operations.ts';
 import { ApiError, errorBody, fail, idPattern, roles as everyRole } from './validation.ts';
@@ -11,7 +13,7 @@ const namePattern=/^[a-z][a-z0-9-]{0,47}$/;
 type Requirement='required'|'optional'|'none';
 export const reservedCommandFields=['expectedVersion','idempotencyKey','reason'] as const;
 /** Never declarable as business fields: the envelope names and every server-context name a client could try to forge. */
-export const rejectedCommandFields=['command','payload','principal','credential','identity','workspace','workspaceId','role','requestId','scope','operation'] as const;
+export const rejectedCommandFields=['command','payload','principal','credential','identity','workspace','workspaceId','role','requestId','scope','operation','access','profileId','observedProfileIds','catalogRevision','evaluateAccess','authorizeDelegation'] as const;
 /** Replay keys are opaque ASCII tokens: letters, digits, dot, underscore, colon and dash, 1 to 160 characters, no whitespace. */
 export const idempotencyKeyPattern='^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$';
 const reservedSchemas:Record<(typeof reservedCommandFields)[number],JsonSchema>={
@@ -100,6 +102,7 @@ export function defineExtensions(app:AppDefinition,extensions:AppExtensions={},c
     }
     validatePublicIngressDeclaration(extensions.publicIngress,{operations:privateOperations});
   }
+  if(extensions.access!==undefined)validateAccessDeclaration(extensions.access,privateOperations);
   return extensions;
 }
 
@@ -126,6 +129,7 @@ function coerceQuery(schema:JsonSchema|undefined,raw:Record<string,string>):Reco
 const dataChanged=/^[a-z][a-z0-9-]{0,47}$/;
 
 export type AppOperationInput={
+  access?:RequestAccessContext;
   app:AppDefinition; env:LiteEnvironment; identity:Identity; workspace:Workspace; principal:Principal;
   /** Verified credential reference built by the dispatcher; defaults to the browser session. */
   credential?:CredentialContext;
@@ -171,7 +175,9 @@ export async function executeAppOperation(request:Request,definition:AppOperatio
       }
       validateSchema(bodySchema,body,'body');
     }
+    if(input.access)assertRequestAccessContext(input.access,request,requestId,input.workspace.id,input.identity.userId);
     const ctx:AppOperationContext=Object.freeze({
+      ...(input.access?{access:input.access}:{}),
       db:input.env.DB,env:input.env,app:input.app,identity:Object.freeze({...input.identity}),workspace:input.workspace,principal:Object.freeze({...input.principal}),credential,
       operation:op,requestId,now:new Date().toISOString(),params:Object.freeze({...params}),query:Object.freeze(query),body:Object.freeze(body),
       scope:resolveScope(input.scope),defer,

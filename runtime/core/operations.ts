@@ -68,6 +68,11 @@ export function coreOperations(app:AppDefinition):Operation[]{
   add('api.catalog','GET','admin/endpoints','api','API','Catalogue complet des opérations',{roles:admin});
   add('api.openapi','GET','openapi.json','api','API','Documentation OpenAPI des opérations autorisées',{essential:true});
   add('access.catalog','GET','access/catalog','access','Groupes et accès','Matrice des groupes et opérations',protectedAdmin);
+  const bindingSchema=objectSchema({groupId:idSchema,profileId:idSchema,profileRevision:{type:'integer'}},['groupId','profileId','profileRevision']);
+  const receiptSchema=objectSchema({catalogRevision:stringSchema,bindings:{type:'array',maxItems:1000,items:bindingSchema},validUntil:{type:'string',format:'date-time'}},['catalogRevision','bindings']);
+  add('access.receipt.update','PUT','access/receipt','access','Groupes et acces','Adopter ou remplacer le recu natif',{...protectedAdmin,bodySchema:objectSchema({receipt:receiptSchema,version:{type:'integer',minimum:0}},['receipt','version'])});
+  add('access.bind','POST','access/bind','access','Groupes et acces','Lier un groupe a un profil',{...protectedAdmin,bodySchema:objectSchema({groupId:idSchema,profileId:idSchema,profileRevision:{type:'integer'},version:{type:'integer',minimum:0}},['groupId','profileId','profileRevision','version'])});
+  add('access.unbind','POST','access/unbind','access','Groupes et acces','Retirer une liaison de profil',{...protectedAdmin,bodySchema:objectSchema({groupId:idSchema,profileId:idSchema,version:{type:'integer',minimum:0}},['groupId','profileId','version'])});
   add('access.groups.create','POST','access/groups','access','Groupes et accès','Créer un groupe',{...protectedAdmin,bodySchema:objectSchema({name:stringSchema},['name'])});
   add('access.groups.update','PUT','access/groups/:id','access','Groupes et accès','Modifier un groupe et ses membres',{...protectedAdmin,bodySchema:objectSchema({name:stringSchema,userIds:{type:'array',items:idSchema,maxItems:500},version:{type:'integer',minimum:1}},['name','userIds','version'])});
   add('access.groups.delete','DELETE','access/groups/:id','access','Groupes et accès','Supprimer un groupe',protectedAdmin);
