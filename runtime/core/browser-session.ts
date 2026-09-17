@@ -51,7 +51,7 @@ export async function pollWindow(c:ApiContext,org:Workspace,id:string,path?:stri
 export async function browserSessionRoute(request:Request,c:ApiContext,org:Workspace):Promise<Response|null> {
   const path=new URL(request.url).pathname.replace('/api/v1/assistant/','');
   if(!path.startsWith('browser/'))return null;
-  const op=c.operations?.find(o=>o.id==='assistant.chat');if(!op)fail(403,'ui_forbidden','Assistant indisponible.');assertOperationAllowed(op,org);
+  const op=c.operations?.find(o=>o.id==='assistant.chat');if(!op)fail(403,'ui_forbidden','Assistant indisponible.');assertOperationAllowed(op,org,c.access);
   if(path==='browser/diagnostics'&&request.method==='GET')return json({events:await browserEvents(c,org)});
   const body=await readJson(request),id=windowId(body.windowId);
   if(path==='browser/connect') {

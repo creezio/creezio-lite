@@ -1,16 +1,19 @@
+import { validateAccessDeclaration } from './access-profiles-engine.ts';
+import { assertRequestAccessContext, type RequestAccessContext } from './access-profiles-store.ts';
 import type { AppDefinition, AppExtensions, AppOperationContext, AppOperationDefinition, AppOperationResult, CredentialContext, Identity, LiteEnvironment, Principal, Role, ScopeProvider, Workspace } from './types.ts';
 import { appOperations, assertUniqueOperations, coreOperations, idSchema, objectSchema, operation, type JsonSchema, type Operation } from './operations.ts';
 import { ApiError, errorBody, fail, idPattern, roles as everyRole } from './validation.ts';
 import { validateSchema } from './tools.ts';
 import { json, readJson } from './http.ts';
 import { resolveScope, sessionCredential } from './scope.ts';
+import { PublicIngressDeclarationError, validatePublicIngressDeclaration } from './public-ingress-engine.ts';
 
 const writers:Role[]=['owner','admin','member'];
 const namePattern=/^[a-z][a-z0-9-]{0,47}$/;
 type Requirement='required'|'optional'|'none';
 export const reservedCommandFields=['expectedVersion','idempotencyKey','reason'] as const;
 /** Never declarable as business fields: the envelope names and every server-context name a client could try to forge. */
-export const rejectedCommandFields=['command','payload','principal','credential','identity','workspace','workspaceId','role','requestId','scope','operation'] as const;
+export const rejectedCommandFields=['command','payload','principal','credential','identity','workspace','workspaceId','role','requestId','scope','operation','access','profileId','observedProfileIds','catalogRevision','evaluateAccess','authorizeDelegation'] as const;
 /** Replay keys are opaque ASCII tokens: letters, digits, dot, underscore, colon and dash, 1 to 160 characters, no whitespace. */
 export const idempotencyKeyPattern='^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$';
 const reservedSchemas:Record<(typeof reservedCommandFields)[number],JsonSchema>={
@@ -85,12 +88,21 @@ export function read(input:ReadInput):AppOperationDefinition{
  * route shape or tool name with the given catalogue is refused here, with the same stable
  * diagnostics as the request-time catalogue. Without a catalogue the core operations of the
  * application are used; the Sites adapter passes its complete native catalogue.
+ * publicIngress exige ce catalogue complet : `operations: []` ou son omission ne prouvent
+ * pas l’absence de collision avec les routes privées.
  */
 export function defineExtensions(app:AppDefinition,extensions:AppExtensions={},catalog?:Operation[]):AppExtensions{
   if(extensions.beforeWrite!==undefined&&typeof extensions.beforeWrite!=='function')throw new Error('beforeWrite doit être une fonction.');
   resolveScope(extensions.scope);
   const declared=appOperations(app,extensions.operations);
-  assertUniqueOperations([...(catalog??coreOperations(app)),...declared]);
+  const privateOperations=assertUniqueOperations([...(catalog??coreOperations(app)),...declared]);
+  if(extensions.publicIngress!==undefined){
+    if(!Array.isArray(catalog)||catalog.length<1){
+      throw new PublicIngressDeclarationError('operations_catalog_required','Le catalogue complet des opérations privées doit être fourni explicitement ; son absence ou operations:[] ne prouve pas l’unicité des routes publiques.');
+    }
+    validatePublicIngressDeclaration(extensions.publicIngress,{operations:privateOperations});
+  }
+  if(extensions.access!==undefined)validateAccessDeclaration(extensions.access,privateOperations);
   return extensions;
 }
 
@@ -117,6 +129,7 @@ function coerceQuery(schema:JsonSchema|undefined,raw:Record<string,string>):Reco
 const dataChanged=/^[a-z][a-z0-9-]{0,47}$/;
 
 export type AppOperationInput={
+  access?:RequestAccessContext;
   app:AppDefinition; env:LiteEnvironment; identity:Identity; workspace:Workspace; principal:Principal;
   /** Verified credential reference built by the dispatcher; defaults to the browser session. */
   credential?:CredentialContext;
@@ -162,7 +175,9 @@ export async function executeAppOperation(request:Request,definition:AppOperatio
       }
       validateSchema(bodySchema,body,'body');
     }
+    if(input.access)assertRequestAccessContext(input.access,request,requestId,input.workspace.id,input.identity.userId);
     const ctx:AppOperationContext=Object.freeze({
+      ...(input.access?{access:input.access}:{}),
       db:input.env.DB,env:input.env,app:input.app,identity:Object.freeze({...input.identity}),workspace:input.workspace,principal:Object.freeze({...input.principal}),credential,
       operation:op,requestId,now:new Date().toISOString(),params:Object.freeze({...params}),query:Object.freeze(query),body:Object.freeze(body),
       scope:resolveScope(input.scope),defer,

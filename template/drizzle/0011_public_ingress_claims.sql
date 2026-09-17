@@ -1,0 +1,20 @@
+CREATE TABLE `lite_public_ingress_claims` (
+	`tenant_id` text NOT NULL,
+	`entry_id` text NOT NULL,
+	`event_id` text NOT NULL,
+	`digest_hex` text NOT NULL,
+	`state` text NOT NULL,
+	`generation` integer NOT NULL,
+	`token` text NOT NULL,
+	`attempts` integer NOT NULL,
+	`lease_until` text NOT NULL,
+	`snapshot_json` text,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL,
+	PRIMARY KEY(`tenant_id`, `entry_id`, `event_id`),
+	FOREIGN KEY (`tenant_id`) REFERENCES `lite_orgs`(`id`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "ingress_claim_state" CHECK("lite_public_ingress_claims"."state" IN ('processing','retryable','completed','permanent_failure','attempts_exhausted')),
+	CONSTRAINT "ingress_claim_generation" CHECK("lite_public_ingress_claims"."generation" >= 1),
+	CONSTRAINT "ingress_claim_attempts" CHECK("lite_public_ingress_claims"."attempts" >= 1),
+	CONSTRAINT "ingress_claim_snapshot_json" CHECK("lite_public_ingress_claims"."snapshot_json" IS NULL OR json_valid("lite_public_ingress_claims"."snapshot_json"))
+);

@@ -1,0 +1,587 @@
+{
+  "formatVersion": 1,
+  "plan": {
+    "id": "kit-native-runtimes",
+    "title": "Native access and public ingress runtimes",
+    "revision": "2026-09-17.1"
+  },
+  "repos": {
+    "kit": {
+      "url": "https://github.com/creezio/creezio-lite",
+      "defaultBase": "main"
+    }
+  },
+  "resources": {
+    "kit:runtime-interfaces": "Exclusive ownership of shared types, commands, dispatch and authorization integration",
+    "db:schema": "Inventory and additive schema ownership; no reserved migration number yet",
+    "kit:version": "Coherent final runtime release version"
+  },
+  "conditions": {
+    "contracts-accepted": {
+      "check": "Published contracts accepted",
+      "proof": "Release SHA and independent contract receipts"
+    },
+    "runtime-release-received": {
+      "check": "Runtime composition accepted, exact CI and release verified",
+      "proof": "Review, CI and release SHA"
+    },
+    "access-engine-accepted": {
+      "check": "Independent exact-head review accepted by maintainer",
+      "proof": "Review receipt, head SHA and CI"
+    },
+    "ingress-engine-accepted": {
+      "check": "Independent exact-head review accepted by maintainer",
+      "proof": "Review receipt, head SHA and CI"
+    },
+    "access-native-accepted": {
+      "check": "Independent exact-head review accepted by maintainer",
+      "proof": "Review receipt, head SHA and CI"
+    },
+    "ingress-claims-accepted": {
+      "check": "Independent exact-head review accepted by maintainer",
+      "proof": "Review receipt, head SHA and CI"
+    },
+    "access-surfaces-accepted": {
+      "check": "Independent exact-head review accepted by maintainer",
+      "proof": "Review receipt, head SHA and CI"
+    },
+    "ingress-surfaces-accepted": {
+      "check": "Independent exact-head review accepted by maintainer",
+      "proof": "Review receipt, head SHA and CI"
+    },
+    "runtime-delivery-accepted": {
+      "check": "Independent exact-head review accepted by maintainer",
+      "proof": "Review receipt, head SHA and CI"
+    }
+  },
+  "missions": [
+    {
+      "id": "ACCESS-ENGINE",
+      "lot": "access",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Native access evaluator",
+      "source": "docs/contracts/access-profiles.md",
+      "deliverable": "Native access evaluator with executable security tests and a reviewable branch",
+      "criteria": [
+        "Respect published contracts and native primitives",
+        "No application business rules or secrets",
+        "Executable negative and compatibility tests",
+        "No claim of shipped capability before final runtime reception"
+      ],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "contracts": [
+        "docs/contracts/access-profiles.md"
+      ],
+      "dependencies": {
+        "start": [
+          {
+            "condition": "contracts-accepted"
+          }
+        ],
+        "integrate": [
+          {
+            "condition": "access-engine-accepted"
+          }
+        ],
+        "publish": [
+          {
+            "condition": "runtime-release-received"
+          }
+        ]
+      },
+      "reserves": {
+        "paths": [
+          "runtime/core/access-profiles-engine.ts",
+          "tests/access-profiles-engine.test.mjs",
+          "docs/planning/plan.json"
+        ],
+        "resources": []
+      }
+    },
+    {
+      "id": "ACCESS-ENGINE-R",
+      "lot": "access",
+      "kind": "review",
+      "repo": "kit",
+      "title": "Independent review of ACCESS-ENGINE",
+      "source": "docs/contracts/access-profiles.md",
+      "deliverable": "Exact head review verdict and evidence",
+      "criteria": [
+        "Review security and executable evidence proportionately",
+        "No merge, publication or application change"
+      ],
+      "owner": "kit-reviewer",
+      "priority": 1,
+      "dependencies": {
+        "start": [
+          {
+            "mission": "ACCESS-ENGINE",
+            "step": "delivered"
+          }
+        ]
+      },
+      "reserves": {}
+    },
+    {
+      "id": "INGRESS-ENGINE",
+      "lot": "ingress",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Public admission engine",
+      "source": "docs/contracts/public-ingress.md",
+      "deliverable": "Public admission engine with executable security tests and a reviewable branch",
+      "criteria": [
+        "Respect published contracts and native primitives",
+        "No application business rules or secrets",
+        "Executable negative and compatibility tests",
+        "No claim of shipped capability before final runtime reception"
+      ],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "contracts": [
+        "docs/contracts/public-ingress.md"
+      ],
+      "dependencies": {
+        "start": [
+          {
+            "condition": "contracts-accepted"
+          }
+        ],
+        "integrate": [
+          {
+            "condition": "ingress-engine-accepted"
+          }
+        ],
+        "publish": [
+          {
+            "condition": "runtime-release-received"
+          }
+        ]
+      },
+      "reserves": {
+        "paths": [
+          "runtime/core/public-ingress-engine.ts",
+          "tests/public-ingress-engine.test.mjs"
+        ],
+        "resources": []
+      }
+    },
+    {
+      "id": "INGRESS-ENGINE-R",
+      "lot": "ingress",
+      "kind": "review",
+      "repo": "kit",
+      "title": "Independent review of INGRESS-ENGINE",
+      "source": "docs/contracts/public-ingress.md",
+      "deliverable": "Exact head review verdict and evidence",
+      "criteria": [
+        "Review security and executable evidence proportionately",
+        "No merge, publication or application change"
+      ],
+      "owner": "kit-reviewer",
+      "priority": 1,
+      "dependencies": {
+        "start": [
+          {
+            "mission": "INGRESS-ENGINE",
+            "step": "delivered"
+          }
+        ]
+      },
+      "reserves": {}
+    },
+    {
+      "id": "ACCESS-NATIVE",
+      "lot": "access",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Native receipts and protected access mutations",
+      "source": "docs/contracts/access-profiles.md",
+      "deliverable": "Native receipts and protected access mutations with executable security tests and a reviewable branch",
+      "criteria": [
+        "Respect published contracts and native primitives",
+        "No application business rules or secrets",
+        "Executable negative and compatibility tests",
+        "No claim of shipped capability before final runtime reception"
+      ],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "contracts": [
+        "docs/contracts/access-profiles.md"
+      ],
+      "dependencies": {
+        "start": [
+          {
+            "condition": "contracts-accepted"
+          },
+          {
+            "mission": "ACCESS-ENGINE",
+            "step": "delivered"
+          }
+        ],
+        "integrate": [
+          {
+            "condition": "access-native-accepted"
+          }
+        ],
+        "publish": [
+          {
+            "condition": "runtime-release-received"
+          }
+        ]
+      },
+      "reserves": {
+        "paths": [
+          "runtime/core/access-profiles-store.ts",
+          "runtime/core/access.ts",
+          "runtime/core/types.ts",
+          "runtime/core/commands.ts",
+          "runtime/ui/access-settings.tsx",
+          "tests/access-profiles-native.test.mjs"
+        ],
+        "resources": [
+          "kit:runtime-interfaces",
+          "db:schema"
+        ]
+      }
+    },
+    {
+      "id": "ACCESS-NATIVE-R",
+      "lot": "access",
+      "kind": "review",
+      "repo": "kit",
+      "title": "Independent review of ACCESS-NATIVE",
+      "source": "docs/contracts/access-profiles.md",
+      "deliverable": "Exact head review verdict and evidence",
+      "criteria": [
+        "Review security and executable evidence proportionately",
+        "No merge, publication or application change"
+      ],
+      "owner": "kit-reviewer",
+      "priority": 1,
+      "dependencies": {
+        "start": [
+          {
+            "mission": "ACCESS-NATIVE",
+            "step": "delivered"
+          }
+        ]
+      },
+      "reserves": {}
+    },
+    {
+      "id": "INGRESS-CLAIMS",
+      "lot": "ingress",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Durable signed admission claims",
+      "source": "docs/contracts/public-ingress.md",
+      "deliverable": "Durable signed admission claims with executable security tests and a reviewable branch",
+      "criteria": [
+        "Respect published contracts and native primitives",
+        "No application business rules or secrets",
+        "Executable negative and compatibility tests",
+        "No claim of shipped capability before final runtime reception"
+      ],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "contracts": [
+        "docs/contracts/public-ingress.md"
+      ],
+      "dependencies": {
+        "start": [
+          {
+            "condition": "contracts-accepted"
+          },
+          {
+            "mission": "INGRESS-ENGINE",
+            "step": "delivered"
+          }
+        ],
+        "integrate": [
+          {
+            "condition": "ingress-claims-accepted"
+          }
+        ],
+        "publish": [
+          {
+            "condition": "runtime-release-received"
+          }
+        ]
+      },
+      "reserves": {
+        "paths": [
+          "runtime/core/public-ingress-claims.ts",
+          "tests/public-ingress-claims.test.mjs"
+        ],
+        "resources": [
+          "db:schema"
+        ]
+      }
+    },
+    {
+      "id": "INGRESS-CLAIMS-R",
+      "lot": "ingress",
+      "kind": "review",
+      "repo": "kit",
+      "title": "Independent review of INGRESS-CLAIMS",
+      "source": "docs/contracts/public-ingress.md",
+      "deliverable": "Exact head review verdict and evidence",
+      "criteria": [
+        "Review security and executable evidence proportionately",
+        "No merge, publication or application change"
+      ],
+      "owner": "kit-reviewer",
+      "priority": 1,
+      "dependencies": {
+        "start": [
+          {
+            "mission": "INGRESS-CLAIMS",
+            "step": "delivered"
+          }
+        ]
+      },
+      "reserves": {}
+    },
+    {
+      "id": "ACCESS-SURFACES",
+      "lot": "access",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Apply native decisions across access surfaces",
+      "source": "docs/contracts/access-profiles.md",
+      "deliverable": "Apply native decisions across access surfaces with executable security tests and a reviewable branch",
+      "criteria": [
+        "Respect published contracts and native primitives",
+        "No application business rules or secrets",
+        "Executable negative and compatibility tests",
+        "No claim of shipped capability before final runtime reception"
+      ],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "contracts": [
+        "docs/contracts/access-profiles.md"
+      ],
+      "dependencies": {
+        "start": [
+          {
+            "condition": "contracts-accepted"
+          },
+          {
+            "mission": "ACCESS-NATIVE",
+            "step": "delivered"
+          }
+        ],
+        "integrate": [
+          {
+            "condition": "access-surfaces-accepted"
+          }
+        ],
+        "publish": [
+          {
+            "condition": "runtime-release-received"
+          }
+        ]
+      },
+      "reserves": {
+        "paths": [
+          "runtime/core/operations.ts",
+          "runtime/core/scope.ts",
+          "runtime/core/search.ts",
+          "runtime/core/api.ts",
+          "runtime/core/nav.ts",
+          "runtime/core/tools.ts",
+          "runtime/core/files.ts",
+          "tests/access-profiles-surfaces.test.mjs"
+        ],
+        "resources": [
+          "kit:runtime-interfaces"
+        ]
+      }
+    },
+    {
+      "id": "ACCESS-SURFACES-R",
+      "lot": "access",
+      "kind": "review",
+      "repo": "kit",
+      "title": "Independent review of ACCESS-SURFACES",
+      "source": "docs/contracts/access-profiles.md",
+      "deliverable": "Exact head review verdict and evidence",
+      "criteria": [
+        "Review security and executable evidence proportionately",
+        "No merge, publication or application change"
+      ],
+      "owner": "kit-reviewer",
+      "priority": 1,
+      "dependencies": {
+        "start": [
+          {
+            "mission": "ACCESS-SURFACES",
+            "step": "delivered"
+          }
+        ]
+      },
+      "reserves": {}
+    },
+    {
+      "id": "INGRESS-SURFACES",
+      "lot": "ingress",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Wire public ingress into the native dispatcher",
+      "source": "docs/contracts/public-ingress.md",
+      "deliverable": "Wire public ingress into the native dispatcher with executable security tests and a reviewable branch",
+      "criteria": [
+        "Respect published contracts and native primitives",
+        "No application business rules or secrets",
+        "Executable negative and compatibility tests",
+        "No claim of shipped capability before final runtime reception"
+      ],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "contracts": [
+        "docs/contracts/public-ingress.md"
+      ],
+      "dependencies": {
+        "start": [
+          {
+            "condition": "contracts-accepted"
+          },
+          {
+            "mission": "INGRESS-CLAIMS",
+            "step": "delivered"
+          }
+        ],
+        "integrate": [
+          {
+            "condition": "ingress-surfaces-accepted"
+          }
+        ],
+        "publish": [
+          {
+            "condition": "runtime-release-received"
+          }
+        ]
+      },
+      "reserves": {
+        "paths": [
+          "runtime/core/dispatch.ts",
+          "runtime/core/types.ts",
+          "runtime/core/commands.ts",
+          "tests/public-ingress-dispatch.test.mjs"
+        ],
+        "resources": [
+          "kit:runtime-interfaces"
+        ]
+      }
+    },
+    {
+      "id": "INGRESS-SURFACES-R",
+      "lot": "ingress",
+      "kind": "review",
+      "repo": "kit",
+      "title": "Independent review of INGRESS-SURFACES",
+      "source": "docs/contracts/public-ingress.md",
+      "deliverable": "Exact head review verdict and evidence",
+      "criteria": [
+        "Review security and executable evidence proportionately",
+        "No merge, publication or application change"
+      ],
+      "owner": "kit-reviewer",
+      "priority": 1,
+      "dependencies": {
+        "start": [
+          {
+            "mission": "INGRESS-SURFACES",
+            "step": "delivered"
+          }
+        ]
+      },
+      "reserves": {}
+    },
+    {
+      "id": "RUNTIME-DELIVERY",
+      "lot": "delivery",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Compose accepted runtime capabilities and adoption guide",
+      "source": "docs/contracts/public-ingress.md",
+      "deliverable": "Compose accepted runtime capabilities and adoption guide with executable security tests and a reviewable branch",
+      "criteria": [
+        "Respect published contracts and native primitives",
+        "No application business rules or secrets",
+        "Executable negative and compatibility tests",
+        "No claim of shipped capability before final runtime reception"
+      ],
+      "owner": "kit-maintainer",
+      "priority": 3,
+      "contracts": [
+        "docs/contracts/public-ingress.md"
+      ],
+      "dependencies": {
+        "start": [
+          {
+            "condition": "contracts-accepted"
+          },
+          {
+            "mission": "ACCESS-SURFACES",
+            "step": "delivered"
+          },
+          {
+            "mission": "INGRESS-SURFACES",
+            "step": "delivered"
+          }
+        ],
+        "integrate": [
+          {
+            "condition": "runtime-delivery-accepted"
+          }
+        ],
+        "publish": [
+          {
+            "condition": "runtime-release-received"
+          }
+        ]
+      },
+      "reserves": {
+        "paths": [
+          "package.json",
+          "package-lock.json",
+          "template/package.json",
+          "CHANGELOG.md",
+          "docs/UPDATES.md",
+          "docs/runtime-adoption.md"
+        ],
+        "resources": [
+          "kit:version"
+        ]
+      }
+    },
+    {
+      "id": "RUNTIME-DELIVERY-R",
+      "lot": "delivery",
+      "kind": "review",
+      "repo": "kit",
+      "title": "Independent review of RUNTIME-DELIVERY",
+      "source": "docs/contracts/public-ingress.md",
+      "deliverable": "Exact head review verdict and evidence",
+      "criteria": [
+        "Review security and executable evidence proportionately",
+        "No merge, publication or application change"
+      ],
+      "owner": "kit-reviewer",
+      "priority": 1,
+      "dependencies": {
+        "start": [
+          {
+            "mission": "RUNTIME-DELIVERY",
+            "step": "delivered"
+          }
+        ]
+      },
+      "reserves": {}
+    }
+  ]
+}

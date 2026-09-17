@@ -1,6 +1,6 @@
 # Entrées publiques — contrat générique (C01)
 
-Proposition, **pas une release**, aucun runtime livré. **Provenance / base** kit `0.13.1` `f41f0ed3e1d19091f364df09f1932f9f89c46a0e` (`main`). WH-K01 = handoff. Fixtures d’app **non observées**.
+Statut : implémenté dans la candidate 0.15.0, pas encore une publication. Moteur, ClaimStore D1 et dispatcher sont couverts par les tests public-ingress-engine/claims/dispatch. Les fixtures ne prouvent ni un adaptateur fournisseur ni une adoption applicative en production. Voir ../runtime-adoption.md.
 
 ## 1. Rejets
 
@@ -16,7 +16,7 @@ Proposition, **pas une release**, aucun runtime livré. **Provenance / base** ki
 | Regex `^[a-z0-9-]{8,80}$` ; `rawBody` Electron ; bool `public` sur `command()` ; DLQ | **Non.** |
 | Factory lit `Request` / `?workspace=` / corps pour le tenant ; singleton process ou inter-tenant | **Non.** `createRequestScope` **après** `resolveTenant` ; pas d’Identity/session simulée. |
 
-## 2. Constat 0.13.1
+## 2. Constat historique 0.13.1
 
 SHA identiques 0.12=0.13.0 : `runtime/core/{types,commands,integrations}.ts`, `sites-adapter/src/dispatch.ts`, `api-kernel/src/types.ts`. `dispatchRequest` : inbound mail **avant** auth (jeton haché, JSON 5 Mio, pas HMAC) ; sans clé, `health|bootstrap|session|invites/accept|workspaces|auth/me` passent le 401 dispatcher mais l’identité Sites reste exigée **sauf `GET health`** ; le reste **401** ; `checkOrigin` ; `workspace()` = adhésion ; `readJson` 65 536, pas de `rawBytes`. `ws_`+32 hex / UUID. `operation()` défaut `mcp`/`tokenAllowed` true. Coffre `secret_box`, AAD `org:id` ; `meta.webhookSecret` droppé. HMAC Sites absent. Stripe docs : corps non muté ; retry re-signe — **adaptateur**.
 
@@ -122,7 +122,7 @@ export type PublicAdmissionContext = {
 
 `AppExtensions.publicIngress?: PublicIngressDeclaration` — champ **additif**, distinct de `access` (ACCESS). `defineExtensions` **valide** la déclaration (fail-closed) : unicité des `id`/routes vs `Operation` et inbound mail ; `mcp`/`tokenAllowed` faux ; `resolveTenant` et `createRequestScope` sont des fonctions ; callbacks du kind **plus** `abuse.requires` présents sur un **échantillon** de scopes (probe `db`/`env` non sérialisables). Deux appels factory ⇒ **deux objets distincts** (`!==`) ; même objet pour deux `tenantId` ou deux `requestId` ⇒ **rejet déclaration** (singleton). `access` et `publicIngress` ne se substituent pas : pas d’Identity/session/Principal sur l’admission publique.
 
-Dépendances **requises** = callbacks du kind **plus** `abuse.requires`. **Dès ≥1 entrée `signed` : `verify` et `claimStore` obligatoires** — rejet de **déclaration** si l’un manque (même règle pour les deux). Guest : **pas** de `claimStore`. Absence au démarrage ⇒ rejet déclaration. **En exécution**, dépendance indisponible (`ready()===false`, `unavailable`, throw, coffre) ⇒ **503 fail-closed avant `handle`**. Jamais **200** `signed` sans persistance CAS réussie. Pas d’algorithme de limite ni IP universelle. `signed` : HMAC **ou** autre signature machine. **Exemple Stripe (app)** : `t`/`v1`, ASCII(`t`)+`0x2E`+`rawBytes`. Guest : `admitGuest` `ok: false` ou panne ⇒ pas de `handle`. Jeton de chemin ≠ Identity / `eventId`. `claimStore` abstrait. D1 additif = candidat runtime après inventaire ; pas de numéro réservé. Lease/essais = config serveur.
+Dépendances **requises** = callbacks du kind **plus** `abuse.requires`. **Dès ≥1 entrée `signed` : `verify` et `claimStore` obligatoires** — rejet de **déclaration** si l’un manque (même règle pour les deux). Guest : **pas** de `claimStore`. Absence au démarrage ⇒ rejet déclaration. **En exécution**, dépendance indisponible (`ready()===false`, `unavailable`, throw, coffre) ⇒ **503 fail-closed avant `handle`**. Jamais **200** `signed` sans persistance CAS réussie. Pas d’algorithme de limite ni IP universelle. `signed` : HMAC **ou** autre signature machine. **Exemple Stripe (app)** : `t`/`v1`, ASCII(`t`)+`0x2E`+`rawBytes`. Guest : `admitGuest` `ok: false` ou panne ⇒ pas de `handle`. Jeton de chemin ≠ Identity / `eventId`. `claimStore` abstrait. Stockage D1 additif : `createD1ClaimStore` et migration `0011_public_ingress_claims.sql`. Lease/essais = config serveur.
 
 `db` / `env` / secret vivent **seulement** dans `PublicIngressServices` et les fermetures. **Jamais** sur `PublicAdmissionContext`, snapshot, journal, corps HTTP, MCP. `JSON.stringify` / log / retour de `db`, `env`, `LITE_INTEGRATION_SECRET`, `secret` ⇒ **interdit**. Pas de `Request` tenant.
 

@@ -1,5 +1,7 @@
+import { createRequestAccessContext, assertRequestAccessContext, disposeRequestAccessContext, type RequestAccessContext } from '@lite/core/access-profiles-store';
+import { sessionCredential } from '@lite/core/scope';
 import { createApiKernel } from '../../api-kernel/src/kernel.ts';
-import type { ApiContext, Workspace } from '@lite/core';
+import type { ApiContext, AppExtensions, Workspace } from '@lite/core';
 import { handleApi } from '@lite/core';
 import { workspace as getWorkspace } from '@lite/core/api';
 import { ApiError, fail } from '@lite/core/validation';
@@ -9,8 +11,8 @@ import { supportMount } from './support';
 import { demoMount } from './demo';
 import { tasksMount } from './tasks';
 import { type NativeContext } from './context';
-import { nativeMounts } from './catalog';
-import { canReadModule } from '@lite/core/operations';
+import { nativeMounts, operationCatalog } from './catalog';
+import { matchOperation, assertOperationAllowed } from '@lite/core/operations';
 
 export function workspaceCookie(request:Request):string|null {
   const cookies=(request.headers.get('cookie')??'').split(';').map(s=>s.trim());
@@ -18,10 +20,11 @@ export function workspaceCookie(request:Request):string|null {
   const value=selected?.slice(selected.indexOf('=')+1);
   return value&&/^[a-zA-Z0-9_-]{1,100}$/.test(value)?value:null;
 }
-export async function handleNativeApi(request:Request,context:ApiContext):Promise<Response|null> {
+export async function handleNativeApi(request:Request,context:ApiContext,options:AppExtensions={}):Promise<Response|null> {
   const url=new URL(request.url),path=url.pathname.slice('/api/v1/'.length).replace(/\/$/,'');
   const isNative=/^(auth\/|users$|desktop\/heartbeat$|tasks(?:\/|$)|core(?:\/|$)|modules\/(?![a-z][a-z0-9-]*\/records(?:\/|$))|platform\/platform-support(?:\/|$)|workspaces\/select$)/.test(path);
   if(!isNative)return null;
+  let ownAccess:RequestAccessContext|undefined;
   try{
     const user=context.identity;if(!user)fail(401,'authentication_required','Connectez-vous pour continuer.');
     checkOrigin(request);const db=context.env.DB;if(!db)fail(503,'database_unavailable','Base de données indisponible.');
@@ -32,7 +35,12 @@ export async function handleNativeApi(request:Request,context:ApiContext):Promis
       const setup=await handleApi(new Request(new URL('/api/v1/bootstrap',url),{method:'POST',headers:{origin:url.origin}}),context);
       if(!setup.ok)return setup;org=await getWorkspace(db,user,null);
     }
-    const c:NativeContext={db,user,workspace:org};
+    const requestId=context.requestId??crypto.randomUUID();
+    const operations=context.operations??operationCatalog({db,user,workspace:org},context.app,options.operations);
+    const access=context.access??(options.access===undefined?undefined:ownAccess=await createRequestAccessContext({db,request,requestId,workspace:org,identity:user,credential:context.credential??sessionCredential,declaration:options.access,catalog:operations}));
+    if(access)assertRequestAccessContext(access,request,requestId,org.id,user.userId);
+    const operation=matchOperation(operations,request.method,url.pathname);if(access&&operation)assertOperationAllowed(operation,org,access);
+    const c:NativeContext={db,user,workspace:org,access};
     if(path==='auth/me'&&request.method==='GET')return json({ok:true,user:user.displayName,user_id:user.userId,role:org.role==='owner'?'owner':'collaborator',brand_role:org.role,permissions:permissions(c,context.app),kind:'human',impersonating:false,actor:null,workspace:org});
     if(path==='auth/logout'&&request.method==='POST')return json({ok:true,redirect:'/signout-with-chatgpt?return_to=%2Flogin'});
     if(path==='desktop/heartbeat'&&request.method==='POST')return json({ok:true,host_bridge_ready:false});
@@ -47,5 +55,5 @@ export async function handleNativeApi(request:Request,context:ApiContext):Promis
     const result=json(response.body,response.status);
     if(response.status<300 && ["POST","PUT","PATCH","DELETE"].includes(request.method))result.headers.set("x-lite-data-changed",path.startsWith("modules/nav")?"nav":path.startsWith("tasks")?"tasks":"support");
     return result;
-  }catch(e){if(e instanceof ApiError)return json({ok:false,error:e.message,code:e.code},e.status);console.error('Native Lite request failed',e instanceof Error?e.name:'Error');return json({ok:false,error:'Erreur du service Lite.',code:'internal_error'},500);}
+  }catch(e){if(e instanceof ApiError)return json({ok:false,error:e.message,code:e.code},e.status);console.error('Native Lite request failed',e instanceof Error?e.name:'Error');return json({ok:false,error:'Erreur du service Lite.',code:'internal_error'},500);}finally{disposeRequestAccessContext(ownAccess);}
 }

@@ -1,8 +1,8 @@
-# Profils, capacités, groupes — proposition KIT-ACCESS-CONTRACT
+# Profils, capacités, groupes — contrat natif
 
-Statut : proposition. B1–B8 levés. B9 catalogue helper (`4991f36`). Raccordement `ScopeProvider` (signature additive). Ancêtres `0e85503`, `800f348`, `9b3bf63`, `482f7ba`. Pas de runtime livré. Astra tranche. Aucun schéma privé d’app.
+Statut : implémenté dans la candidate 0.15.0, pas encore une publication. Moteur, stockage natif et surfaces sont couverts par les tests access-profiles-engine/native/surfaces ; ces fixtures ne prouvent aucune adoption ni exécution en production. Voir ../runtime-adoption.md.
 
-## 1. Limite actuelle
+## 1. État historique avant les runtimes 0.15
 
 Identité, invitations, `lite_members`, admin d’espace : natifs (`types.ts`, `api.ts`, `access.ts`). `operationAllowed` : `op.roles`, puis `essential` **ou owner → true**, puis seul `deny` ; **`allow` inerte**. `canReadModule` : owner → true, deny `module:${id}` (`operations.ts`). `AppExtensions` = `beforeWrite` | `operations` | `scope` (`types.ts`) ; `defineExtensions` n’a pas de détecteur d’accès (`commands.ts`). Nav / `session.me` / `modules.list` (essential) s’appuient sur `canReadModule`. Groupes `role:*` exposés comme groupes UI. Pas de helper consommable. Pas d’ops `access.receipt.*`.
 
@@ -16,7 +16,7 @@ Identité, invitations, `lite_members`, admin d’espace : natifs (`types.ts`, `
 6. Owner : aucun shortcut hors liste §3, **y compris** découverte. `module:` n’est jamais un **grant** (deny `module:` reste fail-closed).
 7. `assignmentApproval` v1 = `'owner'` seulement. `'workspace-rule'` **hors v1** (pas de hook, pas T21 moteur app).
 8. Listes vides, capability inconnue, op `module:` / essential, `assignableBy`/`receivableBy` vides → **refus de déclaration**.
-9. Capability query : **toutes** les ops de la capability doivent passer. Cardinalité : N liaisons / groupe custom ; unique `(groupId, profileId)` ; `groupId` = id `lite_access_groups` (pas `role:*`).
+9. Capability query : liaison **exacte** de la capability demandée (profil vivant + `receivableBy` ; pas d’emprunt d’une autre capability qui partage des ops) **et** toutes ses ops passent deny / rôles / credential. `observedProfileIds` n’est pas une autorisation. Cardinalité : N liaisons / groupe custom ; unique `(groupId, profileId)` ; `groupId` = id `lite_access_groups` (pas `role:*`).
 10. `catalogRevision` : chaîne opaque, égalité seulement. `validUntil` : RFC3339 optionnel vs `now` **serveur**. `AccessDecision.reason` est **interne** au helper, jamais le `error.code` HTTP. Public inchangé : `403 operation_forbidden`, `403 read_only_token` / `token_scope`, `409 version_conflict`.
 11. `mcp.tools.available` / `mcp.tools.call` essential = enveloppe ; l’outil interne passe par le même évaluateur (comme `tools.ts` ∩ `operationAllowed` aujourd’hui).
 12. Legacy permissif **uniquement** sans déclaration. `allow` inertes au premier reçu. Inconnus → refus. Snapshot par requête ; jobs revalident. Scope user↔entité ≠ RBAC. Audit sans `resource_id` hors scope.
@@ -155,9 +155,9 @@ export const workspaceAdminOperationIds = [
 
 Le **helper** applique deny `module:` et credential ; l’app ne pré-filtre pas `denials` ni le mode. Pour l’entrée catalogue `e` visée : `denied_policy` si une denial a `operationId === e.id` **ou** `operationId === 'module:' + e.moduleId` ; `denied_credential` si (`token`/`oauth` et `!e.tokenAllowed`) ou (`mode==='read'` et `e.method` ∉ `GET|HEAD`). Pas de grant `module:`.
 
-Éval `adopted` : (1) identité + membership `org_id` ; (2)+(5) **dans le helper** (ci-dessus) ; (3) `e.roles` ; (4) essential **enveloppe** (session/health/`mcp.tools.*` transport) — le **contenu** découverte n’est pas essential ; (6) si op ∈ liste §3 : rôle natif, skip (7), **délégation si mutation** ; (7) sinon liaison vivante, op ∈ capability, rôle ∈ `receivableBy` ; (8) `ScopeProvider`. `kind:'capability'` : `allowed` ssi **toutes** les ops passent (2)(5)(7) via le helper. `incomplete` : refuse (7). `canReadModule` / nav / `modules.list` / `session.me` permissions / OpenAPI / `tools/list` : `evaluateAccessDecision` sur `module.<id>.list` (ou get) — **pas** owner→true.
+Éval `adopted` : (1) identité + membership `org_id` ; (2)+(5) **dans le helper** (ci-dessus) ; (3) `e.roles` ; (4) essential **enveloppe** (session/health/`mcp.tools.*` transport) — le **contenu** découverte n’est pas essential ; (6) si op ∈ liste §3 : rôle natif, skip (7), **délégation si mutation** ; (7) sinon liaison vivante, op ∈ capability, rôle ∈ `receivableBy` ; (8) `ScopeProvider`. `kind:'capability'` : `allowed` ssi la capability **demandée** est liée par un profil vivant `receivableBy` (7 exact — une autre capability qui cite les mêmes ops n’emprunte pas) **et** toutes ses ops passent (2)(5)(3). Owner sans profil métier : pas de bypass. `incomplete` : refuse (7). `canReadModule` / nav / `modules.list` / `session.me` permissions / OpenAPI / `tools/list` : `evaluateAccessDecision` sur `module.<id>.list` (ou get) — **pas** owner→true.
 
-Pas de keep-alive shell implicite après adoption : dashboard/search/files/mail/assistant exigent des **IDs d’op** dans une capability liée (proposition : l’app les déclare ; le kit n’invente pas un profil magique).
+Pas de keep-alive shell implicite après adoption : dashboard/search/files/mail/assistant exigent des **IDs d’op** dans une capability liée (l’app les déclare ; le kit n’invente pas un profil magique).
 
 ## 5. Fermetures request-scope et ScopeProvider
 
@@ -187,3 +187,10 @@ Audit : pas d’oracle `resource_id` hors scope. Owner : pas de bypass row-scope
 Runtime, tests exécutables, migration, version, changelog, skill, R01, C01, `'workspace-rule'`, forme physique de la liaison (inventaire). Suggestions : format hash de `catalogRevision` ; profil « shell » kit — **non retenues** en v1 (opaque + ops explicites).
 
 Prochaine action : revue indépendante, puis Astra. Pas de fusion.
+
+
+### Filtered discovery envelopes
+
+The transport adapter treats exactly `modules.list`, `registry.list`, `api.openapi` and `nav.list` as filtered discovery envelopes. Role, credential and explicit operation/module denies remain enforced before returning the envelope. Each contained module or operation is evaluated separately with the same request context. This does not change the engine transport-envelope helper, does not grant business capabilities and does not extend to other essential operations. An incomplete owner sees no business content; only role-authorized native recovery operations remain available.
+
+Audit list/detail and indexed search correlate business resource IDs with the existing record/file scopes before returning rows or snippets. Unknown or orphan business resources are hidden conservatively, including resources of removed modules. Only an explicit list of native workspace/access recovery events can be shown without a business row; audit permission alone grants no business resource visibility.

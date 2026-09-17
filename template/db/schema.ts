@@ -150,3 +150,35 @@ export const browserSessions=sqliteTable('lite_browser_sessions',{
 export const browserEvents=sqliteTable('lite_browser_events',{
  id:text('id').primaryKey(),orgId:text('org_id').notNull().references(()=>organizations.id,{onDelete:'cascade'}),userId:text('user_id').notNull().references(()=>users.id,{onDelete:'cascade'}),windowId:text('window_id'),actionId:text('action_id'),runId:text('run_id'),conversationId:text('conversation_id'),event:text('event').notNull(),detailJson:text('detail_json').notNull(),createdAt:text('created_at').notNull(),
 },t=>[index('idx_browser_events_owner_time').on(t.orgId,t.userId,t.createdAt),index('idx_browser_events_conversation').on(t.orgId,t.userId,t.conversationId,t.createdAt)]);
+
+// Signed public-ingress fencing only. Not a guest-token store; no request body.
+export const publicIngressClaims = sqliteTable('lite_public_ingress_claims', {
+  tenantId: text('tenant_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+  entryId: text('entry_id').notNull(),
+  eventId: text('event_id').notNull(),
+  digestHex: text('digest_hex').notNull(),
+  state: text('state').notNull(),
+  generation: integer('generation').notNull(),
+  token: text('token').notNull(),
+  attempts: integer('attempts').notNull(),
+  leaseUntil: text('lease_until').notNull(),
+  snapshotJson: text('snapshot_json'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, t => [
+  primaryKey({ columns: [t.tenantId, t.entryId, t.eventId] }),
+  check('ingress_claim_state', sql`${t.state} IN ('processing','retryable','completed','permanent_failure','attempts_exhausted')`),
+  check('ingress_claim_generation', sql`${t.generation} >= 1`),
+  check('ingress_claim_attempts', sql`${t.attempts} >= 1`),
+  check('ingress_claim_snapshot_json', sql`${t.snapshotJson} IS NULL OR json_valid(${t.snapshotJson})`),
+]);
+
+// Native adoption receipts. The epoch guards every group/membership/policy/receipt mutation.
+export const accessReceipts = sqliteTable('lite_access_receipts', {
+  orgId:text('org_id').primaryKey().notNull().references(()=>organizations.id,{onDelete:'cascade'}),
+  receiptJson:text('receipt_json').notNull(),version:integer('version').notNull().default(1),updatedAt:text('updated_at').notNull(),
+},t=>[check('access_receipt_json',sql`json_valid(${t.receiptJson})`),check('access_receipt_version',sql`${t.version} >= 1`)]);
+export const accessEpochs = sqliteTable('lite_access_epochs', {
+  orgId:text('org_id').primaryKey().notNull().references(()=>organizations.id,{onDelete:'cascade'}),
+  revision:integer('revision').notNull().default(0),writeToken:text('write_token'),
+},t=>[check('access_epoch_revision',sql`${t.revision} >= 0`)]);

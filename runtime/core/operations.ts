@@ -1,3 +1,4 @@
+import { requestAccessMatches, accessModuleReadable, type RequestAccessContext } from './access-profiles-store.ts';
 import type { AppDefinition, AppOperationDefinition, Field, Role, Workspace } from './types.ts';
 import { roles, fail, idPattern, moduleWritable } from './validation.ts';
 
@@ -68,6 +69,11 @@ export function coreOperations(app:AppDefinition):Operation[]{
   add('api.catalog','GET','admin/endpoints','api','API','Catalogue complet des opérations',{roles:admin});
   add('api.openapi','GET','openapi.json','api','API','Documentation OpenAPI des opérations autorisées',{essential:true});
   add('access.catalog','GET','access/catalog','access','Groupes et accès','Matrice des groupes et opérations',protectedAdmin);
+  const bindingSchema=objectSchema({groupId:idSchema,profileId:idSchema,profileRevision:{type:'integer'}},['groupId','profileId','profileRevision']);
+  const receiptSchema=objectSchema({catalogRevision:stringSchema,bindings:{type:'array',maxItems:1000,items:bindingSchema},validUntil:{type:'string',format:'date-time'}},['catalogRevision','bindings']);
+  add('access.receipt.update','PUT','access/receipt','access','Groupes et acces','Adopter ou remplacer le recu natif',{...protectedAdmin,bodySchema:objectSchema({receipt:receiptSchema,version:{type:'integer',minimum:0}},['receipt','version'])});
+  add('access.bind','POST','access/bind','access','Groupes et acces','Lier un groupe a un profil',{...protectedAdmin,bodySchema:objectSchema({groupId:idSchema,profileId:idSchema,profileRevision:{type:'integer'},version:{type:'integer',minimum:0}},['groupId','profileId','profileRevision','version'])});
+  add('access.unbind','POST','access/unbind','access','Groupes et acces','Retirer une liaison de profil',{...protectedAdmin,bodySchema:objectSchema({groupId:idSchema,profileId:idSchema,version:{type:'integer',minimum:0}},['groupId','profileId','version'])});
   add('access.groups.create','POST','access/groups','access','Groupes et accès','Créer un groupe',{...protectedAdmin,bodySchema:objectSchema({name:stringSchema},['name'])});
   add('access.groups.update','PUT','access/groups/:id','access','Groupes et accès','Modifier un groupe et ses membres',{...protectedAdmin,bodySchema:objectSchema({name:stringSchema,userIds:{type:'array',items:idSchema,maxItems:500},version:{type:'integer',minimum:1}},['name','userIds','version'])});
   add('access.groups.delete','DELETE','access/groups/:id','access','Groupes et accès','Supprimer un groupe',protectedAdmin);
@@ -267,12 +273,20 @@ export function assertUniqueOperations(operations:Operation[]):Operation[]{
   }
   return operations;
 }
-export function operationAllowed(op:Operation,org:Workspace):boolean {
+const filteredDiscovery=new Set(['modules.list','registry.list','api.openapi','nav.list']);
+export function operationAllowed(op:Operation,org:Workspace,access?:RequestAccessContext|null):boolean {
+  if(access!==undefined){
+    if(!requestAccessMatches(access,org.id,org.role)||!op.roles.includes(org.role))return false;
+    const decision=access!.evaluateAccess({kind:'operation',operationId:op.id});
+    // These four envelopes contain individually filtered items; no business grant is inferred.
+    return decision.allowed||(filteredDiscovery.has(op.id)&&['denied_unbound','denied_incomplete'].includes(decision.reason));
+  }
   if(!op.roles.includes(org.role))return false;
   if(op.essential||org.role==='owner')return true;
   return !(org.operationPolicies??[]).some(p=>(p.operationId===op.id||p.operationId===`module:${op.moduleId}`)&&p.effect==='deny');
 }
-export function canReadModule(org:Workspace,id:string):boolean {
+export function canReadModule(org:Workspace,id:string,access?:RequestAccessContext|null):boolean {
+  if(access!==undefined)return requestAccessMatches(access,org.id,org.role)&&accessModuleReadable(access!,id);
   if(org.role==='owner')return true;
   const identifiers=[`module:${id}`,`module.${id}.list`,`module.${id}.get`,`${id}.list`,`${id}.get`,`${id}.detail`,...(id==='files'?['files.download']:[])];
   return !(org.operationPolicies??[]).some(p=>identifiers.includes(p.operationId)&&p.effect==='deny');
@@ -298,4 +312,4 @@ export function matchOperation(operations:Operation[],method:string,path:string)
   candidates.sort((a,b)=>a.params-b.params||specificity(a.shape,b.shape)||(a.op.source==='app'?0:1)-(b.op.source==='app'?0:1));
   return candidates[0]?.op;
 }
-export function assertOperationAllowed(op:Operation,org:Workspace){if(!operationAllowed(op,org))fail(403,'operation_forbidden','Votre groupe n’a pas accès à cette opération.');}
+export function assertOperationAllowed(op:Operation,org:Workspace,access?:RequestAccessContext|null){if(!operationAllowed(op,org,access))fail(403,'operation_forbidden','Votre groupe n’a pas accès à cette opération.');}

@@ -1,4 +1,7 @@
+import type { AccessDeclaration } from './access-profiles-engine.ts';
+import type { RequestAccessContext } from './access-profiles-store.ts';
 import type { D1Database, R2Bucket } from "@cloudflare/workers-types";
+import type { PublicIngressDeclaration } from './public-ingress-engine.ts';
 export type Role = 'owner' | 'admin' | 'member' | 'viewer';
 export type Identity = { userId: string; email: string; displayName: string };
 export type Field = {
@@ -35,8 +38,8 @@ export type CredentialContext =
   | Readonly<{ kind: 'session' }>
   | Readonly<{ kind: 'token'; tokenId: string; workspaceId: string; mode: CredentialMode }>
   | Readonly<{ kind: 'oauth'; tokenId: string; grantId: string; clientId: string; workspaceId: string; mode: CredentialMode }>;
-export type ApiContext = { app: AppDefinition; env: LiteEnvironment; identity: Identity | null; workspace?:Workspace; operations?:import('./operations.ts').Operation[]; credential?:CredentialContext; requestId?:string; defer?:(promise:Promise<unknown>)=>void };
-export type BeforeWrite = (input: { module: Module; data: Record<string, unknown>; previous: Record<string, unknown> | null; workspace: Workspace; identity: Identity }) => Promise<void> | void;
+export type ApiContext = { app: AppDefinition; env: LiteEnvironment; identity: Identity | null; workspace?:Workspace; operations?:import('./operations.ts').Operation[]; credential?:CredentialContext; requestId?:string; access?:RequestAccessContext; refreshAccess?:(request:Request,workspace:Workspace)=>Promise<RequestAccessContext>; defer?:(promise:Promise<unknown>)=>void };
+export type BeforeWrite = (input: { module: Module; data: Record<string, unknown>; previous: Record<string, unknown> | null; workspace: Workspace; identity: Identity; access?:RequestAccessContext }) => Promise<void> | void;
 
 /** The verified actor of one request. Handlers never rebuild it from body or query. */
 export type Principal = {
@@ -52,16 +55,19 @@ export type ScopeProvider = {
   recordFilter(
     principal: Principal,
     ref: { alias: string; idColumn: string; moduleColumn: string },
-    action: ScopeAction
+    action: ScopeAction,
+    access?: RequestAccessContext
   ): SqlFragment;
   fileFilter(
     principal: Principal,
     ref: { alias: string; idColumn: string },
-    action: ScopeAction
+    action: ScopeAction,
+    access?: RequestAccessContext
   ): SqlFragment;
   deleteFile?: (ctx: FileDeletionContext) => Promise<FileDeletionResult>;
 };
 export type FileDeletionContext = {
+  access?:RequestAccessContext;
   db: D1Database;
   env: LiteEnvironment;
   principal: Principal;
@@ -77,6 +83,7 @@ export type FileDeletionResult = {
 };
 
 export type AppOperationContext = {
+  access?:RequestAccessContext;
   db: D1Database;
   env: LiteEnvironment;
   app: AppDefinition;
@@ -104,7 +111,10 @@ export type AppOperationDefinition = {
   handle(ctx: AppOperationContext): Promise<AppOperationResult>;
 };
 export type AppExtensions = {
+  access?:AccessDeclaration;
   beforeWrite?: BeforeWrite;
   operations?: AppOperationDefinition[];
   scope?: ScopeProvider;
+  /** Opt-in additif, distinct de `access`. Absent ⇒ aucune route publique. */
+  publicIngress?: PublicIngressDeclaration;
 };

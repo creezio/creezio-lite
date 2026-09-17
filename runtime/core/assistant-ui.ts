@@ -71,7 +71,7 @@ export async function dispatchUiAction(c: ApiContext, org: Workspace, conversati
 export async function uiActionRoute(request:Request,c:ApiContext,org:Workspace):Promise<Response|null> {
   const match=/^\/api\/v1\/assistant\/ui-actions\/([^/]+)\/(claim|check|result)$/.exec(new URL(request.url).pathname);
   if(!match||request.method!=='POST')return null;
-  const op=c.operations?.find(o=>o.id==='assistant.chat');if(!op)fail(403,'ui_forbidden','Assistant indisponible.');assertOperationAllowed(op,org);
+  const op=c.operations?.find(o=>o.id==='assistant.chat');if(!op)fail(403,'ui_forbidden','Assistant indisponible.');assertOperationAllowed(op,org,c.access);
   const id=decodeURIComponent(match[1]),clientId=windowId(request.headers.get('x-lite-window'));
   const action=await c.env.DB.prepare('SELECT run_id,conversation_id FROM lite_assistant_ui_actions WHERE id=? AND org_id=? AND user_id=? AND target_window_id=?')
     .bind(id,org.id,c.identity!.userId,clientId).first<{run_id:string;conversation_id:string}>();

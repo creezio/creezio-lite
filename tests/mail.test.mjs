@@ -61,6 +61,25 @@ test('Cloudflare inbound is authenticated, domain-scoped, deduplicated, revocabl
   }finally{db.close();}
 });
 
+test('inbound mail stays ahead of public ingress and keeps its token out of logs',async()=>{
+  const {defineExtensions}=await import('../runtime/modules/sites-adapter/src/catalog.ts');
+  const {db,bucket,a,org}=await setup();try{
+    const connection=await integration(a),setupInbound=await a('email/receiving',{method:'POST',body:{integrationId:connection.id}});assert.equal(setupInbound.status,200);const token=setupInbound.body.token,path=`email/inbound/${org}`;
+    const tenant=org;
+    const extensions=defineExtensions(app,{publicIngress:{
+      entries:[{id:'guest.mailprobe',method:'GET',path:'/api/v1/public/guest/:token',admission:'guest',tenantId:tenant,maxBytes:0,contentTypes:[],timeoutMs:1000,abuse:{policy:'guest-mail',requires:[]}}],
+      resolveTenant:entry=>entry.tenantId,
+      createRequestScope(){return {async admitGuest(){return {ok:true,admission:{kind:'guest',view:{ok:true}}};},async handle(){return {outcome:'success',status:200,body:{guest:true}};}};},
+    }});
+    const anonymous=(p,opts={})=>{const url=new URL('/api/v1/'+p,'https://test.example');return dispatchRequest(new Request(url,{method:opts.method??'GET',headers:{origin:url.origin,...(opts.body?{'content-type':'application/json'}:{}),...(opts.headers??{})},body:opts.body?JSON.stringify(opts.body):undefined}),{app,env:{DB:db,BUCKET:bucket,LITE_INTEGRATION_SECRET:'test-mail-vault'},identity:null},extensions);};
+    const body={message_id:'<ingress-probe@example.net>',from:'Supplier <supplier@example.net>',to:['team@example.com'],subject:'Facture du fournisseur',text:'Facture de septembre'};
+    assert.equal((await anonymous(path,{method:'POST',body})).status,401);
+    const first=await anonymous(path,{method:'POST',body,headers:{Authorization:`Bearer ${token}`}});assert.equal(first.status,201,await first.text());
+    const guest=await anonymous('public/guest/opaque',{method:'GET'});assert.equal(guest.status,200);assert.equal((await guest.json()).guest,true);
+    assert.equal(JSON.stringify((await a('admin/request-logs')).body).includes(token),false);
+  }finally{db.close();}
+});
+
 test('IMAP sync uses encrypted credentials and preserves cursor and messages across repeat requests',async()=>{
   const {db,a}=await setup(),oldFetch=globalThis.fetch;try{
     const connection=await integration(a,'imap');let calls=0;globalThis.fetch=async(url,init)=>{calls++;assert.equal(url,'https://gateway.example.com/v1/imap/sync');assert.equal(init.headers.Authorization,`Bearer ${gatewayToken}`);const body=JSON.parse(init.body);assert.equal(body.password,secret);assert.equal(body.user,'team@example.com');assert.equal(body.cursor,calls===1?'':'v1:1');return Response.json({ok:true,cursor:'v1:1',messages:[{message_id:'<imap-1>',from:'supplier@example.net',to:['team@example.com'],subject:'Commande IMAP',text:'Commande du jour',attachments:[{filename:'large.bin',content_type:'application/octet-stream',content_base64:Buffer.alloc(1700000,42).toString('base64')}]}]});};

@@ -115,7 +115,7 @@ export async function mailRoute(request:Request,c:ApiContext,org:Workspace):Prom
   if(path==='meta'){
     const connections=await activeConnections(c,org.id),senders=[];for(const row of connections)if(await readySender(c,row)){const m=JSON.parse(row.meta_json);senders.push({id:row.id,label:`${m.fromName||m.from} · ${row.provider}`,from:m.from});}
     const receiver=await db.prepare('SELECT integration_id FROM lite_mail_receivers WHERE org_id=?').bind(org.id).first<{integration_id:string}>();
-    const allowed=(id:string)=>coreOperations(c.app).some(op=>op.id===id&&operationAllowed(op,org));
+    const allowed=(id:string)=>coreOperations(c.app).some(op=>op.id===id&&operationAllowed(op,org,c.access));
     return json({ready:connections.length>0,uiEnabled:true,domain:null,inboundConfigured:Boolean(receiver&&connections.some(r=>r.id===receiver.integration_id))||connections.some(r=>r.provider==='imap'),canManage:allowed('mail.receiving'),canWrite:allowed('mail.draft.create'),canSync:allowed('mail.sync'),senders,syncAvailable:connections.some(r=>r.provider==='imap'),cloudflare:connections.filter(r=>r.provider==='cloudflare').map(r=>({id:r.id,from:JSON.parse(r.meta_json).from})),transport:{configured:senders.length>0,kind:senders.length?'configured':null,source:'integrations',preset:null,error:senders.length?null:'Configurez une connexion mail et une adresse d’expédition dans Intégrations.',send:{state:senders.length?'unknown':'unconfigured'}}});
   }
   if(path==='receiving'&&method==='POST'){

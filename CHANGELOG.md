@@ -1,5 +1,14 @@
 # Versions de Lite
 
+## 0.15.0 — Entrées publiques et profils d’accès natifs
+
+- Candidate : publication seulement après revue et CI du commit exact de main, puis tag immuable.
+- Ingress opt-in signed/guest, factory par requête, coffre avant preuve et intégrations désactivées refusées ; ClaimStore D1 avec fences et rejeu borné. Le timeout ne compense pas les effets métier déjà commis.
+- Profils/capacités opt-in, reçus et liaisons natifs, récupération incomplete et mutations avec CAS ; contrôles communs sur opérations, découverte, fichiers, recherche et contextes applicatifs. Les filtres de portée applicatifs restent obligatoires, owner compris.
+- Migrations additives 0011_public_ingress_claims et 0012_access_profiles. Fusion applicative explicite du schéma, des métadonnées et du runtime : voir [le guide d’adoption](docs/runtime-adoption.md). Aucun upgrade forcé ni déploiement applicatif automatique.
+- Conserve le correctif de lecture Cursor 0.14.2. Les tests du kit utilisent des fixtures et des recettes locales ; ils ne prouvent pas un déploiement ni les permissions réelles d’une application.
+- Hors livraison : transactions métier K02, invitations à portée ressource K05 et création durable de fichiers de jobs. Les adaptateurs de signature, jetons guest et liens métier restent applicatifs.
+
 ## 0.14.2 — Lecture de secours Cursor pour les missions connues
 
 - En cas de timeout, erreur réseau ou 5xx sur la lecture agent, le transport peut retrouver le dernier run via la liste ordonnée du même compte, puis relire ce run exact. Le run déjà connu doit être présent ; identités, dates et ordre sont vérifiés. Aucun changement de compte ou de modèle.

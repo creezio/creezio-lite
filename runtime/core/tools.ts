@@ -1,3 +1,4 @@
+import type { RequestAccessContext } from './access-profiles-store.ts';
 import type { AppDefinition, Role, Workspace } from './types.ts';
 import { coreOperations, objectSchema, idSchema, operationAllowed, schemaPattern, SCHEMA_KEYWORDS, UNSAFE_PROPERTY_NAMES, type Operation, type JsonSchema } from './operations.ts';
 import { fail } from './validation.ts';
@@ -89,8 +90,8 @@ export function operationTool(op:Operation,api:ApiCall,binding?:ToolBinding):Dat
     }};
 }
 /** Both protocols consume the same operation bindings; HTTP is always the executor. */
-export function dataTools(app:AppDefinition,role:Role,api:ApiCall,writable=true,options:{operations?:Operation[];workspace?:Workspace;bindings?:ToolBinding[];machine?:boolean}={}):DataTool[]{
+export function dataTools(app:AppDefinition,role:Role,api:ApiCall,writable=true,options:{operations?:Operation[];workspace?:Workspace;bindings?:ToolBinding[];machine?:boolean;access?:RequestAccessContext|null}={}):DataTool[]{
   const org=options.workspace??{id:'',name:'',role},operations=options.operations??coreOperations(app);
   const bindings=options.bindings??operations.filter(op=>op.mcp).map(op=>({name:op.toolName,operationId:op.id,description:op.description,enabled:true,version:0,custom:false}));
-  return bindings.flatMap(binding=>{const op=operations.find(o=>o.id===binding.operationId);return op&&op.mcp&&binding.enabled&&operationAllowed(op,org)&&(!options.machine||op.tokenAllowed)&&(writable||op.method==='GET')?[operationTool(op,api,binding)]:[];});
+  return bindings.flatMap(binding=>{const op=operations.find(o=>o.id===binding.operationId);return op&&op.mcp&&binding.enabled&&operationAllowed(op,org,options.access)&&(!options.machine||op.tokenAllowed)&&(writable||op.method==='GET')?[operationTool(op,api,binding)]:[];});
 }

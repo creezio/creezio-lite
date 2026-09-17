@@ -1,6 +1,6 @@
 # Entrées publiques — cartographie d’essais (C01)
 
-Doc seulement. Fixtures WH-K01 **non observées**. Oracles futurs : **kit générique** vs **adaptateur Stripe** (pas le noyau).
+Matrice contractuelle, pas un rapport d’exécution. Tests du kit : `tests/public-ingress-engine.test.mjs`, `tests/public-ingress-claims.test.mjs`, `tests/public-ingress-dispatch.test.mjs`. Les fixtures génériques ne prouvent pas un adaptateur fournisseur ou une application en production. Les oracles de signature fournisseur restent applicatifs.
 
 ## 1. Non-régression observée
 
