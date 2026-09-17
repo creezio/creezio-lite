@@ -1,3 +1,4 @@
+import { disposeRequestAccessContext, type RequestAccessContext } from './access-profiles-store.ts';
 import type { ApiContext, Workspace } from './types.ts';
 import { fail } from './validation.ts';
 import { workspace } from './api.ts';
@@ -20,16 +21,18 @@ export async function browserSocket(request:Request,c:ApiContext,org:Workspace) 
     if(closed||busy)return;
     if(typeof event.data!=='string'||event.data.length>2048){socket.close(1009,'Message trop long');return;}
     if(Date.now()-last<500)return;last=Date.now();busy=true;
+    let liveAccess:RequestAccessContext|undefined;
     try {
       if(Date.now()-started>120000){socket.close(1000,'Reconnect');return;}
       const data=JSON.parse(event.data);if(data.type!=='pulse')return;
       const live=await workspace(c.env.DB,c.identity!,org.id);
-      const op=c.operations?.find(o=>o.id==='assistant.chat');if(!op)fail(403,'ui_forbidden','Assistant indisponible.');assertOperationAllowed(op,live);
-      const state=await pollWindow(c,live,id,typeof data.path==='string'?data.path:undefined);
+      if(c.access){if(!c.refreshAccess)fail(403,'operation_forbidden','Access refresh unavailable.');liveAccess=await c.refreshAccess(request,live);}
+      const op=c.operations?.find(o=>o.id==='assistant.chat');if(!op)fail(403,'ui_forbidden','Assistant indisponible.');assertOperationAllowed(op,live,liveAccess);
+      const state=await pollWindow({...c,access:liveAccess},live,id,typeof data.path==='string'?data.path:undefined);
       socket.send(JSON.stringify({type:'state',...state}));
       if(!state.active)socket.close(1000,'Window replaced');
     }catch(e){socket.send(JSON.stringify({type:'error',code:'connection_refused'}));socket.close(1008,'Session unavailable');}
-    finally{busy=false;}
+    finally{disposeRequestAccessContext(liveAccess);busy=false;}
   });
   await uiLog(c,org,'transport.connected',{windowId:id,transport:'websocket'});
   return new Response(null,{status:101,webSocket:pair[0]} as ResponseInit);
