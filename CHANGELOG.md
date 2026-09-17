@@ -1,10 +1,12 @@
 # Versions de Lite
 
-## 0.14.1 — Contrat d’entrées publiques (C01), proposition acceptée
+## 0.14.1 — Contrats C01 et ACCESS, propositions acceptées
 
-- Reprend `0.14.0` déjà publié (`92e557e26c2d0ab2251965efbe7d416831d2fb90`). Aucune modification du transport Cursor, du runtime métier, du schéma, des migrations ni des tests.
-- Ajoute `docs/contracts/public-ingress.md` et `docs/contracts/public-ingress-tests.md`, identiques à `f005bac1001a3fef0b963268baccb90439f7572c` (revue indépendante C01-R `run682df1b1`). Contrat proposé et **accepté** comme spécification pour de futures implémentations. **Aucun runtime d’ingress actuellement.**
-- Chaînes de version package/lock/template API/MCP alignées. Pas de nouvelle fonctionnalité, pas de tests d’ingress, pas de modification des docs d’accès.
+- Reprend `0.14.0` déjà publié (`92e557e26c2d0ab2251965efbe7d416831d2fb90`). Transport Cursor **identique** à `main` 0.14.0. Aucun runtime livré (ingress ou accès). **Pas d’upgrade forcé.**
+- Deux contrats **acceptés** comme spécification pour de futures implémentations :
+  - C01 `docs/contracts/public-ingress.md` et `docs/contracts/public-ingress-tests.md` : factory request-scope serveur (`createRequestScope` après `resolveTenant` config), `AppExtensions.publicIngress`, bindings `db`/`env`/`requestId`/`tenant` pour les fermetures ; pas d’Identity simulée ; `db`/`env`/secret jamais sérialisés.
+  - ACCESS `docs/contracts/access-profiles.md` et `docs/contracts/access-profiles-tests.md`, blobs identiques à `06f227b6942fa9b2712414825f630eb04151df01`.
+- Chaînes de version package/lock/template API/MCP alignées ; assertions de version des tests existants alignées. Pas de tests exécutables nouveaux. Pas de modification du transport.
 - Version **candidate** jusqu’à la release GitHub `v0.14.1` au SHA de `main` ; cette note n’est pas une publication.
 
 ## 0.14.0 — Références secondaires explicites dans le transport Cursor

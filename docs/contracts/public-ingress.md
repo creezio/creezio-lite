@@ -14,6 +14,7 @@ Proposition, **pas une release**, aucun runtime livré. **Provenance / base** ki
 | Algorithme limiteur kit / seau IP universel ; `abuse.policy` **seul** (option silencieuse) | **Non.** Politique app + callbacks. Si la politique **exige** une capacité, absence **ou** panne ⇒ refus déclaration/requête, **jamais** `handle`. |
 | `/payer` confirme ou crédite | **Non.** Page **guest** assistée ; le jeton n’est pas une Identity. |
 | Regex `^[a-z0-9-]{8,80}$` ; `rawBody` Electron ; bool `public` sur `command()` ; DLQ | **Non.** |
+| Factory lit `Request` / `?workspace=` / corps pour le tenant ; singleton process ou inter-tenant | **Non.** `createRequestScope` **après** `resolveTenant` ; pas d’Identity/session simulée. |
 
 ## 2. Constat 0.13.1
 
@@ -83,8 +84,13 @@ export type ClaimStore = {
   failPermanent(fence: ClaimFence, snapshot?: SanitizedSnapshot): Promise<boolean>;
   renew(fence: ClaimFence): Promise<boolean>;
 };
+export type PublicIngressServices = {
+  readonly db: D1Database;
+  readonly env: LiteEnvironment;
+  readonly requestId: string;
+  readonly tenantId: string; // === resolveTenant(entry) ; jamais Request
+};
 export type PublicIngressBindings = {
-  resolveTenant(entry: PublicIngressEntry): string;
   verify?(input: VerifyInput): Promise<{ ok: true; eventId: string } | { ok: false }>; // OBLIGATOIRE dès ≥1 signed
   admitGuest?(input: {
     entry: PublicIngressEntry;
@@ -97,28 +103,40 @@ export type PublicIngressBindings = {
   claimStore?: ClaimStore; // OBLIGATOIRE si ≥1 signed (comme verify) ; jamais pour guest
   limiter?: CapabilityProbe; // si 'limiter' ∈ abuse.requires
 };
+export type PublicIngressFactory = (services: PublicIngressServices) => PublicIngressBindings;
+export type PublicIngressDeclaration = {
+  entries: readonly PublicIngressEntry[];
+  resolveTenant(entry: PublicIngressEntry): string; // config ; jamais Request ; jamais factory
+  createRequestScope: PublicIngressFactory; // une allocation par requête
+};
 export type PublicAdmissionContext = {
   kind: 'public';
   entryId: string;
   proof: SignedProof | GuestAdmission;
-  tenantId: string;
+  tenantId: string; // copie du services.tenantId ; pas d’Identity
   requestId: string;
   rawBytes: Uint8Array;
   params: RouteParams;
 };
 ```
 
+`AppExtensions.publicIngress?: PublicIngressDeclaration` — champ **additif**, distinct de `access` (ACCESS). `defineExtensions` **valide** la déclaration (fail-closed) : unicité des `id`/routes vs `Operation` et inbound mail ; `mcp`/`tokenAllowed` faux ; `resolveTenant` et `createRequestScope` sont des fonctions ; callbacks du kind **plus** `abuse.requires` présents sur un **échantillon** de scopes (probe `db`/`env` non sérialisables). Deux appels factory ⇒ **deux objets distincts** (`!==`) ; même objet pour deux `tenantId` ou deux `requestId` ⇒ **rejet déclaration** (singleton). `access` et `publicIngress` ne se substituent pas : pas d’Identity/session/Principal sur l’admission publique.
+
 Dépendances **requises** = callbacks du kind **plus** `abuse.requires`. **Dès ≥1 entrée `signed` : `verify` et `claimStore` obligatoires** — rejet de **déclaration** si l’un manque (même règle pour les deux). Guest : **pas** de `claimStore`. Absence au démarrage ⇒ rejet déclaration. **En exécution**, dépendance indisponible (`ready()===false`, `unavailable`, throw, coffre) ⇒ **503 fail-closed avant `handle`**. Jamais **200** `signed` sans persistance CAS réussie. Pas d’algorithme de limite ni IP universelle. `signed` : HMAC **ou** autre signature machine. **Exemple Stripe (app)** : `t`/`v1`, ASCII(`t`)+`0x2E`+`rawBytes`. Guest : `admitGuest` `ok: false` ou panne ⇒ pas de `handle`. Jeton de chemin ≠ Identity / `eventId`. `claimStore` abstrait. D1 additif = candidat runtime après inventaire ; pas de numéro réservé. Lease/essais = config serveur.
 
-## 4. Tenant et séquence unique
+`db` / `env` / secret vivent **seulement** dans `PublicIngressServices` et les fermetures. **Jamais** sur `PublicAdmissionContext`, snapshot, journal, corps HTTP, MCP. `JSON.stringify` / log / retour de `db`, `env`, `LITE_INTEGRATION_SECRET`, `secret` ⇒ **interdit**. Pas de `Request` tenant.
 
-`resolveTenant(entry)` → `entry.tenantId` (`ws_` / UUID en base). **Pas** de `Request`. Corps **jamais** ouvert pour un tenant client (pas de mutation `rawBytes`). `?workspace=` ignoré.
+## 4. Tenant, factory et séquence unique
+
+`resolveTenant(entry)` → `entry.tenantId` (`ws_` / UUID en base). **Pas** de `Request`. **Pas** de factory. Corps **jamais** ouvert pour un tenant client (pas de mutation `rawBytes`). `?workspace=` ignoré.
+
+Cycle **sans circularité** : `resolveTenant` n’appelle pas `createRequestScope` ; `createRequestScope` n’appelle pas `resolveTenant` et ne lit ni `Request` ni query/corps pour le tenant. Le kit construit `PublicIngressServices` **après** le tenant config, **avant** vault/preuve. `services.tenantId` est gelé ; `ClaimKey.tenantId` et `ctx.tenantId` = ce candidat. Un tenant lu depuis headers/corps/query par une fermeture est **interdit** (non forgeable).
 
 Ordre **unique**, signed comme guest :
 
-1. Tenant = **config**. 2. Si `vaultRef` / `vault` requis : decrypt `secret_box` AAD `org:id` = candidat — **avant** toute preuve. 3. `verify` (signed) ou `admitGuest` (guest) sur octets **intacts** (secret déjà disponible si besoin de la preuve). 4. Parse app **éventuel** ; champ JSON ≠ tenant ⇒ refus app.
+1. Tenant = **config** (`resolveTenant`). 2. `bindings = createRequestScope(services)` — **nouvelle** allocation ; throw ⇒ **503**, pas de `handle`. 3. Si `vaultRef` / `vault` requis : decrypt `secret_box` AAD `org:id` = candidat — **avant** toute preuve. 4. `verify` (signed) ou `admitGuest` (guest) sur octets **intacts** (secret déjà disponible si besoin de la preuve). 5. Parse app **éventuel** ; champ JSON ≠ tenant ⇒ refus app.
 
-Jamais de preuve **avant** le secret exigé par cette preuve. Tenant final = candidat.
+Jamais de preuve **avant** le secret exigé par cette preuve. Tenant final = candidat. `rawBytes`, claim, idempotence app et séquence de sécurité **inchangés**.
 
 ## 5. Claim signed, fencing, snapshot
 
@@ -136,7 +154,7 @@ Le **timeout n’annule pas** les effets déjà commis ; l’**idempotence app e
 
 `handle` **signed** : `success` → `complete(fence)` ; `retry` → `claimStore.retry(fence)` ; `permanent` → `failPermanent`. `handle` **guest** : `success` → 2xx **sans** claim ; `retry` → **non-2xx** (client peut réessayer), **aucun** `claimStore` ; `permanent` → 4xx, **aucun** fence. Snapshot : pas cookie / `Authorization` / secret / corps requête / jeton / PII.
 
-Séquence : inbound mail → match → GET sans JSON/corps ; POST : type/taille/`readBytes` → **tenant config** → **vault si requis** → preuve (`verify`/`admitGuest`) → signed : `claim` puis `handle` puis persist CAS ; guest : `handle` **sans** claim → HTTP. Privées : 401. Dépendance manquante en vol → **503**, pas de `handle`.
+Séquence : inbound mail → match → GET sans JSON/corps ; POST : type/taille/`readBytes` → **tenant config** → **factory request-scope** → **vault si requis** → preuve (`verify`/`admitGuest`) → signed : `claim` puis `handle` puis persist CAS ; guest : `handle` **sans** claim → HTTP. Privées : 401. Dépendance manquante en vol → **503**, pas de `handle`.
 
 ## 6. Guest, `/payer`, kit / app
 

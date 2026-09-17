@@ -133,11 +133,14 @@ Ce n’est **pas** `--references-file`, pas une capacité multi-dépôts, pas un
 
 Mise à jour du skill : `node <checkout-kit>/bin/lite.mjs adopt --app <dossier>` puis `--apply` depuis un checkout de cette version. **Pas d’upgrade runtime forcé** pour cette documentation ; l’upgrade habituel, s’il est lancé, n’aligne que le verrou et les chaînes de version API/MCP. Aucune migration, aucun secret.
 
-## Correction 0.14.1 — Contrat d’entrées publiques (C01)
+## Correction 0.14.1 — Contrats C01 et ACCESS (documentation)
 
-Documentation seulement : `docs/contracts/public-ingress.md` et `docs/contracts/public-ingress-tests.md`, identiques à `f005bac1001a3fef0b963268baccb90439f7572c` (acceptés par revue indépendante C01-R). Contrat proposé et **accepté** pour de futures implémentations. **Aucun runtime d’ingress actuellement.**
+Deux contrats **acceptés** pour de futures implémentations, **aucun runtime livré** :
 
-Ce n’est **pas** une capacité livrée, pas une modification du transport Cursor, des docs d’accès, du schéma, des migrations ni des tests. Le runtime métier et les secrets ne changent pas. L’upgrade du runtime, s’il est lancé, n’aligne que le verrou et les chaînes de version API/MCP ; **pas d’upgrade runtime forcé** pour cette documentation. Aucune migration, aucun secret. Version **candidate** jusqu’à la release GitHub.
+- C01 : `docs/contracts/public-ingress.md` et `docs/contracts/public-ingress-tests.md` — factory request-scope serveur après résolution du tenant depuis la config, raccordée à `AppExtensions.publicIngress`.
+- ACCESS : `docs/contracts/access-profiles.md` et `docs/contracts/access-profiles-tests.md`, inchangés depuis `06f227b6942fa9b2712414825f630eb04151df01`.
+
+Ce n’est **pas** une capacité livrée. Le transport Cursor reste celui de `main` 0.14.0. Le runtime métier, le schéma, les migrations et les secrets ne changent pas. **Pas d’upgrade forcé** ; l’upgrade habituel, s’il est lancé, n’aligne que le verrou et les chaînes de version API/MCP. Les assertions de version des tests existants sont alignées ; pas de tests exécutables nouveaux. Aucune migration, aucun secret. Version **candidate** jusqu’à la release GitHub.
 
 ## Passage à 0.14.0 — Références secondaires du transport Cursor
 

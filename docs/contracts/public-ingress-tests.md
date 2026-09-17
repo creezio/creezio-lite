@@ -25,6 +25,15 @@ Doc seulement. Fixtures WH-K01 **non observées**. Oracles futurs : **kit géné
 | POST sans JSON / > `maxBytes` | 415 / 413 |
 | Multibyte / UTF-8 invalide livrés intacts | parse JSON **après** preuve seulement |
 | Tenant = config `ws_` / UUID ; `resolveTenant` sans `Request` | valide |
+| Factory **après** `resolveTenant` ; `services.tenantId` = candidat config | valide |
+| `createRequestScope` lit `Request` / `?workspace=` / corps pour le tenant | **interdit** |
+| `resolveTenant` appelle la factory **ou** factory appelle `resolveTenant` | **interdit** (circularité) |
+| Même objet bindings pour deux `tenantId` ou deux `requestId` | **rejet déclaration** (singleton) |
+| Identity / session / Principal simulés sur l’admission publique | **interdit** |
+| `db` / `env` / secret dans snapshot, journal, HTTP, MCP, `JSON.stringify(services)` | **interdit** (fuite) |
+| Fermeture qui substitue un tenant headers/corps/query à `services.tenantId` | **interdit** (non forgeable) |
+| `publicIngress` absent de `AppExtensions` | pas de routes publiques (opt-in) |
+| `publicIngress` présent, factory ou `resolveTenant` non-fonctions / callbacks kind absents | **rejet déclaration** |
 | Corps `workspaceId` lu **avant** `verify` | **interdit** (mutation) |
 | Champ tenant JSON **après** parse ≠ config | refus **app** |
 | `?workspace=` n’altère pas le tenant | valide |
@@ -40,7 +49,7 @@ Doc seulement. Fixtures WH-K01 **non observées**. Oracles futurs : **kit géné
 | 200 signed sans `complete(fence)===true` | **interdit** |
 | `claim`/`complete` invoqués pour guest | **interdit** |
 | Decrypt coffre **après** `verify` | **interdit** |
-| Tenant config → vault → `verify` → parse | **seule** séquence |
+| Tenant config → factory → vault → `verify` → parse | **seule** séquence |
 | Rejeu `completed` rappelle `complete` (ancien fence) | **interdit** ; renvoyer snapshot |
 | CAS `key+token+generation+state=processing` faux | pas de 2xx |
 | Snapshot `{ok:true}` en `permanent_failure` / `{ok:false}` en `completed` | **interdit** |
@@ -72,6 +81,6 @@ Crash : deux writers, takeover, `complete` faux. Mocks ; **aucun** appel Stripe.
 
 ## 3. Fichiers lus / hors C01
 
-`sites-adapter/src/{dispatch,catalog,index,context}.ts` ; `runtime/core/{types,commands,operations,http,api,mail,integrations,access-tokens,mcp,mcp-oauth,scope,observability}.ts` ; `api-kernel/src/types.ts` ; `template/drizzle/0000_*.sql` ; `docs/{API,MAIL,ARCHITECTURE}.md`. **Non touchés** : runtime, tests, migrations, version, R01.
+`sites-adapter/src/{dispatch,catalog,index,context}.ts` ; `runtime/core/{types,commands,operations,http,api,mail,integrations,access-tokens,mcp,mcp-oauth,scope,observability}.ts` ; `api-kernel/src/types.ts` ; `template/drizzle/0000_*.sql` ; `docs/{API,MAIL,ARCHITECTURE}.md`. Runtime, migrations et tests **exécutables** : **pas** de lot nouveau ici (assertions de version existantes seulement, hors ce document). Transport = `main` 0.14.0. ACCESS composé par merge, blobs inchangés.
 
 Aucune capacité runtime livrée. Revue indépendante ; fusion/PR = mainteneur.
