@@ -460,3 +460,41 @@ test('ClaimStore D1 : replay completed sans nouveau handle ; fence périmé non 
     assert.equal(JSON.stringify(expired.body).includes('Bearer leaked'), false);
   } finally { db.close(); }
 });
+
+
+test('integration disabled after an accepted webhook blocks vault before verify and handle', async () => {
+  const { db, org } = await setup();
+  try {
+    const created = await call(db, {}, {
+      path: '/api/v1/platform/integrations', method: 'POST', identity: alice, query: { workspace: org },
+      body: { provider: 'custom', slug: 'revocable-hook', label: 'Hook', secret: WEBHOOK, meta: { headerName: 'X-Hook' } },
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const integration = created.body.integration;
+    const { publicIngress, log } = declarationFor(org, [signedEntry(org, { vaultRef: { integrationId: integration.id } })], {
+      bindings: { verify: async input => {
+        log.push({ op: 'verify' });
+        return input.secret === WEBHOOK ? { ok: true, eventId: input.headers.get('x-lite-event') } : { ok: false };
+      } },
+    });
+    const options = defineExtensions(app, { publicIngress });
+    const webhook = event => call(db, options, {
+      path: '/api/v1/public/signed', method: 'POST', body: { ping: true }, headers: { 'x-lite-event': event },
+    });
+    assert.equal((await webhook('evt_before_disable')).status, 200);
+    assert.equal(log.filter(e => e.op === 'verify').length, 1);
+    assert.equal(log.filter(e => e.op === 'handle').length, 1);
+    const disabled = await call(db, {}, {
+      path: '/api/v1/platform/integrations/' + integration.id, method: 'PATCH', identity: alice,
+      query: { workspace: org }, body: { enabled: false, version: integration.version },
+    });
+    assert.equal(disabled.status, 200, JSON.stringify(disabled.body));
+    assert.equal(disabled.body.integration.enabled, false);
+    log.length = 0;
+    const denied = await webhook('evt_after_disable');
+    assert.equal(denied.status, 503, JSON.stringify(denied.body));
+    assert.equal(denied.body.error.code, 'vault_unavailable');
+    assert.equal(log.some(e => e.op === 'verify' || e.op === 'handle'), false);
+    assert.equal(denied.text.includes(WEBHOOK), false);
+  } finally { db.close(); }
+});

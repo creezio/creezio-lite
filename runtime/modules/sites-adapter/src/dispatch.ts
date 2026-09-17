@@ -51,7 +51,7 @@ function publicIngressVault(env:ApiContext['env']):VaultPort|undefined{
     async decrypt({tenantId,integrationId,aad}){
       if(aad!==`${tenantId}:${integrationId}`)throw new Error('aad');
       const row=await env.DB.prepare('SELECT * FROM lite_integrations WHERE org_id=? AND id=?').bind(tenantId,integrationId).first<IntegrationRow>();
-      if(!row||row.org_id!==tenantId||row.id!==integrationId||`${row.org_id}:${row.id}`!==aad)throw new Error('vault');
+      if(!row||row.enabled!==1||row.org_id!==tenantId||row.id!==integrationId||`${row.org_id}:${row.id}`!==aad)throw new Error('vault');
       return resolveIntegration({env} as ApiContext,row);
     },
   };
