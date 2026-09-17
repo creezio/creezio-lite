@@ -547,8 +547,30 @@ async function routeExplicit(access, accountId, selection) {
   if (owner.confirmedUnavailable) return { status: 'blocked', reason: 'account_pool_unavailable', accountId, pool: owner.pool, poolState: owner.poolState, nextAction: `pool ${owner.pool} du compte ${accountId} confirmé indisponible (${owner.poolState}) : réactiver manuellement après vérification, aucun POST.` };
   return { status: 'route', accountId, pool: owner.pool, modelId: selection.modelId, selection: 'initial', explicit: true, ...(owner.startBlocked ? { explicitValidation: 'start_block', startBlock: owner.startBlock } : {}) };
 }
-async function readAgent({ agentId, key, fetchImpl, timeoutMs }) {
+// Read recovery only for agents with an already known run; never proves absence.
+async function readLatestRunAgent({ agentId, knownRunId, key, fetchImpl, timeoutMs }) {
+  const listed = await call({ path: '/v1/agents/' + encodeURIComponent(agentId) + '/runs', key, fetchImpl, timeoutMs });
+  const items = listed.data?.items;
+  const invalid = () => ({ failure: { status: 'unavailable', reason: 'latest_run_unverified' } });
+  if (listed.outcome !== 'ok' || !Array.isArray(items) || !items.length || items.length > 1000) return invalid();
+  if (!runIdPattern.test(knownRunId ?? '') || !items.some(item => item?.id === knownRunId)) return invalid();
+  // The provider documents newest-first order. Reject malformed evidence, never sort it.
+  let previous = Infinity;
+  const seen = new Set();
+  for (const item of items) {
+    const time = Date.parse(item?.createdAt);
+    if (!item || !runIdPattern.test(item.id ?? '') || item.agentId !== agentId || !Number.isFinite(time) || time > previous || seen.has(item.id)) return invalid();
+    previous = time; seen.add(item.id);
+  }
+  const { run, failure } = await readRun({ agentId, runId: items[0].id, key, fetchImpl, timeoutMs });
+  if (failure || !run || !['CREATING', 'RUNNING', 'FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED'].includes(run.status)) return invalid();
+  return { agent: { agentId, latestRunId: run.runId, readSource: 'run_list_verified' } };
+}
+async function readAgent({ agentId, key, fetchImpl, timeoutMs, allowRunFallback = false, knownRunId }) {
   const result = await call({ path: `/v1/agents/${encodeURIComponent(agentId)}`, key, fetchImpl, timeoutMs });
+  if (allowRunFallback && result.outcome === 'unavailable' && ['timeout', 'network', 'server'].includes(result.reason)) {
+    return readLatestRunAgent({ agentId, knownRunId, key, fetchImpl, timeoutMs });
+  }
   if (result.outcome !== 'ok') return { failure: { status: result.outcome === 'rejected' ? 'blocked' : 'unavailable', reason: result.reason ?? result.outcome, ...(result.status ? { httpStatus: result.status } : {}), ...(result.providerCode ? { providerCode: result.providerCode } : {}) }, httpStatus: result.status };
   const agent = agentSummary(result.data);
   if (!agent || agent.agentId !== agentId) return { failure: { status: 'unavailable', reason: 'invalid_response' }, httpStatus: result.status };
@@ -566,13 +588,17 @@ function settleFollowup(entry, agent, now) {
     Object.assign(entry, { runId: agent.latestRunId, followups: (entry.followups ?? 0) + 1 });
     return { state: 'accepted', priorRunId: pending.priorRunId, runId: agent.latestRunId };
   }
+  if (agent.readSource === 'run_list_verified') {
+    Object.assign(pending, { state: 'uncertain', reason: 'unchanged_run_list', updatedAt: now() });
+    return { state: 'uncertain', priorRunId: pending.priorRunId, reason: 'unchanged_run_list' };
+  }
   Object.assign(pending, { state: 'not_created', settledAt: now() }); delete pending.reason;
   return { state: 'not_created', priorRunId: pending.priorRunId };
 }
 // concludeAbsent : un 404 ne conclut « non créé » qu’après un refus explicite du fournisseur (statut 4xx reçu). Après une livraison inconnue (délai, réseau, 5xx,
 // entrée pending orpheline), aucun 404 — même répété, même tardif — ne prouve l’absence : seule une attestation humaine explicite (confirmAbsent) conclut.
 async function reconcileEntry({ entry, key, fetchImpl, timeoutMs, now, unavailableState = 'uncertain', unavailableReason, concludeAbsent = true, confirmAbsent = false }) {
-  const { agent, failure, httpStatus } = await readAgent({ agentId: entry.agentId, key, fetchImpl, timeoutMs });
+  const { agent, failure, httpStatus } = await readAgent({ agentId: entry.agentId, key, fetchImpl, timeoutMs, allowRunFallback: runIdPattern.test(entry.runId ?? ''), knownRunId: entry.runId });
   if (agent) { Object.assign(entry, { state: 'reconciled', updatedAt: now(), ...(agent.latestRunId ? { runId: agent.latestRunId } : {}), ...(agent.url ? { url: agent.url } : {}) }); delete entry.reason; if (entry.delivery?.state === 'unknown' || entry.delivery?.state === 'conflict') entry.delivery = { ...entry.delivery, state: 'confirmed', confirmedAt: now() }; const followup = settleFollowup(entry, agent, now); return { state: 'reconciled', agent, ...(followup ? { followup } : {}) }; }
   if (failure.reason === 'invalid_response' && httpStatus === 200) { Object.assign(entry, { state: 'uncertain', reason: 'identity_mismatch', updatedAt: now() }); return { state: 'uncertain', reason: 'identity_mismatch', ...(entry.returned ? { returned: entry.returned } : {}) }; }
   if (httpStatus === 404 && !entry.runId && !entry.followup && entry.reason !== 'identity_mismatch' && !entry.returned) {
@@ -725,8 +751,9 @@ export async function followup({ agentId, mission, account, registryFile, prompt
   if (unresolved) return report({ status: 'blocked', reason: 'followup_unresolved', followup: unresolved, nextAction: 'reconcile --mission avant toute réémission ; aucun POST envoyé' });
   const ownerKey = await access.keyFor(accountId);
   const modelId = effectiveSelection(entry)?.modelId ?? null;
-  const { agent, failure: agentFailure } = await readAgent({ agentId, key: ownerKey, fetchImpl, timeoutMs });
+  const { agent, failure: agentFailure } = await readAgent({ agentId, key: ownerKey, fetchImpl, timeoutMs, allowRunFallback: Boolean(entry && runIdPattern.test(entry.runId ?? '')), knownRunId: entry?.runId });
   if (agentFailure) return report({ ...agentFailure, nextAction: 'agent illisible : aucun POST envoyé ; relire plus tard' });
+  if (agent.readSource) receipt.agentReadSource = agent.readSource;
   if (!agent.latestRunId) return report({ status: 'blocked', reason: 'latest_run_unknown', nextAction: 'dernier run inconnu : aucun POST envoyé' });
   const registryRunId = entry?.runId;
   const { run, failure: runFailure } = await readRun({ agentId, runId: agent.latestRunId, key: ownerKey, fetchImpl, timeoutMs });
