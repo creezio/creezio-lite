@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm, mkdir, cp, readdir, symlink, lstat } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, mkdir, cp, readdir, symlink, lstat, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, dirname, basename, relative, sep } from 'node:path';
@@ -56,6 +56,8 @@ async function kitCopy(destination) {
   return destination;
 }
 const runCli = (kit, args, cwd) => spawnSync(process.execPath, [join(kit, 'bin/lite.mjs'), ...args], { encoding: 'utf8', cwd, env: childEnv });
+const toCrlf = text => text.replaceAll('\r\n', '\n').replaceAll('\n', '\r\n');
+async function writeKitSkill(kit, text) { await writeFile(join(kit, orchestrationDir, 'SKILL.md'), text); }
 
 test('the discovery file is derived from the canonical skill, lists every distributed resource and stays out of the copied sources', async () => {
   const sources = await orchestrationSources(), generated = await orchestrationGenerated(sources);
@@ -214,7 +216,7 @@ test('adopt refuses a symlinked discovery path or parent before any write, inclu
     assert.equal(await readFile(target, 'utf8'), stale, 'cible externe non écrasée'); assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.11.9', 'manifeste non réécrit');
     await rm(join(app, orchestrationDiscovery)); await writeFile(join(app, orchestrationDiscovery), stale);
     const repaired = await adopt(app, true); assert.deepEqual(repaired.written, []); assert.deepEqual(repaired.writtenGenerated, [orchestrationDiscovery]);
-    assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.13.0');
+    assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.13.1');
     assert.equal((await adopt(app, true)).changed, false);
   });
 });
@@ -333,5 +335,85 @@ test('the real distributed plan-missions runs from a generated application on it
     assert.equal((await adopt(app, true)).changed, false);
     assert.equal(await readFile(join(app, '.cursor/rules/metier.mdc'), 'utf8'), localRule); assert.equal(await readFile(join(app, 'AGENTS.md'), 'utf8'), localAgents);
     assert.equal((await doctor(app)).orchestration.status, 'current');
+  });
+});
+
+// W01 — checkout Windows (`core.autocrlf=true`) : le CLI doit parser le frontmatter CRLF comme le LF, sans fork applicatif ni relâchement des champs.
+test('CLI create and adopt accept LF and CRLF skill sources with the same discovery semantics and refuse malformed frontmatter without partial writes', async () => {
+  const canonical = skillFrontmatter(await readFile(join(root, orchestrationDir, 'SKILL.md'), 'utf8'));
+  assert.deepEqual(skillFrontmatter(toCrlf(await readFile(join(root, orchestrationDir, 'SKILL.md'), 'utf8'))), canonical);
+  assert.throws(() => skillFrontmatter('---\r\nname: lite-orchestration\r\n---\r\ncorps\n'), /frontmatter/);
+  assert.throws(() => skillFrontmatter('---\nname: lite-orchestration\ndescription:\n---\n'), /frontmatter/);
+  assert.throws(() => skillFrontmatter('---\rname: x\rdescription: y\r---\r'), /frontmatter/);
+  assert.throws(() => skillFrontmatter('---\r\nname: lite-orchestration\r\ndescription: ok\r\n---'), /frontmatter/);
+
+  await withTemp('lite-dist-eol-', async (temp) => {
+    const spec = join(root, 'examples/services.json');
+    const expectCreated = async (kit, out, skillBytes) => {
+      const created = runCli(kit, ['create', '--spec', spec, '--out', out]);
+      assert.equal(created.status, 0, created.stderr);
+      const report = JSON.parse(created.stdout);
+      assert.equal(report.kitVersion, JSON.parse(await readFile(join(kit, 'package.json'), 'utf8')).version);
+      const discovery = await readFile(join(out, orchestrationDiscovery), 'utf8');
+      assert.deepEqual(skillFrontmatter(discovery), canonical);
+      assert.match(discovery, /^---\nname: lite-orchestration\ndescription: .+\n---\n/);
+      assert.equal(discovery.includes('\r'), false, 'la découverte générée reste LF');
+      const copied = await readFile(join(out, orchestrationDir, 'SKILL.md'));
+      assert.ok(copied.equals(skillBytes), 'copie applicative = octets du checkout kit, sans normalisation');
+      const found = await discoverSkills(out, '.agents/skills');
+      assert.equal(found.length, 1);
+      assert.deepEqual({ folder: found[0].folder, name: found[0].name, description: found[0].description }, { folder: 'lite-orchestration', ...canonical });
+      const health = runCli(kit, ['doctor', '--app', out]);
+      assert.equal(health.status, 0, health.stderr);
+      assert.equal(JSON.parse(health.stdout).orchestration.status, 'current');
+    };
+
+    const lfKit = await kitCopy(join(temp, 'kit-lf'));
+    const lfSkill = await readFile(join(lfKit, orchestrationDir, 'SKILL.md'));
+    assert.equal(lfSkill.includes(0x0d), false);
+    await expectCreated(lfKit, join(temp, 'app-lf'), lfSkill);
+
+    const crlfKit = await kitCopy(join(temp, 'kit-crlf'));
+    const crlfText = toCrlf(lfSkill.toString('utf8'));
+    await writeKitSkill(crlfKit, crlfText);
+    const crlfSkill = await readFile(join(crlfKit, orchestrationDir, 'SKILL.md'));
+    assert.ok(crlfSkill.includes(0x0d));
+    await expectCreated(crlfKit, join(temp, 'app-crlf'), crlfSkill);
+
+    const existing = join(temp, 'app-adopt');
+    await createApp({ out: existing, spec: join(root, 'examples/catalogue.json') });
+    await rm(join(existing, '.cursor'), { recursive: true, force: true });
+    await rm(join(existing, '.agents'), { recursive: true, force: true });
+    const inspect = runCli(crlfKit, ['adopt', '--app', existing]);
+    assert.equal(inspect.status, 0, inspect.stderr);
+    assert.equal(JSON.parse(inspect.stdout).applied, false);
+    const apply = runCli(crlfKit, ['adopt', '--app', existing, '--apply']);
+    assert.equal(apply.status, 0, apply.stderr);
+    const applied = JSON.parse(apply.stdout);
+    assert.equal(applied.applied, true);
+    assert.ok(applied.written.includes(`${orchestrationDir}/SKILL.md`));
+    assert.deepEqual(applied.writtenGenerated, [orchestrationDiscovery]);
+    assert.ok((await readFile(join(existing, orchestrationDir, 'SKILL.md'))).equals(crlfSkill));
+    const adoptedDiscovery = await readFile(join(existing, orchestrationDiscovery), 'utf8');
+    assert.deepEqual(skillFrontmatter(adoptedDiscovery), canonical);
+    assert.equal(adoptedDiscovery.includes('\r'), false);
+    const second = JSON.parse(runCli(crlfKit, ['adopt', '--app', existing, '--apply']).stdout);
+    assert.equal(second.applied, false); assert.equal(second.status, 'current');
+
+    const badKit = await kitCopy(join(temp, 'kit-bad'));
+    await writeKitSkill(badKit, '---\r\nname: lite-orchestration\r\n---\r\ncorps\n');
+    const refusedOut = join(temp, 'app-refused');
+    const refusedCreate = runCli(badKit, ['create', '--spec', spec, '--out', refusedOut]);
+    assert.equal(refusedCreate.status, 1);
+    assert.match(refusedCreate.stderr, /frontmatter YAML avec `name` et `description` sur une ligne attendu/);
+    await assert.rejects(stat(refusedOut), { code: 'ENOENT' });
+
+    const victim = join(temp, 'app-victim');
+    await createApp({ out: victim, spec: join(root, 'examples/services.json') });
+    const before = await snapshot(victim);
+    const refusedAdopt = runCli(badKit, ['adopt', '--app', victim, '--apply']);
+    assert.equal(refusedAdopt.status, 1);
+    assert.match(refusedAdopt.stderr, /frontmatter YAML avec `name` et `description` sur une ligne attendu/);
+    assert.deepEqual(await snapshot(victim), before, 'aucune écriture partielle après frontmatter kit invalide');
   });
 });

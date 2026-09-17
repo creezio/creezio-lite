@@ -1,5 +1,12 @@
 # Versions de Lite
 
+## 0.13.1 — Frontmatter de compétence LF et CRLF dans le CLI (`create`/`adopt` seulement)
+
+- `skillFrontmatter` dans `bin/lite.mjs` accepte les délimiteurs `---` et les fins de ligne LF ou CRLF ; `name` et `description` restent exigés sur une seule ligne, le frontmatter malformé est toujours refusé sans écriture partielle.
+- `create` et `adopt` (inspect, `--apply`, second `current`) fonctionnent sur un checkout kit `core.autocrlf=true` **via le même checkout source** ; une édition locale réelle d’un fichier géré reste un conflit.
+- Ce n’est pas une compatibilité globale CRLF : empreintes brutes, `doctor` croisé kit LF / copies CRLF, clone d’app converti (faux conflits 12 copies + runtime vs verrou), `check-kit` et le test canonique LF-stricts restent hors lot. Recette kit : octets LF. Réception fiable : checkout isolé `git -c core.autocrlf=false` et `core.eol=lf`, sans config globale. Ne pas falsifier lock/manifest ni forcer `adopt` sur un clone déjà converti.
+- Ressources distribuées inchangées : une adoption 0.13 valide n’exige ni ré-adoption ni upgrade runtime pour W01. Pas de normalisation globale des empreintes (lot distinct). Aucun changement du transport Cursor, du pool, de la planification, du runtime métier, du schéma, des migrations ni de la politique Git.
+
 ## 0.13.0 — Planification parallèle des missions, pool commun de comptes et distribution complète du standard
 
 - Contrat de planification v1 `PLANNING.md` (P1) : plan public (`docs/planning/plan.json`) et état privé hors dépôt, schémas JSON 2020-12 `planning-plan.schema.json` / `planning-state.schema.json`, exemples génériques ; dépendances par étape (`start`/`integrate`/`publish`), conditions d’acceptation sourcées distinctes de `delivered`, réservations de chemins par dépôt et de ressources sémantiques tenues jusqu’à l’intégration, statut `historical`, capacité par périmètre (`0` valide, `null` non fiable), invariants d’état refusant toute incertitude effacée.
