@@ -1,5 +1,9 @@
 # Mises à jour
 
+## Candidate 0.15.0 — runtimes natifs ingress et profils d’accès
+
+Les capacités sont implémentées dans cette candidate ; seule une release GitHub au SHA validé en établit la disponibilité publiée. Suivre le [guide d’adoption native](runtime-adoption.md) pour choisir les opt-ins, préparer le reçu d’accès et conserver les filtres applicatifs. Les migrations additives 0011/0012 imposent une fusion explicite du schéma et des métadonnées ; `upgrade --apply` ne les installe pas. Ne recalculer le verrou qu’après vérification des sources fusionnées et du schéma D1 réel local. Préserver les SQL déjà appliqués et les migrations métier. Aucun déploiement ni adoption d’application n’est implicite.
+
 Chaque application possède son runtime versionné, son brief, ses migrations, ses données et son identité Sites. Une évolution du kit ne modifie pas automatiquement une application déjà publiée.
 
 1. Choisir un commit du kit et lire son changelog.

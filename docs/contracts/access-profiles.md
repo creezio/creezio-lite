@@ -1,8 +1,8 @@
-# Profils, capacités, groupes — proposition KIT-ACCESS-CONTRACT
+# Profils, capacités, groupes — contrat natif
 
-Statut : proposition. B1–B8 levés. B9 catalogue helper (`4991f36`). Raccordement `ScopeProvider` (signature additive). Ancêtres `0e85503`, `800f348`, `9b3bf63`, `482f7ba`. Pas de runtime livré. Astra tranche. Aucun schéma privé d’app.
+Statut : implémenté dans la candidate 0.15.0, pas encore une publication. Moteur, stockage natif et surfaces sont couverts par les tests access-profiles-engine/native/surfaces ; ces fixtures ne prouvent aucune adoption ni exécution en production. Voir ../runtime-adoption.md.
 
-## 1. Limite actuelle
+## 1. État historique avant les runtimes 0.15
 
 Identité, invitations, `lite_members`, admin d’espace : natifs (`types.ts`, `api.ts`, `access.ts`). `operationAllowed` : `op.roles`, puis `essential` **ou owner → true**, puis seul `deny` ; **`allow` inerte**. `canReadModule` : owner → true, deny `module:${id}` (`operations.ts`). `AppExtensions` = `beforeWrite` | `operations` | `scope` (`types.ts`) ; `defineExtensions` n’a pas de détecteur d’accès (`commands.ts`). Nav / `session.me` / `modules.list` (essential) s’appuient sur `canReadModule`. Groupes `role:*` exposés comme groupes UI. Pas de helper consommable. Pas d’ops `access.receipt.*`.
 
@@ -157,7 +157,7 @@ Le **helper** applique deny `module:` et credential ; l’app ne pré-filtre pas
 
 Éval `adopted` : (1) identité + membership `org_id` ; (2)+(5) **dans le helper** (ci-dessus) ; (3) `e.roles` ; (4) essential **enveloppe** (session/health/`mcp.tools.*` transport) — le **contenu** découverte n’est pas essential ; (6) si op ∈ liste §3 : rôle natif, skip (7), **délégation si mutation** ; (7) sinon liaison vivante, op ∈ capability, rôle ∈ `receivableBy` ; (8) `ScopeProvider`. `kind:'capability'` : `allowed` ssi la capability **demandée** est liée par un profil vivant `receivableBy` (7 exact — une autre capability qui cite les mêmes ops n’emprunte pas) **et** toutes ses ops passent (2)(5)(3). Owner sans profil métier : pas de bypass. `incomplete` : refuse (7). `canReadModule` / nav / `modules.list` / `session.me` permissions / OpenAPI / `tools/list` : `evaluateAccessDecision` sur `module.<id>.list` (ou get) — **pas** owner→true.
 
-Pas de keep-alive shell implicite après adoption : dashboard/search/files/mail/assistant exigent des **IDs d’op** dans une capability liée (proposition : l’app les déclare ; le kit n’invente pas un profil magique).
+Pas de keep-alive shell implicite après adoption : dashboard/search/files/mail/assistant exigent des **IDs d’op** dans une capability liée (l’app les déclare ; le kit n’invente pas un profil magique).
 
 ## 5. Fermetures request-scope et ScopeProvider
 

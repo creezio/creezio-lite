@@ -1,6 +1,6 @@
-# Tests futurs — profils d’accès (KIT-ACCESS-CONTRACT)
+# Matrice de réception — profils d’accès
 
-Matrice contractuelle (HTTP, MCP, search, files, UI, **helper pur** `evaluateAccessDecision`). Aucun test exécutable ici. Fixtures `fx_*`. Provenance serveur.
+Matrice contractuelle (HTTP, MCP, search, files, UI, **helper pur** `evaluateAccessDecision`). Ce document est un oracle, pas un rapport d’exécution. Les tests exécutables vivent dans `tests/access-profiles-engine.test.mjs`, `tests/access-profiles-native.test.mjs` et `tests/access-profiles-surfaces.test.mjs` ; leurs fixtures et mocks ne remplacent pas la recette de chaque application ni ses parcours UI authentifiés.
 
 | # | Cas | `adopted` | `incomplete` | `legacy` |
 |---|---|---|---|---|
