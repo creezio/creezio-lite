@@ -29,13 +29,21 @@ Doc seulement. Fixtures WH-K01 **non observées**. Oracles futurs : **kit géné
 | Champ tenant JSON **après** parse ≠ config | refus **app** |
 | `?workspace=` n’altère pas le tenant | valide |
 | Collision route / `command()` publique / MCP / `lite_` | throw / 401 / 403 |
-| `admitGuest` absent au démarrage (entrée guest) | fail-closed déclaration |
-| `admitGuest` `ok: false` | `handle` **non** appelé ; pas de donnée |
+| `admitGuest` absent **ou** panne (`unavailable`/throw) | fail-closed / refus ; **pas** de `handle` |
+| `limiter` (ou autre) ∈ `requires`, binding absent / `ready()===false` | **refus déclaration** |
+| `limiter.admit()` panne en requête | refus ; **pas** de `handle` |
+| Guest **sans** `ClaimStore` | valide (aucune persistance kit) |
+| `claim`/`complete` invoqués pour guest | **interdit** |
+| Decrypt coffre **après** `verify` | **interdit** |
+| Tenant config → vault → `verify` → parse | **seule** séquence |
+| Rejeu `completed` rappelle `complete` (ancien fence) | **interdit** ; renvoyer snapshot |
+| CAS `key+token+generation+state=processing` faux | pas de 2xx |
+| Snapshot `{ok:true}` en `permanent_failure` / `{ok:false}` en `completed` | **interdit** |
+| Timeout après effet métier | effets **non** annulés ; idempotence **app** requise |
 | `params.token` transmis ; clair absent logs/snapshot | valide |
 | `view` borné au handler (ids, montant affiché) | valide |
 | `/payer` admission **crédite** / confirme paiement | **interdit** |
-| Origin/CORS/IP comme preuve | insuffisant |
-| Interface = limiteur anti-abus | **non** ; politique `entry.abuse` + callback |
+| Origin/CORS/IP comme preuve ; texte `policy` sans `requires` honorés | insuffisant ; capacités **prouvées** |
 | `verify` non-HMAC (MAC machine callback) | valide si `ok` |
 | `verify` HMAC-only imposé noyau | **interdit** |
 | `claim` → `busy` / `attempts_exhausted` / `permanent_failure` | **non-2xx** ; pas de succès handler |
@@ -44,9 +52,8 @@ Doc seulement. Fixtures WH-K01 **non observées**. Oracles futurs : **kit géné
 | `failPermanent`/`retry`/`renew` **sans** `fence.key` | **interdit** |
 | `handle` `permanent` | `failPermanent` ; 4xx ; pas `completed` |
 | Digest collision / autre route ou tenant | collision / autre clé |
-| Rejeu `completed` sanitizé | pas cookie/auth/jeton/PII |
-| Timeout avant/après effet | non-2xx ; app no-op si déjà commis |
-| Coffre / `claimStore` signed absent | fail-closed ou 503 |
+| Rejeu `completed` sanitizé | pas cookie/auth/jeton/PII ; **pas** `complete` |
+| Coffre / `claimStore` **signed** absent | fail-closed ou 503 |
 | Magasin jetons `bounded` kit / descripteur `bounded` v1 | **refus** |
 | `expectedVersion: 'none'` = replay | non |
 
