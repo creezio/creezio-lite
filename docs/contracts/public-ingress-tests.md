@@ -1,71 +1,63 @@
 # Entrées publiques — cartographie d’essais (C01)
 
-Documentation seulement. Aucune suite lancée, aucun test nouveau. Preuves C01 = **lecture** des sources 0.13.1. Fixtures WH-K01 (`tests/contracts/public-ingress/`, `hmac-generic.json`, `signed-request.json`, `admission-lease.json`, `docs/audit`, `docs/CONVERSION.md`) : **non observées** ; ne pas prétendre les copier.
+Doc seulement. Fixtures WH-K01 **non observées**. Oracles futurs : **kit générique** vs **adaptateur Stripe** (pas le noyau).
 
-Deux oracles **futurs** (lot runtime, pas C01) : **générique kit** (bindings, `rawBytes`, fencing, tenant, fail-closed) vs **adaptateur Stripe** (en-tête `t=`/`v1`, retry re-signé, `evt_…`) — ce dernier n’est pas le noyau.
+## 1. Non-régression observée
 
-## 1. Non-régression déjà dans le kit
-
-| Surface | Fichier observé |
+| Surface | Fichier |
 |---|---|
 | Inbound mail 401/403/dédup, jeton hors logs | `tests/mail.test.mjs` |
-| Isolation `ws_`, `invites/accept` | `tests/runtime.test.mjs` |
-| Commandes, `expectedVersion`, MCP, `lite_`, OAuth | `tests/domain-operations.test.mjs` |
-| `/api/mcp` 401 hors identité | `tests/mcp-oauth.test.mjs`, `tests/search-mcp.test.mjs` |
-| Journal sans corps/secret | `tests/request-logs.test.mjs` |
-| Collision id/route/outil au démarrage | `assertUniqueOperations` (`commands.ts`, `operations.ts`, `catalog.ts`) |
+| `ws_`, `invites/accept` | `tests/runtime.test.mjs` |
+| Commandes, MCP, `lite_`, OAuth | `tests/domain-operations.test.mjs` |
+| `/api/mcp` 401 | `tests/mcp-oauth.test.mjs`, `tests/search-mcp.test.mjs` |
+| Journal sans secret | `tests/request-logs.test.mjs` |
+| Collision catalogue | `assertUniqueOperations` |
 
-## 2. Matrice — cas valides et refus
+## 2. Matrice (valides et refus)
 
-Pas « chaque ligne = refus ». Les **valides** prouvent un passage ; les **refus** restent avant mutation métier, sans secret en log/réponse.
-
-### 2.1 Générique kit
+### 2.1 Kit générique
 
 | Cas | Attendu |
 |---|---|
-| `readBytes` une fois, `rawBytes` identiques jusqu’à `verify`/`handle` | valide |
-| JSON multibyte (é = C3 A9) livré **sans** `TextDecoder` noyau | octets intacts au callback |
-| UTF-8 invalide | callback voit les octets ; parse JSON **après** preuve → 400 si JSON exigé |
-| Corps > `maxBytes` / mauvais `content-type` | 413 / 415 |
-| Timeout lecture/handler **sans** `completed` | **non-2xx** `retryable` |
-| Timeout **après** effet métier | **non-2xx** ; app no-op au retry (K02/app) ; kit ne ment pas 2xx |
-| Tenant config `ws_` ou UUID | valide |
-| Query/body tenant **égal** au candidat | ignoré ou accepté sans changer le tenant |
-| Query/body/`workspaceId` **divergent** | 403 |
-| Regex `[a-z0-9-]{8,80}` | **absente** |
-| Collision route publique × privée / inbound mail | throw déclaration |
-| `command()` + bool public | interdit ; privée → 401 sans session |
-| `POST /api/mcp` sans identité ; `lite_` sur entrée publique | 401 / 403 |
-| Origin/CORS/nonce/IP comme preuve guest | insuffisant |
-| Secret coffre dans meta/client/HTML | interdit (`secret_box` seulement) |
-| `verify`/`claimStore` / coffre requis absents | fail-closed démarrage ou 503 |
-| `abuseLimiterRequired` sans `AbuseLimiter` | **refus déclaration** (fail-closed) |
-| Guest sans `eventId` | valide ; dédup anti-abus **app**, pas replay HMAC |
-| `idempotencyKey` anonyme comme `eventId` | refus |
-| Claim concurrent même `ClaimKey` | un `acquired` ; l’autre `busy` **non-2xx** |
-| Takeover `generation+1` ; ancien worker `complete` | `false` ; pas de 2xx obsolète |
-| Même `eventId`, autre `payloadDigest` | `digest_collision` |
-| Même `eventId`, autre `entryId` ou `tenantId` | **autre** clé |
-| Rejeu `completed` | 2xx snapshot sanitizé ; pas `Set-Cookie`/`Authorization`/corps requête |
-| `permanent_failure` rejoué 2xx | **interdit** |
-| `expectedVersion: 'none'` comme replay | non (`commands.ts`) |
-| `bounded` déclaré en v1 | **refus descripteur** (hors lot) |
+| `rawBytes` une lecture jusqu’à `verify`/`admitGuest`/`handle` | valide |
+| GET guest **sans** `Content-Type` ni corps | **pas** 415 ; `rawBytes` vide |
+| GET avec corps JSON | refus (lecture) |
+| POST sans JSON / > `maxBytes` | 415 / 413 |
+| Multibyte / UTF-8 invalide livrés intacts | parse JSON **après** preuve seulement |
+| Tenant = config `ws_` / UUID ; `resolveTenant` sans `Request` | valide |
+| Corps `workspaceId` lu **avant** `verify` | **interdit** (mutation) |
+| Champ tenant JSON **après** parse ≠ config | refus **app** |
+| `?workspace=` n’altère pas le tenant | valide |
+| Collision route / `command()` publique / MCP / `lite_` | throw / 401 / 403 |
+| `admitGuest` absent au démarrage (entrée guest) | fail-closed déclaration |
+| `admitGuest` `ok: false` | `handle` **non** appelé ; pas de donnée |
+| `params.token` transmis ; clair absent logs/snapshot | valide |
+| `view` borné au handler (ids, montant affiché) | valide |
+| `/payer` admission **crédite** / confirme paiement | **interdit** |
+| Origin/CORS/IP comme preuve | insuffisant |
+| Interface = limiteur anti-abus | **non** ; politique `entry.abuse` + callback |
+| `verify` non-HMAC (MAC machine callback) | valide si `ok` |
+| `verify` HMAC-only imposé noyau | **interdit** |
+| `claim` → `busy` / `attempts_exhausted` / `permanent_failure` | **non-2xx** ; pas de succès handler |
+| Concurrent `ClaimKey` | un `acquired` ; l’autre `busy` |
+| Takeover ; `complete(fence)` `false` | **pas** de 2xx obsolète |
+| `failPermanent`/`retry`/`renew` **sans** `fence.key` | **interdit** |
+| `handle` `permanent` | `failPermanent` ; 4xx ; pas `completed` |
+| Digest collision / autre route ou tenant | collision / autre clé |
+| Rejeu `completed` sanitizé | pas cookie/auth/jeton/PII |
+| Timeout avant/après effet | non-2xx ; app no-op si déjà commis |
+| Coffre / `claimStore` signed absent | fail-closed ou 503 |
+| Magasin jetons `bounded` kit / descripteur `bounded` v1 | **refus** |
+| `expectedVersion: 'none'` = replay | non |
 
-### 2.2 Oracle Stripe (adaptateur app — exemple, pas noyau)
+### 2.2 Oracle Stripe (adaptateur)
 
-À n’écrire que dans l’adaptateur. Docs : corps non muté ; `v1` ; ignorer `v0` ; fenêtre horloge **serveur** ; retry = nouveau `t`/`v1`, même `evt_`. **Ne pas** coller de vecteur WinHub ici.
+Docs officielles. Pas de vecteur WinHub ici. MAC exemple ASCII(`t`)+`0x2E`+`rawBytes` **si** `verify` le choisit ; `utf8(bytes)` / `stringify` → échec ; `v0` / skew / signature absente → refus ; `evt_` **après** MAC.
 
-| Cas | Attendu |
-|---|---|
-| MAC sur ASCII(`t`)+`0x2E`+`rawBytes` (exemple) | valide **si** `verify` app le choisit |
-| `utf8(bytes)` / `JSON.stringify` comme message | non-correspondance |
-| Signature absente / `v0` seul / `v1` faux / `t` hors skew | admission refusée |
-| `eventId` = `id` JSON **après** MAC | jamais avant |
-
-Crash/concurrence : **minimum** (deux writers D1, takeover, worker obsolète). Mocks horloge/`verify` ; **aucun** appel Stripe réel.
+Crash : deux writers, takeover, `complete` faux. Mocks ; **aucun** appel Stripe.
 
 ## 3. Fichiers lus / hors C01
 
-`runtime/modules/sites-adapter/src/{dispatch,catalog,index,context}.ts` ; `runtime/core/{types,commands,operations,http,api,mail,integrations,access-tokens,mcp,mcp-oauth,scope,observability}.ts` ; `api-kernel/src/types.ts` (`rawBody` string hors Sites) ; `template/drizzle/0000_*.sql` ; `docs/{API,MAIL,ARCHITECTURE}.md`. **Non touchés** : runtime, tests code, migrations, version, changelog, R01.
+`sites-adapter/src/{dispatch,catalog,index,context}.ts` ; `runtime/core/{types,commands,operations,http,api,mail,integrations,access-tokens,mcp,mcp-oauth,scope,observability}.ts` ; `api-kernel/src/types.ts` ; `template/drizzle/0000_*.sql` ; `docs/{API,MAIL,ARCHITECTURE}.md`. **Non touchés** : runtime, tests, migrations, version, R01.
 
-Hors C01 : implémentation, CI du lot runtime, paiement en production, fusion, release. **Aucune** capacité revendiquée livrée.
+Aucune capacité runtime livrée. Revue indépendante ; fusion/PR = mainteneur.

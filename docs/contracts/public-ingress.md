@@ -1,133 +1,141 @@
 # Entrées publiques — contrat générique (C01)
 
-Proposition, **pas une release**, aucun numéro de version, aucun `runtime/` attribué. Base kit : `0.13.1` SHA `f41f0ed3e1d19091f364df09f1932f9f89c46a0e`. Head précédent C01 : `b0fc580e68b1230732d552db234fdb447e4280a3`. WH-K01 `822fc927` puis correction `7779f770` : **propositions de handoff**, pas une API figée. Les choix mainteneur **priment**. Fixtures d’app, `docs/audit`, `docs/CONVERSION.md` WinHub : **non observés**.
+Proposition, **pas une release**, aucun runtime livré. Base kit `0.13.1` `f41f0ed3e1d19091f364df09f1932f9f89c46a0e`. Head reçu : `26e4fec81986dba66d9168831f9348837a951138`. WH-K01 = handoff, pas API figée. Fixtures d’app **non observées**.
 
 ## 1. Rejets
 
-| Proposition (consommateur / C01-0) | Décision mainteneur |
+| Proposition | Décision |
 |---|---|
-| Admission réduite à HMAC **ou** jeton borné | **Non.** v1 = `signed` + `guest`. Jamais « ouvert ». Pas de bool sur `command()`. |
-| `HMAC(secret, ascii(t)\|\|0x2E\|\|rawBytes)` comme **noyau** | **Non.** C’est un **exemple d’adaptateur Stripe**, pas un framing universel. Vérification = **callback serveur** (bindings) sur `rawBytes` intacts. |
-| `utf8(bytes)` / `JSON.stringify` dans le MAC | **Non.** |
-| Exactly-once métier | **Non.** Timeout/lease n’arrête pas le handler. Effet métier : idempotence **app prouvée** ou K02 équivalent. |
-| `bounded` dans les premiers lots | **Non.** Extension **future** (capacité + acquisition K05 / acteur serveur). Pas de table/endpoint jeton à coder maintenant. |
-| `rawBody?: string` / `accessJustification` Electron | **Non.** Hors Sites. |
-| Regex tenant `^[a-z0-9-]{8,80}$` | **Absente du kit.** Ne pas l’ajouter (`ws_` cassé). POS/SIRET/honeypot = app. |
-| DLQ kit, challenge/captcha inventés, preuve CORS/IP | **Non.** |
-| 2xx avant handler réussi + `completed` persisté | **Non.** `processing` / `retryable` → **non-2xx**. `permanent_failure` ≠ `completed`. |
+| Admission = HMAC **ou** magasin `bounded` kit | **Non.** v1 = `signed` + `guest`. Pas de table/endpoint jetons kit. |
+| Framing `ascii(t)\|\|0x2E\|\|rawBytes` **noyau** | **Non.** Exemple adaptateur Stripe. `verify` accepte **toute** signature machine valide (HMAC ou autre). |
+| `utf8(bytes)` / re-JSON dans le MAC ; exactly-once | **Non.** |
+| `resolveTenant(request)` ; inspecter le **corps** pour un tenant client **avant** `verify` | **Non.** Config souveraine. Conflit éventuel **après** preuve + parse, sans relire le corps. |
+| `handle` 2xx-only ; 2xx si `complete`/`fail*` = `false` | **Non.** Refus permanent déclaré. Worker obsolète → **non-2xx**. |
+| `AbuseLimiter` kit / seau IP horaire universel | **Non.** Politique anti-abus **déclarée** ; l’interface n’apporte pas de limiteur. |
+| `/payer` confirme ou crédite | **Non.** Page **guest** assistée ; le jeton n’est pas une Identity. |
+| Regex `^[a-z0-9-]{8,80}$` ; `rawBody` Electron ; bool `public` sur `command()` ; DLQ | **Non.** |
 
-## 2. Constat 0.13.1 (inchangé)
+## 2. Constat 0.13.1
 
-SHA-256 identiques à la table 0.12=0.13.0 : `runtime/core/{types,commands,integrations}.ts`, `sites-adapter/src/dispatch.ts`, `api-kernel/src/types.ts`. Adoption 0.13.1 **sans** entrée publique Sites.
+SHA identiques 0.12=0.13.0 : `runtime/core/{types,commands,integrations}.ts`, `sites-adapter/src/dispatch.ts`, `api-kernel/src/types.ts`. `dispatchRequest` : inbound mail **avant** auth (jeton haché, JSON 5 Mio, pas HMAC) ; sans clé, `health|bootstrap|session|invites/accept|workspaces|auth/me` passent le 401 dispatcher mais l’identité Sites reste exigée **sauf `GET health`** ; le reste **401** ; `checkOrigin` ; `workspace()` = adhésion ; `readJson` 65 536, pas de `rawBytes`. `ws_`+32 hex / UUID. `operation()` défaut `mcp`/`tokenAllowed` true. Coffre `secret_box`, AAD `org:id` ; `meta.webhookSecret` droppé. HMAC Sites absent. Stripe docs : corps non muté ; retry re-signe — **adaptateur**.
 
-`dispatchRequest` : `OPTIONS` MCP ; **`mailInboundRoute` avant auth** (`POST /api/v1/email/inbound/:org`, Bearer / `x-email-inbound-secret` haché, JSON 5 Mio, **pas** HMAC, **pas** Stripe) ; OAuth puis `lite_` ; sans clé machine, `health|bootstrap|session|invites/accept|workspaces|auth/me` passent le 401 dispatcher, mais `handleApi`/`handleNativeApi` exigent l’identité Sites **sauf `GET health`** ; le reste, y compris `source:'app'`, **401 `authentication_required`** ; `checkOrigin` (Origin Site, refus `sec-fetch-site: cross-site`) ; `workspace()` = `lite_orgs` × `lite_members` ; `executeAppOperation` = `readJson` 65 536, `identity` obligatoire, **pas** de `rawBytes`. Bootstrap `ws_`+32 hex ; `POST workspaces` = UUID. `assertUniqueOperations` : id / méthode+forme / `toolName`. `operation()` défaut `mcp`/`tokenAllowed` **true** — une entrée publique **ne doit pas** l’emprunter. Coffre `secret_box` AES-GCM, AAD `org:id` ; `metadata()` `custom` = `headerName` seulement (`meta.webhookSecret` droppé). `mcp-oauth` limite via `cf-connecting-ip` : **pas** une identité. HMAC Sites : **absent**. Stripe ([webhooks](https://docs.stripe.com/webhooks), [signature](https://docs.stripe.com/webhooks/signature)) : corps non muté ; retry **re-signe**, même `evt_…` — **adaptateur**, pas le noyau.
+## 3. Bindings (v1)
 
-## 3. Bindings serveur (v1)
-
-Registre **distinct** du catalogue `Operation`, unicité au démarrage **plus** collision avec routes privées et `/api/v1/email/inbound/:org`. `mcp` / `tokenAllowed` structurellement faux. Callbacks = **serveur**, jamais du code client.
+Registre distinct de `Operation` ; unicité + collision privées / inbound mail. `mcp`/`tokenAllowed` faux. Callbacks **serveur**.
 
 ```ts
-export type PublicAdmissionKind = 'signed' | 'guest'; // v1 ; 'bounded' hors lots suivants
+export type PublicAdmissionKind = 'signed' | 'guest';
 export type PublicIngressEntry = {
   id: string;
-  method: 'POST' | 'GET'; // GET : guest lecture seulement si déclaré
-  path: string;            // /api/v1/… ; :params = idSchema
+  method: 'POST' | 'GET';
+  path: string; // /api/v1/… ; :params = idSchema
   admission: PublicAdmissionKind;
-  tenantId: string;        // config serveur, ws_… ou UUID déjà en base
-  maxBytes: number;        // jamais illimité
-  contentTypes: readonly string[];
+  tenantId: string; // config serveur uniquement
+  maxBytes: number; // POST : plafond ; GET lecture : 0, pas de JSON exigé
+  contentTypes: readonly string[]; // POST : p.ex. application/json ; GET : []
   timeoutMs: number;
-  abuseLimiterRequired?: boolean; // guest : si true, binding absent ⇒ throw au démarrage
-  vaultRef?: { integrationId: string }; // signed : secret(org,id) après tenant candidat
+  vaultRef?: { integrationId: string }; // signed, après tenant candidat
+  abuse: { policy: string }; // texte de politique ; pas un limiteur fourni
 };
+export type RouteParams = Readonly<Record<string, string>>;
+export type BoundedMeta = Readonly<{
+  headers: Readonly<Record<string, string>>; // allowlist
+  query: Readonly<Record<string, string>>;  // hors tenant
+}>;
 export type SignedProof = { kind: 'signed'; eventId: string; payloadDigest: Uint8Array };
-export type GuestProof = { kind: 'guest' }; // pas d’eventId vérifié
-export type AdmissionProof = SignedProof | GuestProof;
+export type GuestAdmission = {
+  kind: 'guest';
+  view?: Readonly<Record<string, unknown>>; // accusé / vue commande ; jamais secret ni jeton clair
+};
 export type VerifyInput = {
   entry: PublicIngressEntry;
   tenantCandidate: string;
-  rawBytes: Uint8Array; // une lecture readBytes, intacts
-  headers: Headers;     // bornés ; pas le corps
-  nowMs: number;        // horloge serveur
+  rawBytes: Uint8Array;
+  headers: Headers;
+  nowMs: number;
 };
-export type VerifyResult = { ok: true; eventId: string } | { ok: false };
 export type ClaimKey = { tenantId: string; entryId: string; eventId: string };
-export type ClaimToken = { generation: number; token: string };
-export type SanitizedSnapshot = { status: 200 | 201 | 202; body: unknown }; // voir §5
+export type ClaimFence = { key: ClaimKey; generation: number; token: string };
+export type SanitizedSnapshot = { status: number; body: unknown }; // pas 2xx si échec
+export type HandleResult =
+  | { outcome: 'success'; status: 200 | 201 | 202; body: unknown }
+  | { outcome: 'retry' }
+  | { outcome: 'permanent'; status: 400 | 403 | 404 | 409 | 410 | 422; body: unknown };
+export type ClaimOutcome =
+  | { kind: 'acquired'; fence: ClaimFence }
+  | { kind: 'busy' }
+  | { kind: 'completed'; snapshot: SanitizedSnapshot }
+  | { kind: 'digest_collision' }
+  | { kind: 'permanent_failure'; snapshot?: SanitizedSnapshot }
+  | { kind: 'attempts_exhausted' };
 export type ClaimStore = {
-  claim(key: ClaimKey, digest: Uint8Array): Promise<
-    | { kind: 'acquired'; token: ClaimToken }
-    | { kind: 'busy' }
-    | { kind: 'completed'; snapshot: SanitizedSnapshot }
-    | { kind: 'digest_collision' }
-  >;
-  complete(token: ClaimToken, snapshot: SanitizedSnapshot): Promise<boolean>;
-  retry(token: ClaimToken): Promise<boolean>;
-  failPermanent(token: ClaimToken): Promise<boolean>;
-  renew(token: ClaimToken): Promise<boolean>;
+  claim(key: ClaimKey, digest: Uint8Array): Promise<ClaimOutcome>;
+  complete(fence: ClaimFence, snapshot: SanitizedSnapshot): Promise<boolean>;
+  retry(fence: ClaimFence): Promise<boolean>;
+  failPermanent(fence: ClaimFence, snapshot?: SanitizedSnapshot): Promise<boolean>;
+  renew(fence: ClaimFence): Promise<boolean>;
 };
-export type AbuseLimiter = { admit(input: { entryId: string; tenantId: string }): Promise<'ok' | 'busy'> };
 export type PublicIngressBindings = {
-  resolveTenant(entry: PublicIngressEntry, request: Request): string;
-  verify?(input: VerifyInput): Promise<VerifyResult>;     // obligatoire si signed
-  admitGuest?(input: { entry: PublicIngressEntry; tenantId: string; rawBytes: Uint8Array }): Promise<{ ok: boolean }>;
-  handle(ctx: PublicAdmissionContext): Promise<{ status?: 200 | 201 | 202; body: unknown }>;
-  claimStore: ClaimStore; // signed
-  abuseLimiter?: AbuseLimiter;
+  resolveTenant(entry: PublicIngressEntry): string;
+  verify?(input: VerifyInput): Promise<{ ok: true; eventId: string } | { ok: false }>; // exigé si une entrée signed
+  admitGuest?(input: {
+    entry: PublicIngressEntry;
+    tenantId: string;
+    params: RouteParams;
+    meta: BoundedMeta;
+    rawBytes: Uint8Array; // déjà lus ; GET souvent vide ; pas de second reader
+  }): Promise<{ ok: true; admission: GuestAdmission } | { ok: false }>; // exigé si une entrée guest
+  handle(ctx: PublicAdmissionContext): Promise<HandleResult>;
+  claimStore?: ClaimStore; // exigé si signed
 };
 export type PublicAdmissionContext = {
   kind: 'public';
   entryId: string;
-  proof: AdmissionProof; // preuve typée, pas Identity/Role/Principal
+  proof: SignedProof | GuestAdmission;
   tenantId: string;
   requestId: string;
   rawBytes: Uint8Array;
+  params: RouteParams;
 };
 ```
 
-Primitives `hmacSha256` / `concatBytes` / `timingSafeEqual` : **facultatives**. Aucun `signed_payload` imposé. **Exemple adaptateur Stripe (app)** : parser `Stripe-Signature` → `t` / `v1` ; message = ASCII(`t`) + `0x2E` + `rawBytes` ; MAC coffre ; `eventId` = `id` JSON **après** MAC. Autre fournisseur : autre `verify`.
+Kind déclaré sans son callback (`verify` / `admitGuest` / `claimStore`) ⇒ fail-closed au démarrage. `signed` : HMAC-SHA256 **ou** autre signature machine que `verify` accepte. **Exemple Stripe (app)** : `t`/`v1`, ASCII(`t`)+`0x2E`+`rawBytes`. `guest` : refus `admitGuest` ⇒ **`handle` non appelé**. Jeton de chemin ≠ Identity/Role / `eventId` signé. `claimStore` **abstrait** ; adaptateur D1 kit additif = candidat runtime **après inventaire** des migrations ; **aucun** numéro réservé. Lease / essais / TTL = config serveur + tests déterministes futurs. `entry.abuse` documente la politique ; le type **n’injecte pas** de limiteur (pas de seau IP universel).
 
-## 4. Tenant — sans circularité secret
+## 4. Tenant
 
-1. `resolveTenant` lit **uniquement** `entry.tenantId` (config/binding). 2. Query/body/`workspace`/`workspaceId`/slug **présents et ≠ candidat** → 403 (geste parasite). Absents → ignorer. 3. **Ensuite seulement**, si `signed` : `resolveIntegration` / decrypt `secret_box` avec AAD `org:id` = **candidat**. 4. `verify` lie la preuve à **ce** tenant + cette entrée. 5. Tenant final **identique** au candidat. Jamais l’espace d’un client. Alphabet : `ws_`+hex et UUID **déjà** stockés ; pas de schéma plus étroit.
+`resolveTenant(entry)` → `entry.tenantId` (`ws_` ou UUID déjà en base). **Pas** de `Request`. Le kit **n’ouvre pas** le corps pour y chercher un workspace (mutation de `rawBytes` interdite). `?workspace=` n’alimente pas le tenant. Après preuve, l’app peut parser et refuser un champ JSON divergent. Puis seulement, `signed` : decrypt `secret_box` AAD `org:id` = candidat. Tenant final = candidat.
 
-## 5. Lease, replay, snapshot
+## 5. Claim, fencing, snapshot
 
-Clé de replay **signed** : `tenantId + entryId (route) + eventId vérifié`. `payloadDigest` (SHA-256 des `rawBytes`) **obligatoire** ; même clé, autre digest → `digest_collision` refusée. Guest : **pas** d’`eventId` inexistant ; anti-abus / dédup **app distincte** ; `idempotencyKey` anonyme **n’est pas** une preuve.
+Clé signed : `tenantId + entryId + eventId` vérifié + `payloadDigest` obligatoire ; collision digest refusée. Mutations fenceées : `complete`/`retry`/`failPermanent`/`renew` prennent le **`ClaimFence` entier** (`key` + `generation` + `token` opaque). Takeover : `generation+1`, nouveau `token`. `false` (worker obsolète) ⇒ **interdire 2xx**. `claim` peut renvoyer `permanent_failure` / `attempts_exhausted` (déjà saturé) → **non-2xx**, pas de handler succès. Guest : pas d’`eventId` ; pas d’`idempotencyKey` anonyme comme preuve.
 
-`claim` pose `processing` + `lease_until` + `token` + `generation`. Takeover (lease expirée / `retryable`) : **incrémente `generation`**, nouveau `token`. `complete` / `retry` / `failPermanent` / `renew` : `UPDATE … WHERE generation=? AND token=? AND state='processing'` **atomique**. Un worker obsolète reçoit `false` : il **ne finalise pas** le nouveau lease.
+| État | HTTP |
+|---|---|
+| `processing` / `busy` / `retryable` / `attempts_exhausted` | **non-2xx** |
+| `completed` | 2xx snapshot **si** `complete(fence)=true` |
+| `permanent_failure` | 4xx ; **jamais** promu `completed` |
 
-Expiration **ne garantit pas** l’arrêt du handler. Effet métier déjà commis → l’app (ou K02 **prouvé**) doit no-op ; le kit peut ré-entrer.
+`handle` `success` → `complete` ; `retry` → `retry` ; `permanent` → `failPermanent`. **Aucun** 2xx avant succès handler **et** persist `completed` **et** fencing vrai. Snapshot : statut+corps handler ; pas `Set-Cookie`/`Authorization`/secret/corps requête/jeton clair/PII.
 
-| État | HTTP | Notes |
+Séquence : inbound mail → match → GET : pas de JSON ni corps ; POST : type/taille/`readBytes` une fois → tenant config → signed : vault + `verify` + `claim` ; guest : `admitGuest` (params+meta) → `handle` → persist → HTTP. Privées : 401.
+
+## 6. Guest, `/payer`, kit / app
+
+**Cas pilote (page, pas magasin kit).** `/payer/[token]` = page publique de **commande assistée**. Jeton **opaque**, émis **serveur par le staff**, haché, borné tenant+commande+TTL, **stocké par l’app**. Le kit **ne livre pas** ce magasin. `admitGuest` reçoit `:token` dans `params`, contrôle **avant** toute donnée/action ; `ok: false` bloque. `view` (montant affiché, état non créditeur) peut passer au handler. Le jeton **ne confirme ni ne crédite** le paiement. Crédit/stock : `signed` machine **ou** session — jamais l’admission seule.
+
+Autorisation app minimale guest : entrée déclarée, tenant config, `admitGuest` ok, schéma/lecture bornée. Anti-abus : taille/timeout + politique app (honeypot, débit **si** l’app l’implémente). Origin/CORS/nonce/IP **≠** preuve. Zéro secret navigateur coffre.
+
+**`bounded` kit** : hors v1. Un jeton guest **n’acquiert pas** d’autorité paiement.
+
+| Couche | Kit (après acceptation) | App |
 |---|---|---|
-| `processing` (busy) | **non-2xx** (`admission_busy`) | Pas d’instantané succès |
-| `completed` | 2xx + snapshot rejoué | **Seul** 2xx : handler réussi **et** persist `completed` |
-| `retryable` | **non-2xx** | Reclaim possible |
-| `permanent_failure` | 4xx borné | **Jamais** promu `completed` |
-
-Classification **explicite** (descripteur / handler) : 2xx → `complete` ; 5xx / timeout / throw → `retry` ; refus métier définitif → `failPermanent`. Plafond `attempt_count` : reste `retryable` ou `permanent_failure` selon politique déclarée ; **examen humain** (ops), **pas** de DLQ kit. Snapshot rejoué : statut + corps **déjà** renvoyé par le handler, headers allowlist (`content-type`, `Idempotent-Replayed`). **Interdits** : `Set-Cookie`, `Authorization`, secrets, corps de **requête**. Ne pas stocker e-mail / IBAN / payload fournisseur brut : risques PII **à éviter explicitement** (accusé borné).
-
-Séquence dispatcher : mail inbound inchangé → match méthode+chemin public → type/taille/timeout/`readBytes` une fois → tenant candidat → (signed : vault puis `verify` ; guest : limiteur si requis + `admitGuest`) → claim si signed → `handle` → persist état → HTTP. Hors match : flux actuel, privées **401** sans identité.
-
-## 6. Guest v1, `bounded` futur, kit / app
-
-**Guest** : politique déclarée, zéro secret navigateur, Origin/CORS/nonce/`cf-connecting-ip` **≠** preuve. Aucun paiement/stock. Limiteur = **capacité** `AbuseLimiter` **vérifiable** au démarrage : `abuseLimiterRequired: true` sans binding → **fail-closed**. Le kit ne fournit pas captcha/Turnstile/IP fiable.
-
-**`bounded`** : hors v1. Si, plus tard, un jeton est émis **après** un guest, il **ne confère aucune** autorité paiement/stock. Ne pas inventer ce besoin dans les premiers lots.
-
-| Couche | Kit | App |
-|---|---|---|
-| Match, `readBytes`, claim fencing, gardes, fail-closed | oui (lots après acceptation) | — |
-| `verify` / framing fournisseur / `eventId` | callback | adaptateur (Stripe = exemple) |
-| Fiche inscription, honeypot, dédup métier | — | oui |
-| Crédit / stock | — | HMAC machine **ou** session ; idempotence **reçue** |
+| Match, `readBytes`, fencing signed, GET sans JSON | oui | — |
+| `verify` / jetons `/payer` / fiche POS | — | oui |
+| Crédit / stock | — | hors admission |
 
 | Étape | Dépend |
 |---|---|
-| `start` runtime kit | **contrat accepté** ; pas R01 ; pas K02 pour admissions simples |
-| `integrate` | preuves CI du lot runtime |
-| Exposition **paiement** | idempotence app **reçue** ou K02 **équivalent prouvé** — pas une migration K02 obligatoire pour guest/signed non financiers |
-| `publish` / version | **pas** C01 |
-
-**Q restantes.** (1) `claimStore` : table kit additive au lot runtime, D1 injecté — **recommandé** plutôt que SQL app. (2) Clé du limiteur guest : dérivée **serveur** (entrée+tenant+seau horaire), jamais IP cliente — confirmer. (3) Durée de lease / plafond d’essais : constantes du lot runtime, pas ici.
+| `start` runtime | contrat **accepté** |
+| `integrate` | CI du lot runtime |
+| Exposition paiement | idempotence app **reçue** (K02 équivalent **prouvé** si crédit) |
+| `publish` | **pas** C01 |
