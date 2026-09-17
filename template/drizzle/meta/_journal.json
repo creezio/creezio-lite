@@ -78,6 +78,13 @@
       "when": 1789494380234,
       "tag": "0010_browser_relay",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1789655000000,
+      "tag": "0011_public_ingress_claims",
+      "breakpoints": true
     }
   ]
 }
