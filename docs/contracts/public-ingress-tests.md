@@ -31,8 +31,13 @@ Doc seulement. Fixtures WH-K01 **non observées**. Oracles futurs : **kit géné
 | Collision route / `command()` publique / MCP / `lite_` | throw / 401 / 403 |
 | `admitGuest` absent **ou** panne (`unavailable`/throw) | fail-closed / refus ; **pas** de `handle` |
 | `limiter` (ou autre) ∈ `requires`, binding absent / `ready()===false` | **refus déclaration** |
-| `limiter.admit()` panne en requête | refus ; **pas** de `handle` |
-| Guest **sans** `ClaimStore` | valide (aucune persistance kit) |
+| `limiter.admit()` panne en requête | **503** ; **pas** de `handle` |
+| Guest **sans** `ClaimStore` (aucune entrée signed) | valide |
+| ≥1 entrée `signed` **sans** `claimStore` (ou sans `verify`) | **rejet déclaration** |
+| `claimStore`/`verify`/`vault`/`limiter` indisponible **en exécution** (signed) | **503** avant `handle` ; jamais 200 |
+| `handle.retry` **guest** | non-2xx ; **pas** de `claimStore.retry` |
+| `handle.retry` **signed** | `claimStore.retry(fence)` ; CAS |
+| 200 signed sans `complete(fence)===true` | **interdit** |
 | `claim`/`complete` invoqués pour guest | **interdit** |
 | Decrypt coffre **après** `verify` | **interdit** |
 | Tenant config → vault → `verify` → parse | **seule** séquence |
@@ -50,10 +55,12 @@ Doc seulement. Fixtures WH-K01 **non observées**. Oracles futurs : **kit géné
 | Concurrent `ClaimKey` | un `acquired` ; l’autre `busy` |
 | Takeover ; `complete(fence)` `false` | **pas** de 2xx obsolète |
 | `failPermanent`/`retry`/`renew` **sans** `fence.key` | **interdit** |
-| `handle` `permanent` | `failPermanent` ; 4xx ; pas `completed` |
+| `handle` `permanent` **signed** | `failPermanent` ; 4xx ; pas `completed` |
+| `handle` `permanent` **guest** | 4xx ; **pas** de fence |
 | Digest collision / autre route ou tenant | collision / autre clé |
 | Rejeu `completed` sanitizé | pas cookie/auth/jeton/PII ; **pas** `complete` |
-| Coffre / `claimStore` **signed** absent | fail-closed ou 503 |
+| Coffre / `claimStore` **signed** absent à la déclaration | **rejet déclaration** |
+| Coffre / `claimStore` **signed** panne en vol | **503** ; pas de `handle` ; jamais 200 |
 | Magasin jetons `bounded` kit / descripteur `bounded` v1 | **refus** |
 | `expectedVersion: 'none'` = replay | non |
 

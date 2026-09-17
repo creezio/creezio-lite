@@ -1,6 +1,6 @@
 # Entrées publiques — contrat générique (C01)
 
-Proposition, **pas une release**, aucun runtime livré. Base kit `0.13.1` `f41f0ed3e1d19091f364df09f1932f9f89c46a0e`. Head revu : `03b73e446651fe9be67ba5d5fc5ff2cfe84a0ea0`. WH-K01 = handoff. Fixtures d’app **non observées**.
+Proposition, **pas une release**, aucun runtime livré. **Provenance / base** kit `0.13.1` `f41f0ed3e1d19091f364df09f1932f9f89c46a0e` (`main`). WH-K01 = handoff. Fixtures d’app **non observées**.
 
 ## 1. Rejets
 
@@ -85,7 +85,7 @@ export type ClaimStore = {
 };
 export type PublicIngressBindings = {
   resolveTenant(entry: PublicIngressEntry): string;
-  verify?(input: VerifyInput): Promise<{ ok: true; eventId: string } | { ok: false }>; // exigé si une entrée signed
+  verify?(input: VerifyInput): Promise<{ ok: true; eventId: string } | { ok: false }>; // OBLIGATOIRE dès ≥1 signed
   admitGuest?(input: {
     entry: PublicIngressEntry;
     tenantId: string;
@@ -94,7 +94,7 @@ export type PublicIngressBindings = {
     rawBytes: Uint8Array; // déjà lus ; GET souvent vide ; pas de second reader
   }): Promise<{ ok: true; admission: GuestAdmission } | { ok: false }>; // exigé si une entrée guest
   handle(ctx: PublicAdmissionContext): Promise<HandleResult>;
-  claimStore?: ClaimStore; // signed seulement ; guest : aucune persistance ClaimStore
+  claimStore?: ClaimStore; // OBLIGATOIRE si ≥1 signed (comme verify) ; jamais pour guest
   limiter?: CapabilityProbe; // si 'limiter' ∈ abuse.requires
 };
 export type PublicAdmissionContext = {
@@ -108,7 +108,7 @@ export type PublicAdmissionContext = {
 };
 ```
 
-Dépendances **requises** = callbacks du kind **plus** `abuse.requires`. Absence au démarrage **ou** `ready()===false` **ou** `admit()==='unavailable'` / throw ⇒ refus déclaration ou requête, **`handle` jamais appelé**. Pas d’algorithme de limite ni IP universelle. `signed` : HMAC **ou** autre signature machine. **Exemple Stripe (app)** : `t`/`v1`, ASCII(`t`)+`0x2E`+`rawBytes`. Guest : `admitGuest` `ok: false` ou panne ⇒ pas de `handle`. Jeton de chemin ≠ Identity / `eventId`. `claimStore` abstrait, **signed seulement**. D1 additif = candidat runtime après inventaire ; pas de numéro réservé. Lease/essais = config serveur.
+Dépendances **requises** = callbacks du kind **plus** `abuse.requires`. **Dès ≥1 entrée `signed` : `verify` et `claimStore` obligatoires** — rejet de **déclaration** si l’un manque (même règle pour les deux). Guest : **pas** de `claimStore`. Absence au démarrage ⇒ rejet déclaration. **En exécution**, dépendance indisponible (`ready()===false`, `unavailable`, throw, coffre) ⇒ **503 fail-closed avant `handle`**. Jamais **200** `signed` sans persistance CAS réussie. Pas d’algorithme de limite ni IP universelle. `signed` : HMAC **ou** autre signature machine. **Exemple Stripe (app)** : `t`/`v1`, ASCII(`t`)+`0x2E`+`rawBytes`. Guest : `admitGuest` `ok: false` ou panne ⇒ pas de `handle`. Jeton de chemin ≠ Identity / `eventId`. `claimStore` abstrait. D1 additif = candidat runtime après inventaire ; pas de numéro réservé. Lease/essais = config serveur.
 
 ## 4. Tenant et séquence unique
 
@@ -122,21 +122,21 @@ Jamais de preuve **avant** le secret exigé par cette preuve. Tenant final = can
 
 ## 5. Claim signed, fencing, snapshot
 
-**Guest : aucune persistance `ClaimStore`.** `claim` / `complete` / `completed` / replay fence = **signed uniquement**.
+**Guest : aucune persistance `ClaimStore`**, même si le type TS porte `?`. `claim` / `complete` / `completed` / `claimStore.retry` = **signed uniquement**.
 
-Clé signed : `tenantId + entryId + eventId` + `payloadDigest` ; collision digest refusée. Mutations : CAS atomique `WHERE key=? AND token=? AND generation=? AND state='processing'`. Takeover : `generation+1`. `false` ⇒ **pas de 2xx**. Rejeu `completed` : renvoyer le snapshot, **ne pas** rappeler `complete` sur l’ancien fence. `claim` → `permanent_failure` / `attempts_exhausted` → **non-2xx**, pas de handler succès.
+Clé signed : `tenantId + entryId + eventId` + `payloadDigest` ; collision digest refusée. Mutations : CAS atomique `WHERE key=? AND token=? AND generation=? AND state='processing'`. Takeover : `generation+1`. `false` ⇒ **pas de 2xx**. Rejeu `completed` : renvoyer le snapshot, **ne pas** rappeler `complete` sur l’ancien fence. `claim` → `permanent_failure` / `attempts_exhausted` → **non-2xx**, pas de handler succès. **Aucun 200 signed** si `complete(fence)` n’est pas `true`.
 
 Le **timeout n’annule pas** les effets déjà commis ; l’**idempotence app est toujours requise** (K02 équivalent si crédit). Pas d’exactly-once kit.
 
 | État signed | Snapshot | HTTP |
 |---|---|---|
 | `processing` / `busy` / `retryable` / `attempts_exhausted` | aucun succès | **non-2xx** |
-| `completed` | `{ok:true, status:200\|201\|202}` | 2xx **si** persist + CAS vrai à l’écriture initiale |
+| `completed` | `{ok:true, status:200\|201\|202}` | 2xx **seulement** persist CAS vrai à l’écriture initiale |
 | `permanent_failure` | `{ok:false, status:4xx}` | 4xx ; **jamais** promu `completed` |
 
-`handle` `success` → `complete(fence)` ; `retry` → `retry(fence)` ; `permanent` → `failPermanent`. Snapshot : pas cookie / `Authorization` / secret / corps requête / jeton / PII.
+`handle` **signed** : `success` → `complete(fence)` ; `retry` → `claimStore.retry(fence)` ; `permanent` → `failPermanent`. `handle` **guest** : `success` → 2xx **sans** claim ; `retry` → **non-2xx** (client peut réessayer), **aucun** `claimStore` ; `permanent` → 4xx, **aucun** fence. Snapshot : pas cookie / `Authorization` / secret / corps requête / jeton / PII.
 
-Séquence : inbound mail → match → GET sans JSON/corps ; POST : type/taille/`readBytes` → **tenant config** → **vault si requis** → preuve (`verify`/`admitGuest`) → signed : `claim` puis `handle` puis persist ; guest : `handle` **sans** claim → HTTP. Privées : 401.
+Séquence : inbound mail → match → GET sans JSON/corps ; POST : type/taille/`readBytes` → **tenant config** → **vault si requis** → preuve (`verify`/`admitGuest`) → signed : `claim` puis `handle` puis persist CAS ; guest : `handle` **sans** claim → HTTP. Privées : 401. Dépendance manquante en vol → **503**, pas de `handle`.
 
 ## 6. Guest, `/payer`, kit / app
 
