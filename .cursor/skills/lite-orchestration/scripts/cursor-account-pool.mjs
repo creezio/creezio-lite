@@ -60,11 +60,21 @@ export function parseCredentials(raw) {
 // Invocation durcie après la recette Windows échouée (cfde3a7) : (1) avec -Command et une entrée redirigée, l’hôte Windows PowerShell consomme lui-même stdin pour
 // alimenter $input, donc [Console]::In.ReadToEnd() rend une chaîne vide ⇒ on lit $input d’abord, puis Console.In, puis le flux brut ; (2) [Console]::OutputEncoding=…
 // lève « The handle is invalid » quand l’enfant n’a pas de console visible ⇒ on n’y touche plus et on écrit les octets directement ; (3) le script passe par
-// -EncodedCommand (aucune citation de ligne de commande à interpréter). Chaque étape a son code de sortie : rien d’autre que le clair ne sort sur stdout,
+// -EncodedCommand (aucune citation de ligne de commande à interpréter) ; (4) recette f161811 : un PSModulePath hérité d’un runtime PowerShell 7 place ses modules
+// (Microsoft.PowerShell.Security 7.0.0.0) avant $PSHOME\Modules de Windows PowerShell 5.1, et ConvertTo-SecureString ne peut plus s’autocharger
+// (CouldNotAutoloadMatchingModule) ⇒ l’enfant seul reçoit un environnement sans PSModulePath, et le script remet $env:PSModulePath sur son propre $PSHOME\Modules
+// puis importe explicitement Microsoft.PowerShell.Security (étape `module_import`). Chaque étape a son code de sortie : rien d’autre que le clair ne sort sur stdout,
 // stderr est ignorée, aucune donnée dans les erreurs. Windows uniquement ; les mocks Linux ne prouvent pas DPAPI.
-export const dpapiExitStages = Object.freeze({ 3: 'stdin_empty', 4: 'stdin_format', 5: 'dpapi_unprotect', 6: 'extract', 7: 'stdout_write' });
-export const dpapiPowershellScript = [
+export const dpapiExitStages = Object.freeze({ 2: 'module_import', 3: 'stdin_empty', 4: 'stdin_format', 5: 'dpapi_unprotect', 6: 'extract', 7: 'stdout_write' });
+// Prologue commun (déchiffreur et fixture de recette) : modules résolus depuis le PSHOME de l’hôte enfant uniquement, jamais depuis un chemin hérité.
+export const dpapiModulePrologue = [
   "$ErrorActionPreference='Stop'",
+  "try { $env:PSModulePath=(Join-Path $PSHOME 'Modules'); Import-Module -Name Microsoft.PowerShell.Security -Force -ErrorAction Stop; if (-not (Get-Command ConvertTo-SecureString -ErrorAction SilentlyContinue) -or -not (Get-Command ConvertFrom-SecureString -ErrorAction SilentlyContinue)) { exit 2 } } catch { exit 2 }",
+];
+// Environnement de l’enfant : celui du parent sans PSModulePath (Windows PowerShell 5.1 reconstruit alors son chemin par défaut) ; rien d’autre n’est modifié.
+export function dpapiChildEnv(env = process.env) { const out = {}; for (const [key, value] of Object.entries(env)) if (key.toLowerCase() !== 'psmodulepath') out[key] = value; return out; }
+export const dpapiPowershellScript = [
+  ...dpapiModulePrologue,
   "$hex=''",
   "try { $hex=(@($input) | ForEach-Object { [string]$_ }) -join '' } catch { $hex='' }",
   "if (-not $hex) { try { $hex=[Console]::In.ReadToEnd() } catch { $hex='' } }",
@@ -80,9 +90,9 @@ export const dpapiPowershellScript = [
 export const dpapiEncodedCommand = Buffer.from(dpapiPowershellScript, 'utf16le').toString('base64');
 export const dpapiPowershellArgs = Object.freeze(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-InputFormat', 'Text', '-OutputFormat', 'Text', '-EncodedCommand', dpapiEncodedCommand]);
 // Exécute le déchiffreur sur une chaîne hexadécimale ; erreurs constantes par étape (stage), sans contenu : spawn, timeout, stdin_empty, stdin_format, dpapi_unprotect, extract, stdout_write, powershell_exit.
-export function runDpapiChild(hex, { spawnImpl = spawn, timeoutMs = 15_000 } = {}) {
+export function runDpapiChild(hex, { spawnImpl = spawn, timeoutMs = 15_000, env = process.env } = {}) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawnImpl('powershell.exe', [...dpapiPowershellArgs], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawnImpl('powershell.exe', [...dpapiPowershellArgs], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: dpapiChildEnv(env) });
     const out = []; let stderrBytes = 0; let failed = false;
     const fail = (code, message, extra) => { if (failed) return; failed = true; clearTimeout(timer); reject(new PoolError(code, message, extra)); };
     const timer = setTimeout(() => { try { child.kill(); } catch { /* déjà terminé */ } fail('decrypt_failed', 'Déchiffrement DPAPI interrompu (délai).', { stage: 'timeout' }); }, timeoutMs);
@@ -93,42 +103,48 @@ export function runDpapiChild(hex, { spawnImpl = spawn, timeoutMs = 15_000 } = {
       clearTimeout(timer); if (failed) return;
       if (code === 0) return resolvePromise({ clear: Buffer.concat(out).toString('utf8'), stderrBytes });
       const stage = dpapiExitStages[code] ?? 'powershell_exit';
-      const messages = { stdin_empty: 'Le déchiffreur n’a reçu aucune donnée sur son entrée standard.', stdin_format: 'Données reçues par le déchiffreur non hexadécimales (encodage ou transport altéré).', dpapi_unprotect: 'ConvertTo-SecureString a refusé la chaîne (autre utilisateur, autre session, chaîne altérée ou protection non DPAPI).', extract: 'Extraction du clair depuis la SecureString impossible.', stdout_write: 'Écriture du clair vers le tube impossible.', powershell_exit: 'PowerShell s’est terminé avec un code inattendu.' };
+      const messages = { module_import: 'Module Microsoft.PowerShell.Security introuvable ou non chargeable depuis le PSHOME de l’hôte enfant (ConvertTo/From-SecureString indisponibles).', stdin_empty: 'Le déchiffreur n’a reçu aucune donnée sur son entrée standard.', stdin_format: 'Données reçues par le déchiffreur non hexadécimales (encodage ou transport altéré).', dpapi_unprotect: 'ConvertTo-SecureString a refusé la chaîne (autre utilisateur, autre session, chaîne altérée ou protection non DPAPI).', extract: 'Extraction du clair depuis la SecureString impossible.', stdout_write: 'Écriture du clair vers le tube impossible.', powershell_exit: 'PowerShell s’est terminé avec un code inattendu.' };
       fail('decrypt_failed', messages[stage], { stage, exitCode: code, stderrBytes });
     });
     child.stdin.on('error', () => {});
     child.stdin.end(hex, 'ascii');
   });
 }
-export async function dpapiUnprotectCurrentUser(secretDpapi, { platform = process.platform, spawnImpl = spawn, timeoutMs = 15_000 } = {}) {
+export async function dpapiUnprotectCurrentUser(secretDpapi, { platform = process.platform, spawnImpl = spawn, timeoutMs = 15_000, env = process.env } = {}) {
   if (platform !== 'win32') throw new PoolError('dpapi_unavailable', 'Déchiffrement DPAPI disponible seulement sous Windows (session de l’utilisateur courant).');
   if (!isSecureStringHex(secretDpapi)) throw new PoolError('credentials_invalid', 'Chaîne SecureString hexadécimale attendue ; aucun déchiffreur lancé.', { stage: 'precheck' });
-  const { clear } = await runDpapiChild(secretDpapi, { spawnImpl, timeoutMs });
+  const { clear } = await runDpapiChild(secretDpapi, { spawnImpl, timeoutMs, env });
   return clear;
 }
 // Recette Windows sans secret : PowerShell chiffre une valeur publique connue (DPAPI CurrentUser, ConvertFrom-SecureString), puis le même déchiffreur que le pool
 // doit la restituer. Chaque échec est constant et nommé (stage) ; rien de secret n’entre en jeu. Ne prouve rien hors Windows.
 export const dpapiSelfTestMarker = 'CREEZIO-DPAPI-SELFTEST-PUBLIC-MARKER';
-export async function dpapiSelfTest({ platform = process.platform, spawnImpl = spawn, timeoutMs = 15_000 } = {}) {
-  const report = { command: 'selftest', platform, marker: dpapiSelfTestMarker, stages: [] };
+export const dpapiFixtureScript = [
+  ...dpapiModulePrologue,
+  `try { $s=ConvertTo-SecureString -String '${dpapiSelfTestMarker}' -AsPlainText -Force; $h=ConvertFrom-SecureString -SecureString $s } catch { exit 5 }`,
+  'try { $b=[System.Text.Encoding]::ASCII.GetBytes($h); $o=[Console]::OpenStandardOutput(); $o.Write($b,0,$b.Length); $o.Flush() } catch { exit 7 }',
+  'exit 0',
+].join('\n');
+export const dpapiFixtureArgs = Object.freeze(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(dpapiFixtureScript, 'utf16le').toString('base64')]);
+export async function dpapiSelfTest({ platform = process.platform, spawnImpl = spawn, timeoutMs = 15_000, env = process.env } = {}) {
+  const report = { command: 'selftest', platform, marker: dpapiSelfTestMarker, inheritedPSModulePath: Object.keys(env).some(k => k.toLowerCase() === 'psmodulepath'), childPSModulePath: 'removed_then_PSHOME_Modules', stages: [] };
   if (platform !== 'win32') return { ...report, status: 'unavailable', stage: 'platform', message: 'Recette DPAPI possible seulement sous Windows.' };
-  const fixtureScript = `$ErrorActionPreference='Stop'; $s=ConvertTo-SecureString -String '${dpapiSelfTestMarker}' -AsPlainText -Force; $h=ConvertFrom-SecureString -SecureString $s; $b=[System.Text.Encoding]::ASCII.GetBytes($h); $o=[Console]::OpenStandardOutput(); $o.Write($b,0,$b.Length); $o.Flush()`;
   const fixture = await new Promise((resolvePromise) => {
-    const child = spawnImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(fixtureScript, 'utf16le').toString('base64')], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawnImpl('powershell.exe', [...dpapiFixtureArgs], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: dpapiChildEnv(env) });
     const out = []; let done = false;
     const finish = value => { if (!done) { done = true; clearTimeout(timer); resolvePromise(value); } };
     const timer = setTimeout(() => { try { child.kill(); } catch { /* déjà terminé */ } finish({ stage: 'fixture_timeout' }); }, timeoutMs);
     child.on('error', () => finish({ stage: 'spawn' }));
     child.stdout.on('data', chunk => out.push(chunk));
     child.stderr.on('data', () => {});
-    child.on('close', code => finish(code === 0 ? { hex: Buffer.concat(out).toString('ascii').trim() } : { stage: 'fixture_exit', exitCode: code }));
+    child.on('close', code => finish(code === 0 ? { hex: Buffer.concat(out).toString('ascii').trim() } : { stage: code === 2 ? 'fixture_module_import' : code === 5 ? 'fixture_protect' : 'fixture_exit', exitCode: code }));
   });
-  if (!fixture.hex) return { ...report, status: 'unavailable', stage: fixture.stage, ...(fixture.exitCode !== undefined ? { exitCode: fixture.exitCode } : {}), message: 'PowerShell n’a pas pu produire la chaîne SecureString de recette.' };
+  if (!fixture.hex) return { ...report, status: 'unavailable', stage: fixture.stage, ...(fixture.exitCode !== undefined ? { exitCode: fixture.exitCode } : {}), message: fixture.stage === 'fixture_module_import' ? 'Module Microsoft.PowerShell.Security introuvable depuis le PSHOME de l’hôte enfant : ConvertTo/From-SecureString indisponibles.' : 'PowerShell n’a pas pu produire la chaîne SecureString de recette.' };
   report.stages.push({ stage: 'fixture', ok: true, hexLength: fixture.hex.length });
   if (!isSecureStringHex(fixture.hex)) return { ...report, status: 'unavailable', stage: 'fixture_format', message: 'La sortie de ConvertFrom-SecureString n’est pas la chaîne hexadécimale attendue.' };
   report.stages.push({ stage: 'precheck', ok: true });
   try {
-    const { clear, stderrBytes } = await runDpapiChild(fixture.hex, { spawnImpl, timeoutMs });
+    const { clear, stderrBytes } = await runDpapiChild(fixture.hex, { spawnImpl, timeoutMs, env });
     report.stages.push({ stage: 'decrypt', ok: true, stderrBytes });
     if (clear !== dpapiSelfTestMarker) return { ...report, status: 'unavailable', stage: 'compare', clearLength: clear.length, message: 'Le clair restitué diffère du marqueur public (encodage de sortie).' };
     return { ...report, status: 'ok', stage: 'done', message: 'Déchiffreur DPAPI opérationnel pour l’utilisateur courant (marqueur public restitué).' };

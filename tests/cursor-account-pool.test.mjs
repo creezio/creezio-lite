@@ -122,7 +122,17 @@ test('dpapi decryptor: SecureString hex by stdin ($input first: the -Command hos
   assert.match(script, /New-Object System\.Net\.NetworkCredential\('',\$secure\)\)\.Password/); assert.match(script, /@\(\$input\)/, 'l’hôte -Command consomme stdin dans $input : lue en premier');
   assert.match(script, /\[Console\]::In\.ReadToEnd\(\)/); assert.match(script, /OpenStandardInput\(\)/); assert.match(script, /OpenStandardOutput\(\)/);
   assert.doesNotMatch(script, /OutputEncoding/, 'jamais [Console]::OutputEncoding : « The handle is invalid » sans console visible'); assert.doesNotMatch(script, /Write-Host|Write-Error|Write-Output|Console\]::Out\.Write/, 'rien d’autre que les octets du clair sur stdout');
-  for (const [code, stage] of [[3, 'stdin_empty'], [4, 'stdin_format'], [5, 'dpapi_unprotect'], [6, 'extract'], [7, 'stdout_write']]) { assert.ok(script.includes(`exit ${code}`)); assert.equal(pool.dpapiExitStages[code], stage); }
+  for (const [code, stage] of [[2, 'module_import'], [3, 'stdin_empty'], [4, 'stdin_format'], [5, 'dpapi_unprotect'], [6, 'extract'], [7, 'stdout_write']]) { assert.ok(script.includes(`exit ${code}`)); assert.equal(pool.dpapiExitStages[code], stage); }
+  // Pollution héritée PowerShell 7 → 5.1 (recette f161811 : Microsoft.PowerShell.Security 7.0.0.0 devant $PSHOME\Modules, CouldNotAutoloadMatchingModule) : le prologue
+  // remet $env:PSModulePath sur le PSHOME de l’hôte enfant et importe explicitement le module ; déchiffreur et fixture partagent ce prologue, en tête, avant toute lecture.
+  const prologue = pool.dpapiModulePrologue.join('\n');
+  assert.ok(script.startsWith(prologue) && pool.dpapiFixtureScript.startsWith(prologue), 'même prologue en tête du déchiffreur et de la fixture');
+  assert.match(prologue, /\$env:PSModulePath=\(Join-Path \$PSHOME 'Modules'\)/); assert.match(prologue, /Import-Module -Name Microsoft\.PowerShell\.Security -Force -ErrorAction Stop/); assert.match(prologue, /Get-Command ConvertTo-SecureString/); assert.match(prologue, /Get-Command ConvertFrom-SecureString/); assert.match(prologue, /exit 2/);
+  assert.ok(script.indexOf('Import-Module') < script.indexOf('$input'), 'module résolu avant la lecture de stdin');
+  assert.match(pool.dpapiFixtureScript, /exit 5/); assert.match(pool.dpapiFixtureScript, /exit 7/); assert.equal(Buffer.from(pool.dpapiFixtureArgs.at(-1), 'base64').toString('utf16le'), pool.dpapiFixtureScript);
+  const parentEnv = { Path: 'C:\\x', PSModulePath: 'C:\\codex\\pwsh7\\Modules;C:\\Program Files\\WindowsPowerShell\\Modules', psmodulepath: 'dup', LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local', SystemRoot: 'C:\\Windows' };
+  assert.deepEqual(pool.dpapiChildEnv(parentEnv), { Path: 'C:\\x', LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local', SystemRoot: 'C:\\Windows' }, 'PSModulePath retiré (toute casse) de l’enfant seul, le reste transmis tel quel');
+  assert.equal(parentEnv.PSModulePath.startsWith('C:\\codex'), true, 'environnement parent inchangé');
   assert.equal(Buffer.from(pool.dpapiEncodedCommand, 'base64').toString('utf16le'), script, '-EncodedCommand : UTF-16LE en base64');
   assert.deepEqual([...pool.dpapiPowershellArgs], ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-InputFormat', 'Text', '-OutputFormat', 'Text', '-EncodedCommand', pool.dpapiEncodedCommand]);
   const spawned = [];
@@ -132,14 +142,15 @@ test('dpapi decryptor: SecureString hex by stdin ($input first: the -Command hos
     child.stdin.on('finish', () => { spawned.push({ command, args, options, stdin: Buffer.concat(written).toString('utf8') }); if (error) return child.emit('error', new Error('ENOENT')); if (stderr) child.stderr.write(stderr); child.stderr.end(); if (output) child.stdout.write(output); child.stdout.end(); setImmediate(() => child.emit('close', exitCode)); });
     return child;
   };
-  const clear = await pool.dpapiUnprotectCurrentUser(BLOB_A, { platform: 'win32', spawnImpl: fakeSpawn(0, KEY_A) });
+  const clear = await pool.dpapiUnprotectCurrentUser(BLOB_A, { platform: 'win32', spawnImpl: fakeSpawn(0, KEY_A), env: parentEnv });
   assert.equal(clear, KEY_A);
   assert.equal(spawned[0].command, 'powershell.exe'); assert.equal(spawned[0].stdin, BLOB_A); assert.ok(spawned[0].args.every(a => !a.includes(BLOB_A) && !a.includes(KEY_A)), 'aucun secret ni blob sur la ligne de commande');
   assert.deepEqual(spawned[0].options.stdio, ['pipe', 'pipe', 'pipe']); assert.equal(spawned[0].options.windowsHide, true); assert.deepEqual(spawned[0].args, [...pool.dpapiPowershellArgs]);
+  assert.deepEqual(spawned[0].options.env, pool.dpapiChildEnv(parentEnv)); assert.ok(!('PSModulePath' in spawned[0].options.env) && !('psmodulepath' in spawned[0].options.env), 'aucun PSModulePath hérité dans l’enfant'); assert.equal(spawned[0].options.env.SystemRoot, 'C:\\Windows');
   const failing = async spawnImpl => { try { await pool.dpapiUnprotectCurrentUser(BLOB_A, { platform: 'win32', spawnImpl }); } catch (error) { return error; } throw new Error('attendu : échec'); };
   const generic = await failing(fakeSpawn(1, '', { stderr: `Exception ${KEY_A} ${BLOB_A}` }));
   assert.equal(generic.code, 'decrypt_failed'); assert.equal(generic.stage, 'powershell_exit'); assert.equal(generic.exitCode, 1); assert.ok(generic.stderrBytes > 0); assertNoSecret(generic); assert.ok(!JSON.stringify({ ...generic, message: generic.message }).includes(BLOB_A), 'stderr jamais recopiée');
-  for (const [code, stage, pattern] of [[3, 'stdin_empty', /aucune donnée/], [4, 'stdin_format', /non hexadécimales/], [5, 'dpapi_unprotect', /ConvertTo-SecureString a refusé/], [6, 'extract', /Extraction/], [7, 'stdout_write', /Écriture/]]) {
+  for (const [code, stage, pattern] of [[2, 'module_import', /Microsoft\.PowerShell\.Security introuvable/], [3, 'stdin_empty', /aucune donnée/], [4, 'stdin_format', /non hexadécimales/], [5, 'dpapi_unprotect', /ConvertTo-SecureString a refusé/], [6, 'extract', /Extraction/], [7, 'stdout_write', /Écriture/]]) {
     const error = await failing(fakeSpawn(code, '')); assert.equal(error.code, 'decrypt_failed'); assert.equal(error.stage, stage); assert.equal(error.exitCode, code); assert.match(error.message, pattern); assertNoSecret(error);
   }
   const missing = await failing(fakeSpawn(0, '', { error: true })); assert.equal(missing.stage, 'spawn'); assert.match(missing.message, /powershell\.exe/);
@@ -151,12 +162,17 @@ test('dpapi decryptor: SecureString hex by stdin ($input first: the -Command hos
   const simulated = (behaviour) => (command, args, options) => {
     const child = new EventEmitter(); child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.kill = () => {};
     const isFixture = options.stdio[0] === 'ignore';
+    assert.ok(!Object.keys(options.env).some(k => k.toLowerCase() === 'psmodulepath'), 'fixture et déchiffreur : enfant sans PSModulePath hérité'); if (isFixture) assert.deepEqual(args, [...pool.dpapiFixtureArgs]);
     const run = () => { const [code, output] = behaviour(isFixture); if (output) child.stdout.write(output); child.stdout.end(); setImmediate(() => child.emit('close', code)); };
     if (isFixture) setImmediate(run); else { const written = []; child.stdin.on('data', c => written.push(c)); child.stdin.on('finish', () => { assert.equal(Buffer.concat(written).toString(), fixtureHex); run(); }); }
     return child;
   };
-  const good = await pool.dpapiSelfTest({ platform: 'win32', spawnImpl: simulated(isFixture => (isFixture ? [0, fixtureHex] : [0, marker])) });
-  assert.equal(good.status, 'ok'); assert.deepEqual(good.stages.map(s => s.stage), ['fixture', 'precheck', 'decrypt']); assertNoSecret(good);
+  const good = await pool.dpapiSelfTest({ platform: 'win32', spawnImpl: simulated(isFixture => (isFixture ? [0, fixtureHex] : [0, marker])), env: parentEnv });
+  assert.equal(good.status, 'ok'); assert.deepEqual(good.stages.map(s => s.stage), ['fixture', 'precheck', 'decrypt']); assert.equal(good.inheritedPSModulePath, true); assert.equal(good.childPSModulePath, 'removed_then_PSHOME_Modules'); assertNoSecret(good);
+  const shadowed = await pool.dpapiSelfTest({ platform: 'win32', spawnImpl: simulated(isFixture => (isFixture ? [2, ''] : [0, marker])), env: parentEnv });
+  assert.equal(shadowed.status, 'unavailable'); assert.equal(shadowed.stage, 'fixture_module_import'); assert.equal(shadowed.exitCode, 2); assert.match(shadowed.message, /PSHOME/);
+  const decryptShadowed = await pool.dpapiSelfTest({ platform: 'win32', spawnImpl: simulated(isFixture => (isFixture ? [0, fixtureHex] : [2, ''])), env: parentEnv });
+  assert.equal(decryptShadowed.stage, 'module_import'); assert.equal(decryptShadowed.exitCode, 2);
   const badDecrypt = await pool.dpapiSelfTest({ platform: 'win32', spawnImpl: simulated(isFixture => (isFixture ? [0, fixtureHex] : [5, ''])) });
   assert.equal(badDecrypt.status, 'unavailable'); assert.equal(badDecrypt.stage, 'dpapi_unprotect'); assert.equal(badDecrypt.exitCode, 5);
   const wrongClear = await pool.dpapiSelfTest({ platform: 'win32', spawnImpl: simulated(isFixture => (isFixture ? [0, fixtureHex] : [0, 'other'])) });
