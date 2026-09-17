@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm, mkdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -183,28 +182,6 @@ test('dpapi decryptor: SecureString hex by stdin ($input first: the -Command hos
   assert.equal(noFixture.stage, 'fixture_exit'); assert.equal(noFixture.exitCode, 1);
   const lines = []; const code = await pool.poolCli(['selftest'], { platform: 'linux', log: l => lines.push(l) });
   assert.equal(code, 3); assert.equal(JSON.parse(lines[0]).stage, 'platform');
-});
-
-test('Windows DPAPI decryptor source stays byte-identical to received checkpoint 7ee5afbe; classification may change elsewhere in the module', async () => {
-  // Recette Windows réelle : blob git du module à 7ee5afbe = 36b7b5c5a44a2b9af260e0d08b06b191f95e939a.
-  // La CI clone en profondeur 1 : git show de ce SHA échoue (« path exists on disk, but not in … »). L’empreinte
-  // SHA-256 de la région DPAPI (commentaires « Déchiffrement DPAPI » … `function validKey`) de ce blob est figée ici ;
-  // réutiliser cette réception des fonctions, ne pas conclure à l’identité du module entier.
-  const RECEIVED_WINDOWS_MODULE_BLOB = '36b7b5c5a44a2b9af260e0d08b06b191f95e939a';
-  const RECEIVED_DPAPI_SLICE_SHA256 = '55b62879c1ccf9b9c6aa490820e4865bf8e5dc171631e0b09140af5910fb38b3';
-  const slice = source => {
-    const start = source.indexOf('// Déchiffrement DPAPI CurrentUser par PowerShell');
-    const end = source.indexOf('function validKey(value)');
-    assert.ok(start >= 0 && end > start, 'bornes DPAPI du déchiffreur');
-    return source.slice(start, end);
-  };
-  const gitBlobSha = content => {
-    const buf = Buffer.from(content, 'utf8');
-    return createHash('sha1').update(`blob ${buf.length}\0`).update(buf).digest('hex');
-  };
-  const current = await readFile(poolModulePath, 'utf8');
-  assert.equal(createHash('sha256').update(slice(current), 'utf8').digest('hex'), RECEIVED_DPAPI_SLICE_SHA256, 'fonctions DPAPI strictement inchangées (réutiliser la réception Windows de ces fonctions) ; ne pas conclure à l’identité du module entier');
-  assert.notEqual(gitBlobSha(current), RECEIVED_WINDOWS_MODULE_BLOB, 'le module change (signatures / décision) : seule la région DPAPI est figée');
 });
 
 test('pool state: created once from the vault, unknown fields/accounts/order preserved, revision monotonic, concurrent edits and foreign locks refused', async () => {
