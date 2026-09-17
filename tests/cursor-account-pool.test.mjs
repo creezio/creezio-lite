@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm, mkdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -38,10 +38,11 @@ const rejected = (status, providerCode, providerMessage, extra = {}) => ({ outco
 const INCLUDED = "You've used all included Cloud Agent usage: Enable on-demand usage to continue using Cloud Agents";
 const PLAN = 'Cloud Agent is not available for free users. Please upgrade to Pro.';
 const HARD_LIMIT = 'You need to increase your hard limit. Background Agent requires at least $2 remaining until your hard limit. Manage it at https://www.cursor.com/dashboard?tab=settings.';
+const HARD_LIMIT_USAGE_PRICING = 'Usage-based pricing required. Background Agent requires at least $2 remaining until your hard limit. Enable usage-based pricing and set a Spend Limit at https://www.cursor.com/dashboard?tab=settings.';
 async function withTemp(prefix, run) { const temp = await mkdtemp(join(tmpdir(), prefix)); try { return await run(temp); } finally { await rm(temp, { recursive: true, force: true }); } }
 function assertNoSecret(value) {
   const text = (typeof value === 'string' ? value : JSON.stringify(value)) + (value instanceof Error ? `${value.message}\n${value.stack}` : '');
-  for (const marker of [KEY_A, KEY_B, KEY_C, KEY_ENV, BLOB_A, BLOB_B, BLOB_C, MESSAGE_MARKER, PROMPT_MARKER, INCLUDED, PLAN, HARD_LIMIT, 'Bearer ']) assert.ok(!text.includes(marker), `fuite de « ${marker.slice(0, 24)}… » dans ${text.slice(0, 200)}`);
+  for (const marker of [KEY_A, KEY_B, KEY_C, KEY_ENV, BLOB_A, BLOB_B, BLOB_C, MESSAGE_MARKER, PROMPT_MARKER, INCLUDED, PLAN, HARD_LIMIT, HARD_LIMIT_USAGE_PRICING, 'Bearer ']) assert.ok(!text.includes(marker), `fuite de « ${marker.slice(0, 24)}… » dans ${text.slice(0, 200)}`);
 }
 
 // Transport simulé : chaque route reçoit la requête (dont l’en-tête Authorization) ; aucun réseau.
@@ -183,6 +184,20 @@ test('dpapi decryptor: SecureString hex by stdin ($input first: the -Command hos
   assert.equal(code, 3); assert.equal(JSON.parse(lines[0]).stage, 'platform');
 });
 
+test('Windows DPAPI decryptor source stays byte-identical to received checkpoint 7ee5afbe; classification may change elsewhere in the module', async () => {
+  const slice = source => {
+    const start = source.indexOf('// Déchiffrement DPAPI CurrentUser par PowerShell');
+    const end = source.indexOf('function validKey(value)');
+    assert.ok(start >= 0 && end > start, 'bornes DPAPI du déchiffreur');
+    return source.slice(start, end);
+  };
+  const current = await readFile(poolModulePath, 'utf8');
+  const baseline = spawnSync('git', ['show', '7ee5afbe14a2d7229c76c7c1b91d3cde9513e939:.cursor/skills/lite-orchestration/scripts/cursor-account-pool.mjs'], { encoding: 'utf8', cwd: root, maxBuffer: 4_000_000 });
+  assert.equal(baseline.status, 0, baseline.stderr);
+  assert.equal(slice(current), slice(baseline.stdout), 'fonctions DPAPI strictement inchangées (réutiliser la réception Windows de ces fonctions) ; ne pas conclure à l’identité du module entier');
+  assert.notEqual(current, baseline.stdout, 'le module change (signatures / décision) : seule la région DPAPI est figée');
+});
+
 test('pool state: created once from the vault, unknown fields/accounts/order preserved, revision monotonic, concurrent edits and foreign locks refused', async () => {
   await withTemp('lite-pool-state-', async (temp) => {
     const paths = pool.poolPaths(join(temp, 'credentials.json'));
@@ -250,6 +265,8 @@ test('classification: exact provider signatures only; generic 429/402/403/5xx/ne
   assert.equal(pool.classifyResult({ callKind: 'create', modelId: 'claude-fable-5-1', at, result: rejected(403, 'plan_required', PLAN) }).classification, 'plan_required');
   const hard = pool.classifyResult({ callKind: 'create', modelId: 'claude-fable-5-1', at, result: rejected(400, 'usage_limit_exceeded', HARD_LIMIT) });
   assert.equal(hard.classification, 'hard_limit_start_refused'); assert.equal(hard.httpStatus, 400);
+  const usagePricing = pool.classifyResult({ callKind: 'create', modelId: 'claude-fable-5-1', at, result: rejected(400, 'usage_limit_exceeded', HARD_LIMIT_USAGE_PRICING) });
+  assert.equal(usagePricing.classification, 'hard_limit_start_refused'); assert.equal(usagePricing.messageMatched, true);
   const generic = [
     rejected(429, 'rate_limit_exceeded', 'Too many requests ' + MESSAGE_MARKER),
     rejected(429, 'rate_limit_exceeded', INCLUDED.replace('all', 'most')),
@@ -259,6 +276,8 @@ test('classification: exact provider signatures only; generic 429/402/403/5xx/ne
     rejected(403, 'forbidden', MESSAGE_MARKER),
     rejected(403, 'plan_required', PLAN + ' Really.'),
     rejected(400, 'usage_limit_exceeded', HARD_LIMIT.replace('$2', '$5')),
+    rejected(400, 'usage_limit_exceeded', HARD_LIMIT_USAGE_PRICING.replace('$2', '$5')),
+    rejected(400, 'usage_limit_exceeded', HARD_LIMIT_USAGE_PRICING.replace('Enable usage-based pricing and set a Spend Limit', 'Please set a Spend Limit')),
     rejected(400, 'bad_request', MESSAGE_MARKER),
     rejected(503, undefined, MESSAGE_MARKER),
     { outcome: 'unavailable', reason: 'network', delivery: 'unknown' },
@@ -293,6 +312,12 @@ test('evidence effects: included-usage marks only the called pool exhausted, pla
   assert.equal(state.accounts[1].evidence, 'not-an-array'); assert.equal(state.accounts[1].lastEvidence.classification, 'hard_limit_start_refused');
   assert.deepEqual(state.accounts[1].modelPools, { custom: 'probe_passed_balance_unknown', standard: 'recheck_required' }, 'plafond de dépenses : aucune inférence de solde, pools inchangés'); assert.equal(state.accounts[1].status, 'active');
   assert.deepEqual(state.accounts[1].startBlock, { at, reason: 'hard_limit_start_refused', callKind: 'create', modelId: 'claude-fable-5-1', httpStatus: 400, providerCode: 'usage_limit_exceeded' }, 'nouveaux départs bloqués jusqu’à validation explicite');
+  // Variante exacte « Usage-based pricing required… » : même startBlock, custom/standard inchangés.
+  const priced = stateFixture([account('acct-p')]);
+  pool.applyEvidence(priced, 'acct-p', pool.classifyResult({ callKind: 'create', modelId: 'claude-fable-5-1', at, result: rejected(400, 'usage_limit_exceeded', HARD_LIMIT_USAGE_PRICING) }));
+  assert.equal(priced.accounts[0].lastEvidence.classification, 'hard_limit_start_refused');
+  assert.deepEqual(priced.accounts[0].modelPools, { custom: 'probe_passed_balance_unknown', standard: 'recheck_required' });
+  assert.equal(priced.accounts[0].status, 'active'); assert.equal(priced.accounts[0].startBlock.reason, 'hard_limit_start_refused');
   assert.equal(state.accounts[1].lastRefusalAt, at); assert.ok(pool.startBlocked(state.accounts[1]));
   pool.applyEvidence(state, 'acct-b', pool.classifyResult({ callKind: 'run', modelId: 'claude-fable-5-1', at: '2026-09-16T12:30:00.000Z', result: rejected(503, undefined, MESSAGE_MARKER) }));
   assert.deepEqual(state.accounts[1].modelPools, { custom: 'probe_passed_balance_unknown', standard: 'recheck_required' }); assert.equal(state.accounts[1].status, 'active'); assert.equal(state.accounts[1].lastRefusalAt, '2026-09-16T12:30:00.000Z', 'tout refus daté est retenu');
@@ -380,9 +405,14 @@ test('decision: same model on the first eligible premium account in configured o
   const relaxedProven = allConfirmed(); relaxedProven.routingPolicy.requireStandardValidation = false; relaxedProven.accounts[2].standardProof = { at: '2026-09-16T10:00:00.000Z', modelId: 'grok-4.6', kind: 'run_accepted' };
   decision = route(relaxedProven); assert.equal(decision.status, 'exception'); assert.ok(decision.proof && decision.proof.at === '2026-09-16T10:00:00.000Z', 'exception seulement avec une preuve réelle');
 
-  // Sélection standard explicite à l’attribution : route sur le pool standard (inactif réutilisable), sans exception ni preuve préalable.
+  // Sélection standard explicite à l’attribution : le choix automatique exige une preuve d’accès valable ; recheck_required n’est pas choisi en silence.
   decision = pool.decide(allConfirmed(), { selection: grok, now });
-  assert.equal(decision.status, 'route'); assert.equal(decision.pool, 'standard'); assert.equal(decision.accountId, 'acct-a'); assert.equal(decision.selection, 'initial');
+  assert.equal(decision.status, 'blocked'); assert.equal(decision.reason, 'standard_access_unproven'); assert.equal(decision.bootstrap, 'explicit_account');
+  assert.match(decision.nextAction, /--select grok --account/); assert.match(decision.nextAction, /recheck_required n’est jamais choisie en silence/);
+  assert.deepEqual(decision.proofStatus, { 'acct-a': 'no_proof', 'acct-c': 'no_proof' });
+  const grokProven = allConfirmed(); grokProven.accounts[2].standardProof = { at: '2026-09-16T10:00:00.000Z', modelId: 'grok-4.6', kind: 'run_accepted' };
+  decision = pool.decide(grokProven, { selection: grok, now });
+  assert.equal(decision.status, 'route'); assert.equal(decision.pool, 'standard'); assert.equal(decision.accountId, 'acct-c'); assert.equal(decision.selection, 'initial'); assert.equal(decision.proof.modelId, 'grok-4.6');
   const noStandard = stateFixture([account('acct-a', { modelPools: { custom: 'probe_passed_balance_unknown', standard: 'exhaustion_reported' } })]);
   assert.equal(pool.decide(noStandard, { selection: grok, now }).reason, 'no_standard_account');
   assert.throws(() => pool.decide(base(), { selection: {} }), error => error.code === 'selection_invalid');
@@ -427,15 +457,44 @@ test('standard proof is bound to account, model and current state: refusal, hard
   // Un compte bloqué n’est jamais choisi automatiquement, ni pour custom ni pour standard ; l’ordre configuré est respecté pour le suivant.
   const premium = stateFixture([account('acct-a', { startBlock: { at: T0, reason: 'hard_limit_start_refused' } }), account('acct-b')]);
   assert.equal(route(premium).accountId, 'acct-b');
-  assert.equal(pool.decide(premium, { selection: grok, now }).accountId, 'acct-b');
+  const grokSilent = pool.decide(premium, { selection: grok, now });
+  assert.equal(grokSilent.status, 'blocked'); assert.equal(grokSilent.reason, 'standard_access_unproven'); assert.equal(grokSilent.bootstrap, 'explicit_account'); assert.equal(grokSilent.accountId, undefined);
   const onlyBlocked = stateFixture([account('acct-a', { startBlock: { at: T0, reason: 'hard_limit_start_refused' } })]);
-  d = route(onlyBlocked); assert.equal(d.status, 'blocked'); assert.equal(d.reason, 'custom_availability_unknown'); assert.deepEqual(d.startBlocked, ['acct-a']); assert.match(d.nextAction, /validation explicite/);
+  d = route(onlyBlocked); assert.equal(d.status, 'blocked'); assert.equal(d.reason, 'no_standard_account'); assert.deepEqual(d.startBlocked, ['acct-a']); assert.deepEqual(d.startRefused, ['acct-a']); assert.deepEqual(d.unavailableForStart, ['acct-a']); assert.match(d.nextAction, /indisponibles pour un départ/);
   d = pool.decide(onlyBlocked, { selection: grok, now }); assert.equal(d.reason, 'no_standard_account'); assert.deepEqual(d.startBlocked, ['acct-a']);
   // included_usage_exhausted sur custom date le passage du standard en recheck_required.
   const dated = stateFixture([account('acct-a', { modelPools: { custom: 'probe_passed_balance_unknown', standard: 'probe_passed_balance_unknown' }, standardProof: { at: proofAt, modelId: 'grok-4.6', kind: 'run_accepted' } })]);
   pool.applyEvidence(dated, 'acct-a', pool.classifyResult({ callKind: 'create', modelId: 'claude-fable-5-1', at: '2026-09-16T11:00:00.000Z', result: rejected(429, 'rate_limit_exceeded', INCLUDED) }));
   assert.equal(dated.accounts[0].standardRecheckAt, '2026-09-16T11:00:00.000Z'); assert.equal(dated.accounts[0].modelPools.standard, 'recheck_required'); assert.equal(pool.standardProofStatus(dated.accounts[0], 'grok-4.6', nowMs, maxAge).reason, 'invalidated_included_usage_exhausted');
   const summary = pool.summarizeAccount(onlyBlocked.accounts[0]); assert.deepEqual(summary.startBlock, { at: T0, reason: 'hard_limit_start_refused', callKind: null }); assert.equal(summary.lastRefusalAt, null);
+});
+
+test('poolrev7: hard_limit_start_refused counts as unavailable-for-start without converting custom; unknown without attested block stays blocked', () => {
+  const route = state => pool.decide(state, { selection: fable, fallbackSelection: grok, now });
+  const exhausted = (id, extra = {}) => account(id, { status: 'inactive', inactiveReason: 'included_usage_exhausted', modelPools: { custom: 'exhaustion_reported', standard: 'recheck_required' }, ...extra });
+  const poolrev7 = stateFixture([
+    exhausted('acct-a'),
+    exhausted('acct-b'),
+    account('acct-c', { modelPools: { custom: 'recheck_required', standard: 'recheck_required' }, startBlock: { at: T0, reason: 'hard_limit_start_refused', callKind: 'create' } }),
+    exhausted('reserve1', { modelPools: { custom: 'exhaustion_reported', standard: 'probe_passed_balance_unknown' }, standardProof: { at: '2026-09-16T10:00:00.000Z', modelId: 'grok-4.6', kind: 'run_accepted' } }),
+  ]);
+  let d = route(poolrev7);
+  assert.equal(d.status, 'exception'); assert.equal(d.accountId, 'reserve1'); assert.equal(d.modelId, 'grok-4.6'); assert.equal(d.selection, 'fallback');
+  assert.deepEqual(d.confirmed, ['acct-a', 'acct-b', 'reserve1']);
+  assert.deepEqual(d.startRefused, ['acct-c']);
+  assert.deepEqual(d.unavailableForStart, ['acct-a', 'acct-b', 'acct-c', 'reserve1']);
+  assert.deepEqual(d.unavailableForStartReasons, { 'acct-a': 'exhaustion_reported', 'acct-b': 'exhaustion_reported', 'acct-c': 'hard_limit_start_refused', 'reserve1': 'exhaustion_reported' });
+  assert.equal(poolrev7.accounts.find(a => a.id === 'acct-c').modelPools.custom, 'recheck_required', 'custom non converti en exhausted ; plafond ≠ solde');
+  assert.ok(pool.startBlocked(poolrev7.accounts.find(a => a.id === 'acct-c')));
+  assert.notEqual(d.accountId, 'acct-c', 'compte bloqué exclu de toute cible');
+  const unknown = stateFixture([
+    exhausted('acct-a'),
+    account('acct-c', { status: 'inactive', inactiveReason: 'manual', modelPools: { custom: 'recheck_required', standard: 'recheck_required' } }),
+    exhausted('reserve1', { modelPools: { custom: 'exhaustion_reported', standard: 'probe_passed_balance_unknown' }, standardProof: { at: '2026-09-16T10:00:00.000Z', modelId: 'grok-4.6', kind: 'run_accepted' } }),
+  ]);
+  d = route(unknown);
+  assert.equal(d.status, 'blocked'); assert.equal(d.reason, 'custom_availability_unknown');
+  assert.deepEqual(d.unknown, ['acct-c']); assert.notEqual(d.accountId, 'reserve1');
 });
 
 test('openAccountPool: absent without a vault, explicit missing file refused, then keys on demand plus read/decide/record under the lock', async () => {
@@ -548,7 +607,11 @@ test('launch in pool mode: deterministic account in configured order, owner atta
     assert.equal((await agents.loadRegistry(registryFile)).missions.M2.state, 'failed');
     const silentRetry = recorder({});
     const notRetried = await agents.launch({ ...base, mission: 'M2', ref: 'agents/M2', fetchImpl: silentRetry.fetchImpl });
-    assert.equal(notRetried.status, 'blocked'); assert.equal(notRetried.reason, 'custom_availability_unknown'); assert.deepEqual(notRetried.decision.startBlocked, ['acct-c']); assert.deepEqual(notRetried.decision.unknown, ['acct-c']); assert.match(notRetried.nextAction, /hard_limit_start_refused/); assert.equal(silentRetry.calls.length, 0, 'aucun appel, aucune relance automatique sur un compte bloqué');
+    assert.equal(notRetried.status, 'blocked'); assert.equal(notRetried.reason, 'standard_access_unproven');
+    assert.deepEqual(notRetried.decision.startBlocked, ['acct-c']); assert.deepEqual(notRetried.decision.confirmed, ['acct-a', 'acct-b']);
+    assert.deepEqual(notRetried.decision.startRefused, ['acct-c']); assert.deepEqual(notRetried.decision.unavailableForStart, ['acct-a', 'acct-b', 'acct-c']);
+    assert.deepEqual(notRetried.decision.unavailableForStartReasons, { 'acct-a': 'exhaustion_reported', 'acct-b': 'exhaustion_reported', 'acct-c': 'hard_limit_start_refused' });
+    assert.equal(notRetried.decision.unknown, undefined); assert.match(notRetried.nextAction, /hard_limit_start_refused/); assert.equal(silentRetry.calls.length, 0, 'aucun appel, aucune relance automatique sur un compte bloqué');
     assert.equal((await agents.accounts({ config, access })).accounts.find(x => x.id === 'acct-c').startBlock.reason, 'hard_limit_start_refused');
     // Validation explicite (--account) : le départ est tenté ; un refus générique ne lève pas le blocage et n’infère rien.
     const nearMiss = recorder({ 'GET /v1/models': catalog, 'POST /v1/agents': () => providerError(429, 'rate_limit_exceeded', 'Too many requests ' + MESSAGE_MARKER), [`GET /v1/agents/${M2}`]: () => providerError(404, 'not_found', '') });
@@ -570,7 +633,7 @@ test('launch in pool mode: deterministic account in configured order, owner atta
         assert.equal((await agents.launch({ ...base, mission: 'M2', ref: 'agents/M2', account: 'acct-c', fetchImpl: r.fetchImpl })).status, 'deduplicated', 'aucun POST tant que non résolu');
         assert.equal(r.posts().length, 1, 'un seul POST malgré timeout + 404 répétés + reconcile répétés');
         const attested = await agents.reconcile({ mission: 'M2', confirmAbsent: true, registryFile, access, fetchImpl: r.fetchImpl });
-        assert.equal(attested.status, 'not_created'); assert.equal(attested.attested, true); assert.equal(attested.delivery.state, 'attested_absent'); assert.match(attested.nextAction, /launch autorisé/); assert.match(attested.nextAction, /attestée par l’orchestrateur/); assert.equal(r.posts().length, 1);
+        assert.equal(attested.status, 'not_created'); assert.equal(attested.attested, true); assert.equal(attested.delivery.state, 'attested_absent'); assert.equal(attested.delivery.attestationKind, 'unverified_declaration'); assert.match(attested.nextAction, /launch autorisé/); assert.match(attested.nextAction, /attestée par l’orchestrateur/); assert.equal(r.posts().length, 1);
       } else { assert.ok(['failed', 'not_created'].includes(state), `refus explicite ⇒ ${state}`); const e = (await agents.loadRegistry(registryFile)).missions.M2; if (state === 'not_created') assert.equal(e.delivery.state, 'refused', 'refus explicite avant création, distinct d’une livraison inconnue'); }
     }
     // Plan manquant (403 exact) ⇒ deux pools indisponibles.
@@ -867,6 +930,10 @@ test('after an explicitly failed successor, a re-eligible predecessor owner resu
     assert.equal(blockedOwner.reason, 'predecessor_owner_unavailable'); assert.equal(silent.calls.length, 0); assert.equal((await entryOf()).agentId, R1b, 'entrée inchangée');
     // Propriétaire réactivé (décision humaine hors transport) mais en startBlock : reprise seulement par --account explicite.
     await reactivate('acct-a'); assert.equal((await accountOf('acct-a')).status, 'active');
+    const unknownElig = await agents.followup({ mission: 'R1', registryFile, promptText: 'x', access, fetchImpl: silent.fetchImpl });
+    assert.equal(unknownElig.status, 'blocked'); assert.equal(unknownElig.reason, 'predecessor_owner_eligibility_unknown');
+    assert.match(unknownElig.nextAction, /--account acct-a/); assert.match(unknownElig.nextAction, /recheck_required|éligibilité inconnue/);
+    assert.equal(silent.calls.length, 0, 'recheck_required : aucun POST automatique'); assert.equal((await entryOf()).agentId, R1b, 'entrée inchangée');
     await access.pool.record('acct-a', access.pool.classify({ callKind: 'run', modelId: 'claude-fable-5-1', result: rejected(400, 'usage_limit_exceeded', HARD_LIMIT) }));
     const capped = await agents.followup({ mission: 'R1', registryFile, promptText: 'x', access, fetchImpl: silent.fetchImpl });
     assert.equal(capped.status, 'blocked'); assert.equal(capped.reason, 'predecessor_owner_start_blocked'); assert.match(capped.nextAction, /--account acct-a/); assert.equal(silent.calls.length, 0); assert.equal((await entryOf()).agentId, R1b);

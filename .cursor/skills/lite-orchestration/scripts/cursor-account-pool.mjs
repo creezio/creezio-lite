@@ -26,6 +26,7 @@ export const providerSignatures = Object.freeze([
   { classification: 'included_usage_exhausted', httpStatus: 429, providerCode: 'rate_limit_exceeded', message: "You've used all included Cloud Agent usage: Enable on-demand usage to continue using Cloud Agents" },
   { classification: 'plan_required', httpStatus: 403, providerCode: 'plan_required', message: 'Cloud Agent is not available for free users. Please upgrade to Pro.' },
   { classification: 'hard_limit_start_refused', httpStatus: 400, providerCode: 'usage_limit_exceeded', message: 'You need to increase your hard limit. Background Agent requires at least $2 remaining until your hard limit. Manage it at https://www.cursor.com/dashboard?tab=settings.' },
+  { classification: 'hard_limit_start_refused', httpStatus: 400, providerCode: 'usage_limit_exceeded', message: 'Usage-based pricing required. Background Agent requires at least $2 remaining until your hard limit. Enable usage-based pricing and set a Spend Limit at https://www.cursor.com/dashboard?tab=settings.' },
 ]);
 
 // Emplacements : CURSOR_CREDENTIALS_FILE sinon %LOCALAPPDATA%/Creezio/cursor/credentials.json ; état et verrou dans le même dossier (un coffre par utilisateur, jamais par application).
@@ -304,6 +305,14 @@ export function summarizeAccount(account) {
   return { id: account.id, status: account.status ?? 'active', inactiveReason: account.inactiveReason ?? null, modelPools: { custom: account.modelPools?.custom ?? null, standard: account.modelPools?.standard ?? null }, startBlock: account.startBlock ? { at: account.startBlock.at, reason: account.startBlock.reason, callKind: account.startBlock.callKind ?? null } : null, lastRefusalAt: account.lastRefusalAt ?? null, standardProof: account.standardProof ? { at: account.standardProof.at, modelId: account.standardProof.modelId, kind: account.standardProof.kind, ...(account.standardProof.invalidatedBy ? { invalidatedBy: account.standardProof.invalidatedBy } : {}) } : null, lastEvidence: account.lastEvidence ? { at: account.lastEvidence.at, callKind: account.lastEvidence.callKind, classification: account.lastEvidence.classification, ...(account.lastEvidence.httpStatus ? { httpStatus: account.lastEvidence.httpStatus } : {}), ...(account.lastEvidence.providerCode ? { providerCode: account.lastEvidence.providerCode } : {}) } : null };
 }
 export const startBlocked = account => Boolean(account?.startBlock && typeof account.startBlock === 'object');
+export const hardLimitStartRefused = account => startBlocked(account) && account.startBlock?.reason === 'hard_limit_start_refused';
+export const customConfirmedUnavailable = account => confirmedUnavailable.has(account?.modelPools?.custom);
+export const unavailableForStart = account => customConfirmedUnavailable(account) || hardLimitStartRefused(account);
+export function unavailableForStartReason(account) {
+  if (customConfirmedUnavailable(account)) return account.modelPools.custom;
+  if (hardLimitStartRefused(account)) return 'hard_limit_start_refused';
+  return null;
+}
 export function summarizeState(state) { return { revision: state.revision, updatedAt: state.updatedAt, activeAccountId: state.activeAccountId ?? null, order: orderedAccounts(state).map(a => a.id), routingPolicy: { ...defaultRoutingPolicy, ...(state.routingPolicy ?? {}) }, accounts: orderedAccounts(state).map(summarizeAccount) }; }
 
 // Ordre configuré : priorityAccountIds, puis order, puis les comptes restants dans l’ordre du fichier. Aucun reclassement selon l’état.
@@ -331,7 +340,8 @@ export function standardProofStatus(account, modelId, nowMs, maxAgeMs) {
   return after('lastRefusalAt', 'refusal_after_proof') ?? after('standardRecheckAt', 'recheck_after_proof') ?? after('inactiveAt', 'inactive_after_proof') ?? { valid: true, reason: null, proof: { at: proof.at, modelId: proof.modelId, kind: proof.kind, ageMs: age } };
 }
 // Décision déterministe. selection = {key, modelId, params} choisie à l’attribution ; fallbackSelection = entrée grok du catalogue (ou null).
-// route : même sélection sur le premier compte éligible de l’ordre ; exception : tous les comptes premium confirmés indisponibles ET une preuve
+// route : même sélection sur le premier compte éligible de l’ordre (standard initial : preuve d’accès valable exigée) ; exception : tous les comptes
+// premium indisponibles pour un départ (épuisement/plan ou startBlock hard_limit_start_refused avéré, sans convertir custom) ET une preuve
 // datée d’accès réel standard (jamais GET /models) ; blocked : explication honnête et action explicite, aucune sonde payante, jamais Composer.
 export function decide(state, { selection, fallbackSelection = null, excludeAccountIds = [], now = isoNow } = {}) {
   if (!selection || typeof selection.modelId !== 'string') throw new PoolError('selection_invalid', 'Sélection {modelId} requise.');
@@ -351,32 +361,40 @@ export function decide(state, { selection, fallbackSelection = null, excludeAcco
   const startBlockedIds = all.filter(a => !startAllowed(a)).map(a => a.id);
   const startBlockHint = startBlockedIds.length ? ` Départs bloqués après refus de plafond (hard_limit_start_refused) : ${startBlockedIds.join(', ')} ; validation explicite requise (plafond relevé manuellement puis « --account <id> »), aucun solde inféré.` : '';
   if (pool === 'standard') {
-    const eligible = candidates.find(standardEligible);
-    if (eligible) return { status: 'route', pool, accountId: eligible.id, modelId: selection.modelId, selection: 'initial', accounts };
-    return blocked('no_standard_account', `Aucun compte éligible au pool standard dans l’ordre configuré ; réexaminer manuellement les comptes après vérification de leur accès.${startBlockHint}`, { startBlocked: startBlockedIds });
+    const nowMs = Date.parse(now()); const maxAgeMs = Math.max(1, Number(policy.standardProofMaxAgeHours) || 24) * 3_600_000;
+    const proofs = candidates.filter(standardEligible).map(a => ({ account: a, ...standardProofStatus(a, selection.modelId, nowMs, maxAgeMs) }));
+    const proven = proofs.find(c => c.valid);
+    if (proven) return { status: 'route', pool, accountId: proven.account.id, modelId: selection.modelId, selection: 'initial', proof: proven.proof, accounts };
+    const proofStatus = Object.fromEntries(proofs.map(c => [c.account.id, c.reason]));
+    const standardCandidates = proofs.map(c => c.account.id);
+    if (!standardCandidates.length) return blocked('no_standard_account', `Aucun compte éligible au pool standard dans l’ordre configuré ; réexaminer manuellement les comptes après vérification de leur accès.${startBlockHint}`, { startBlocked: startBlockedIds });
+    return blocked('standard_access_unproven', `Sélection standard initiale ${selection.modelId} : aucun compte avec preuve d’accès valable (< ${Math.round(maxAgeMs / 3_600_000)} h, pool standard probe_passed_balance_unknown). Une réserve recheck_required n’est jamais choisie en silence (${proofs.map(c => `${c.account.id} (${c.reason})`).join(', ')}). Amorçage unique explicitement autorisé : « --select grok --account <id> » (décision humaine, coût réel), distinct du choix automatique ; GET /models n’est pas une preuve ; aucune sonde automatique.${startBlockHint}`, { startBlocked: startBlockedIds, standardCandidates, proofStatus, requireStandardValidation: 'always', bootstrap: 'explicit_account' });
   }
   const customEligible = a => startAllowed(a) && a.status !== 'inactive' && !confirmedUnavailable.has(a.modelPools?.custom);
   const eligible = candidates.find(customEligible);
   if (eligible) return { status: 'route', pool, accountId: eligible.id, modelId: selection.modelId, selection: 'initial', accounts };
   if (all.some(a => excluded.has(a.id) && customEligible(a))) return blocked('only_excluded_account_eligible', 'Seul le compte exclu (propriétaire actuel) reste éligible : reprendre le même agent (followup), pas un successeur.');
-  const confirmed = all.filter(a => confirmedUnavailable.has(a.modelPools?.custom)).map(a => a.id);
-  const unknown = all.filter(a => !confirmedUnavailable.has(a.modelPools?.custom)).map(a => a.id);
-  if (unknown.length) return blocked('custom_availability_unknown', `Comptes premium sans indisponibilité confirmée mais non éligibles (inactifs pour une autre raison, départ bloqué ou état inconnu) : ${unknown.join(', ')}. Vérifier manuellement et réactiver dans pool-state.json ; aucun repli tant qu’un doute subsiste.${startBlockHint}`, { confirmed, unknown, startBlocked: startBlockedIds });
-  if (policy.fallbackWhen !== 'all_custom_accounts_confirmed_unavailable') return blocked('fallback_policy_disabled', 'Tous les comptes premium sont confirmés indisponibles et routingPolicy.fallbackWhen interdit le repli : attendre le rétablissement (on-demand ou plan) ; aucun autre modèle.', { confirmed });
+  const confirmed = all.filter(customConfirmedUnavailable).map(a => a.id);
+  const startRefused = all.filter(hardLimitStartRefused).map(a => a.id);
+  const unknown = all.filter(a => !unavailableForStart(a)).map(a => a.id);
+  const startUnavailableIds = all.filter(unavailableForStart).map(a => a.id);
+  const startUnavailableReasons = Object.fromEntries(all.filter(unavailableForStart).map(a => [a.id, unavailableForStartReason(a)]));
+  if (unknown.length) return blocked('custom_availability_unknown', `Comptes premium sans indisponibilité confirmée mais non éligibles (inactifs pour une autre raison, départ bloqué sans hard_limit_start_refused avéré, ou état inconnu) : ${unknown.join(', ')}. Vérifier manuellement et réactiver dans pool-state.json ; aucun repli tant qu’un doute subsiste.${startBlockHint}`, { confirmed, unknown, startBlocked: startBlockedIds, startRefused, unavailableForStart: startUnavailableIds, unavailableForStartReasons: startUnavailableReasons });
+  if (policy.fallbackWhen !== 'all_custom_accounts_confirmed_unavailable') return blocked('fallback_policy_disabled', 'Tous les comptes premium sont confirmés indisponibles et routingPolicy.fallbackWhen interdit le repli : attendre le rétablissement (on-demand ou plan) ; aucun autre modèle.', { confirmed, startRefused, unavailableForStart: startUnavailableIds, unavailableForStartReasons: startUnavailableReasons });
   const fallbackModel = policy.fallbackModel;
   const fallbackValid = policy.neverFallbackToComposer === true && fallbackModel === FALLBACK_MODEL && !composerPattern.test(fallbackModel) && fallbackSelection && fallbackSelection.modelId === fallbackModel && !composerPattern.test(fallbackSelection.modelId) && poolFor(fallbackModel) === 'standard';
-  if (!fallbackValid) return blocked('fallback_model_forbidden', `Repli autorisé uniquement vers ${FALLBACK_MODEL} déclaré dans cursor-model.json, jamais Composer ; aucune sélection de repli valide.`, { confirmed });
+  if (!fallbackValid) return blocked('fallback_model_forbidden', `Repli autorisé uniquement vers ${FALLBACK_MODEL} déclaré dans cursor-model.json, jamais Composer ; aucune sélection de repli valide.`, { confirmed, startRefused, unavailableForStart: startUnavailableIds });
   const standardCandidates = candidates.filter(standardEligible);
-  if (!standardCandidates.length) return blocked('no_standard_account', `Tous les comptes premium sont confirmés indisponibles et aucun compte n’est éligible au pool standard ; attendre le rétablissement, aucun autre modèle.${startBlockHint}`, { confirmed, startBlocked: startBlockedIds });
+  if (!standardCandidates.length) return blocked('no_standard_account', `Tous les comptes premium sont indisponibles pour un départ et aucun compte n’est éligible au pool standard ; attendre le rétablissement, aucun autre modèle.${startBlockHint}`, { confirmed, startRefused, startBlocked: startBlockedIds, unavailableForStart: startUnavailableIds, unavailableForStartReasons: startUnavailableReasons });
   // Preuve obligatoire, quelle que soit routingPolicy.requireStandardValidation : jamais d’exception avec proof:null, jamais de solde inventé.
   const nowMs = Date.parse(now()); const maxAgeMs = Math.max(1, Number(policy.standardProofMaxAgeHours) || 24) * 3_600_000;
   const proofs = standardCandidates.map(a => ({ account: a, ...standardProofStatus(a, fallbackModel, nowMs, maxAgeMs) }));
   const proven = proofs.find(c => c.valid);
   if (!proven) {
     const proofStatus = Object.fromEntries(proofs.map(c => [c.account.id, c.reason]));
-    return blocked('standard_access_unproven', `Tous les comptes premium sont confirmés indisponibles (${confirmed.join(', ')}). Aucune preuve valable (< ${Math.round(maxAgeMs / 3_600_000)} h, postérieure à tout refus, recheck_required ou blocage, pool standard probe_passed_balance_unknown) d’accès réel à ${fallbackModel} pour ${proofs.map(c => `${c.account.id} (${c.reason})`).join(', ')} ; GET /models n’en est pas une. Aucune sonde payante automatique. Action explicite : lancer une mission bornée « --select grok --account <id> » (coût réel, décision humaine), dont l’acceptation enregistre la preuve ; sinon rester bloqué.${startBlockHint}`, { confirmed, standardCandidates: standardCandidates.map(a => a.id), proofStatus, startBlocked: startBlockedIds, requireStandardValidation: 'always' });
+    return blocked('standard_access_unproven', `Tous les comptes premium sont indisponibles pour un départ (${startUnavailableIds.join(', ')}). Aucune preuve valable (< ${Math.round(maxAgeMs / 3_600_000)} h, postérieure à tout refus, recheck_required ou blocage, pool standard probe_passed_balance_unknown) d’accès réel à ${fallbackModel} pour ${proofs.map(c => `${c.account.id} (${c.reason})`).join(', ')} ; GET /models n’en est pas une. Aucune sonde payante automatique. Action explicite : lancer une mission bornée « --select grok --account <id> » (coût réel, décision humaine), dont l’acceptation enregistre la preuve ; sinon rester bloqué.${startBlockHint}`, { confirmed, startRefused, standardCandidates: standardCandidates.map(a => a.id), proofStatus, startBlocked: startBlockedIds, unavailableForStart: startUnavailableIds, unavailableForStartReasons: startUnavailableReasons, requireStandardValidation: 'always' });
   }
-  return { status: 'exception', pool: 'standard', accountId: proven.account.id, modelId: fallbackModel, selection: 'fallback', reason: 'all_custom_accounts_confirmed_unavailable', confirmed, proof: proven.proof, accounts };
+  return { status: 'exception', pool: 'standard', accountId: proven.account.id, modelId: fallbackModel, selection: 'fallback', reason: 'all_custom_accounts_confirmed_unavailable', confirmed, startRefused, startBlocked: startBlockedIds, unavailableForStart: startUnavailableIds, unavailableForStartReasons: startUnavailableReasons, proof: proven.proof, accounts };
 }
 
 // Pool ouvert pour le transport : identifiants publics, clés à la demande, lecture/décision/enregistrement sous verrou. Retourne null sans coffre configuré.

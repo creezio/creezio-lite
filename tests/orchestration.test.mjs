@@ -60,6 +60,10 @@ test('the canonical skill has a valid frontmatter, fixed selections without fall
   const front = skill.match(/^---\n([\s\S]*?)\n---\n/); assert.ok(front, 'frontmatter YAML attendu');
   assert.match(front[1], /^name: lite-orchestration$/m);
   const description = front[1].match(/^description: (.+)$/m); assert.ok(description && description[1].length > 40 && description[1].length <= 1024);
+  const desc = description[1];
+  for (const needle of ['plan d’orchestration parallèle', 'PLANNING.md', 'ready', 'resources', 'graphe complet dès plan approuvé', 'start', 'integrate', 'publish', 'transition', 'sans vagues', 'Interdiction nominale de changer de modèle', 'exception globale Grok 4.6']) {
+    assert.ok(desc.includes(needle), `description SKILL doit déclencher ${needle}`);
+  }
   for (const link of ['CONTRACT.md', 'cursor-model.json', 'scripts/cursor-agents.mjs']) assert.ok(skill.includes(link) && (await readdir(join(root, orchestrationDir, link.includes('/') ? 'scripts' : '.'))).includes(link.split('/').pop()));
   const sources = await orchestrationSources();
   assert.deepEqual(Object.keys(sources).sort(), DISTRIBUTED, 'douze ressources distribuées : transport O01, cinq ressources du contrat de planification, outil plan-missions, adaptateur du pool de comptes');
@@ -208,6 +212,25 @@ test('launch deduplicates missions, fixes the selection once in the payload and 
     assert.equal((await agents.loadRegistry(registryFile)).missions.O01.state, 'reconciled');
 
     await agents.saveRegistry(registryFile, { formatVersion: 1, missions: {} });
+    const conflict404 = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => json({ error: { code: 'agent_id_conflict', message: BODY_MARKER } }, 409), [`GET /v1/agents/${AGENT}`]: () => json({ error: { code: 'not_found' } }, 404) });
+    const conflictUnread = await agents.launch({ ...base, fetchImpl: conflict404.fetchImpl });
+    assert.equal(conflictUnread.status, 'uncertain'); assert.equal(conflictUnread.reason, 'conflict_unreadable');
+    assert.equal(conflictUnread.delivery.state, 'conflict'); assert.equal(conflictUnread.delivery.httpStatus, 409);
+    assert.match(conflictUnread.nextAction, /existence revendiquée/); assert.match(conflictUnread.nextAction, /--confirm-absent inapplicable/);
+    let conflictEntry = (await agents.loadRegistry(registryFile)).missions.O01;
+    assert.equal(conflictEntry.state, 'uncertain'); assert.equal(conflictEntry.delivery.state, 'conflict'); assert.equal(conflictEntry.reason, 'conflict_unreadable');
+    for (let i = 0; i < 3; i++) {
+      const again = await agents.reconcile({ mission: 'O01', key: KEY, registryFile, fetchImpl: conflict404.fetchImpl });
+      assert.equal(again.status, 'uncertain'); assert.equal(again.reason, 'conflict_unreadable'); assert.equal(again.delivery.state, 'conflict');
+    }
+    assert.equal((await agents.launch({ ...base, fetchImpl: conflict404.fetchImpl })).status, 'deduplicated', 'aucun POST tant que le conflit n’est pas lu');
+    assert.equal(conflict404.calls.filter(c => c.method === 'POST').length, 1, 'un seul POST malgré 404 répétés');
+    const noAttest = await agents.reconcile({ mission: 'O01', confirmAbsent: true, key: KEY, registryFile, fetchImpl: conflict404.fetchImpl });
+    assert.equal(noAttest.status, 'blocked'); assert.equal(noAttest.reason, 'confirm_absent_not_applicable');
+    assert.match(noAttest.nextAction, /409/); assert.equal((await agents.loadRegistry(registryFile)).missions.O01.state, 'uncertain');
+    assert.equal((await agents.loadRegistry(registryFile)).missions.O01.delivery.state, 'conflict');
+
+    await agents.saveRegistry(registryFile, { formatVersion: 1, missions: {} });
     // Livraison inconnue (délai/réseau après le POST) puis 404 : le fournisseur a peut-être reçu la requête ; un 404 — immédiat ou répété — ne prouve pas l’absence.
     // L’entrée reste uncertain (raison de livraison persistée), launch se déduplique sans second POST, aucune borne de temps n’est inventée ; seule une attestation humaine explicite conclut.
     const lost = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => { throw new TypeError('socket hang up'); }, [`GET /v1/agents/${AGENT}`]: () => json({ error: { code: 'not_found' } }, 404) });
@@ -220,7 +243,7 @@ test('launch deduplicates missions, fixes the selection once in the payload and 
     assert.equal((await agents.launch({ ...base, fetchImpl: lost.fetchImpl })).status, 'deduplicated', 'aucun POST tant que la livraison est inconnue');
     assert.equal(lost.calls.filter(c => c.method === 'POST').length, 1, 'un seul POST malgré timeout, 404 répétés et reconcile répétés');
     const attested = await agents.reconcile({ mission: 'O01', confirmAbsent: true, key: KEY, registryFile, fetchImpl: lost.fetchImpl });
-    assert.equal(attested.status, 'not_created'); assert.equal(attested.attested, true); assert.equal(attested.delivery.state, 'attested_absent'); assert.equal(attested.delivery.attestedBy, 'human'); assert.match(attested.nextAction, /attestée par l’orchestrateur/);
+    assert.equal(attested.status, 'not_created'); assert.equal(attested.attested, true); assert.equal(attested.delivery.state, 'attested_absent'); assert.equal(attested.delivery.attestedBy, 'human'); assert.equal(attested.delivery.attestationKind, 'unverified_declaration'); assert.match(attested.nextAction, /attestée par l’orchestrateur/); assert.match(attested.nextAction, /déclaration non vérifiée/);
     persisted = (await agents.loadRegistry(registryFile)).missions.O01; assert.equal(persisted.state, 'not_created'); assert.equal(persisted.delivery.state, 'attested_absent', 'décision humaine tracée au registre');
     assert.equal(lost.calls.filter(c => c.method === 'POST').length, 1);
     const relaunch = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => json({ agent: agentRecord(), run: runRecord() }) });
