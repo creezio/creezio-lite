@@ -3,7 +3,7 @@ import { handleApi } from '@lite/core';
 import { executeAppOperation } from '@lite/core/commands';
 import { principalOf, sessionCredential } from '@lite/core/scope';
 import { mailRoute, mailInboundRoute } from '@lite/core/mail';
-import { integrationsRoute } from '@lite/core/integrations';
+import { integrationsRoute, resolveIntegration, type IntegrationRow } from '@lite/core/integrations';
 import { assistantRoute } from '@lite/core/assistant';
 import { workspace } from '@lite/core/api';
 import { resolveToken, authorizeTokenRequest } from '@lite/core/access-tokens';
@@ -14,10 +14,70 @@ import { toolBindings, mcpAdminRoute } from '@lite/core/mcp-admin';
 import { accessRoute, openApiDocument } from '@lite/core/access';
 import { matchOperation, assertOperationAllowed } from '@lite/core/operations';
 import { ApiError, errorBody, fail, publicDetails } from '@lite/core/validation';
-import { checkOrigin, json, readJson } from '@lite/core/http';
+import { checkOrigin, json, readJson, readPublicBytes, normalizedMethod, requestPathname, requestQuery } from '@lite/core/http';
 import { observabilityRoute, persistRequestLog, newRequestTrace, jsonrpcLabel, UNKNOWN_TOOL, REQUEST_ID_HEADER } from '@lite/core/observability';
+import { admitPublicIngress, publicIngressLimits, type PublicIngressDeclaration, type PublicIngressEntry, type VaultPort } from '@lite/core/public-ingress-engine';
 import { handleNativeApi, workspaceCookie } from './index';
 import { operationCatalog } from './catalog';
+
+function matchPublicPath(route:string,pathname:string):boolean{
+  const pattern=route.replace(/\/$/,'').split('/');
+  const actual=pathname.replace(/\/$/,'').split('/');
+  if(pattern.length!==actual.length)return false;
+  for(let i=0;i<pattern.length;i++){
+    if(pattern[i].startsWith(':')){
+      let value:string;
+      try{value=decodeURIComponent(actual[i]??'');}catch{return false;}
+      if(!value||value.length>publicIngressLimits.paramMaxLength)return false;
+    }else if(pattern[i]!==actual[i])return false;
+  }
+  return true;
+}
+/** Gate only: decide whether to consume the body. The engine re-matches and remains authoritative. */
+function selectPublicEntry(entries:readonly PublicIngressEntry[],method:string,pathname:string):PublicIngressEntry|undefined{
+  const normalized=pathname.replace(/\/$/,'')||'/';
+  const candidates:{entry:PublicIngressEntry;paramsCount:number}[]=[];
+  for(const entry of entries){
+    if(entry.method!==method)continue;
+    if(matchPublicPath(entry.path,normalized))candidates.push({entry,paramsCount:(entry.path.match(/\/:/g)??[]).length});
+  }
+  candidates.sort((a,b)=>a.paramsCount-b.paramsCount);
+  return candidates[0]?.entry;
+}
+function publicIngressVault(env:ApiContext['env']):VaultPort|undefined{
+  if(!env.DB||typeof env.DB.prepare!=='function')return undefined;
+  return {
+    ready(){return typeof env.LITE_INTEGRATION_SECRET==='string'&&env.LITE_INTEGRATION_SECRET.length>0;},
+    async decrypt({tenantId,integrationId,aad}){
+      if(aad!==`${tenantId}:${integrationId}`)throw new Error('aad');
+      const row=await env.DB.prepare('SELECT * FROM lite_integrations WHERE org_id=? AND id=?').bind(tenantId,integrationId).first<IntegrationRow>();
+      if(!row||row.org_id!==tenantId||row.id!==integrationId||`${row.org_id}:${row.id}`!==aad)throw new Error('vault');
+      return resolveIntegration({env} as ApiContext,row);
+    },
+  };
+}
+function publicHttpResponse(result:{status:number;body:unknown;replayed?:true},requestId:string):Response{
+  const body=result.body;
+  const row=body&&typeof body==='object'&&!Array.isArray(body)?body as Record<string,unknown>:null;
+  const error=row&&row.error&&typeof row.error==='object'&&!Array.isArray(row.error)?row.error as Record<string,unknown>:null;
+  const payload=error?{error:{code:error.code,message:error.message,requestId}}:body;
+  const response=json(payload,result.status);
+  if(result.replayed===true)response.headers.set('Idempotent-Replayed','true');
+  return response;
+}
+async function dispatchPublicIngress(request:Request,context:ApiContext,declaration:PublicIngressDeclaration,requestId:string):Promise<Response|null>{
+  if(!context.env.DB)return json({error:{code:'factory_unavailable',message:'factory_unavailable',requestId}},503);
+  const method=normalizedMethod(request);
+  const path=requestPathname(request);
+  const entry=selectPublicEntry(declaration.entries,method,path);
+  if(!entry)return null;
+  const rawBytes=await readPublicBytes(request,entry.maxBytes);
+  const admitted=await admitPublicIngress(declaration,{
+    method,path,headers:request.headers,rawBytes,query:requestQuery(request),nowMs:Date.now(),requestId,
+  },{db:context.env.DB,env:context.env,vault:publicIngressVault(context.env)});
+  if(admitted.kind==='unmatched')return null;
+  return publicHttpResponse(admitted,requestId);
+}
 
 export async function dispatchRequest(request:Request,context:ApiContext,options:AppExtensions={}):Promise<Response>{
   const started=performance.now();let logContext:ApiContext|undefined,logOrg:Workspace|undefined;
@@ -34,6 +94,10 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
   try{
     if(source==='mcp'&&request.method==='OPTIONS')return mcpOptions();
     const inbound=await mailInboundRoute(request,context);if(inbound)return inbound;
+    if(options.publicIngress){
+      const published=await dispatchPublicIngress(request,context,options.publicIngress,trace.correlationId);
+      if(published)return await finish(published);
+    }
     const oauth=await resolveOAuthToken(request,context),credential=oauth??await resolveToken(request,context);
     trace.credential=oauth?'oauth':credential?'api_key':'session';
     // The verified, non-secret credential reference and the correlation id travel with the context to every handler.
