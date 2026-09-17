@@ -78,7 +78,10 @@ export function authorizeDelegationDecision(input:EvaluateAccessInput&{mutation:
     }
     if(!profile.assignableBy.includes(principal.role))return denied();
     const recipients=mutation.kind==='groupMembers'&&mutation.groupId===target.id?mutation.userIds:target.memberIds;
-    const addsGrant=mutation.kind==='bind'||mutation.kind==='adopt'||mutation.kind==='rebind'||mutation.kind==='groupMembers'||mutation.kind==='memberRole';
+    // Removed bindings still require assignableBy, but cannot grant anything to stale members.
+    const addsGrant=mutation.kind==='adopt'||mutation.kind==='rebind'
+      ?mutation.receipt.bindings.some(b=>b.groupId===binding.groupId&&b.profileId===binding.profileId)
+      :mutation.kind==='bind'||mutation.kind==='groupMembers'||mutation.kind==='memberRole';
     if(addsGrant){
       if(recipients.includes(principal.userId)&&principal.role!=='owner')return denied();
       for(const id of recipients){
@@ -109,7 +112,11 @@ async function readState(db:D1Database,workspaceId:string,actorUserId:string):Pr
 export async function createRequestAccessContext(input:{db:D1Database;request:Request;requestId:string;workspace:Workspace;identity:Identity;credential:CredentialContext;declaration:AccessDeclaration;catalog:readonly AccessCatalogEntry[]}):Promise<RequestAccessContext>{
   const forbidden=['access','observedProfileIds','evaluateAccess','authorizeDelegation','principal','credential','snapshot'];
   const url=new URL(input.request.url);if(forbidden.some(k=>url.searchParams.has(k)))fail(400,'invalid_arguments','Server access context cannot be supplied.');
-  if(input.request.headers.get('content-type')?.includes('application/json')&&input.request.body){const body=await readJson(input.request.clone());if(forbidden.some(k=>Object.hasOwn(body,k)))fail(400,'invalid_arguments','Server access context cannot be supplied.');}
+  // Only inspect the native access-mutation envelopes, whose existing parser is 64 KiB.
+  // Other handlers own their body limits (mail attachments, file uploads, etc.); no body
+  // from any route participates in constructing this server-owned access context.
+  const accessMutation=/^\/api\/v1\/(?:access(?:\/|$)|members(?:\/|$)|invites(?:\/|$))/.test(url.pathname);
+  if(accessMutation&&input.request.headers.get('content-type')?.includes('application/json')&&input.request.body){const body=await readJson(input.request.clone());if(forbidden.some(k=>Object.hasOwn(body,k)))fail(400,'invalid_arguments','Server access context cannot be supplied.');}
   const declaration=validateAccessDeclaration(input.declaration,input.catalog),state=await readState(input.db,input.workspace.id,input.identity.userId);
   const member=state.members.find(m=>m.user_id===input.identity.userId);
   if(!member||member.role!==input.workspace.role)fail(403,'operation_forbidden','Membership changed.');

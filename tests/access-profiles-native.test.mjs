@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {app,alice,bob,eve,client,boot,localDb} from './helpers.mjs';
+import {app,alice,bob,eve,client,boot,localDb,fakeBucket} from './helpers.mjs';
 import {coreOperations} from '../runtime/core/operations.ts';
 import {defineExtensions} from '../runtime/core/commands.ts';
 import {createRequestAccessContext,assertRequestAccessContext,disposeRequestAccessContext,updateAccessReceipt,commitAccessMutation,accessReceiptState} from '../runtime/core/access-profiles-store.ts';
@@ -117,3 +117,22 @@ test('real D1 preserves additive migration, CAS winner and zero-effect stale inv
   assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM lite_invites WHERE id='blocked'").first()).n,0);assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM lite_audit').first()).n,before);assert.equal((await db.prepare('SELECT write_token FROM lite_access_epochs WHERE org_id=?').bind(org).first()).write_token,null);
  }finally{await local.dispose();}
 });
+
+
+test('owner can remove a stale binding after member removal without weakening retained grants',async()=>fixture(async({db,org})=>{
+ await adopt(db,org);const call=client(db,alice,undefined,app,{access:declaration});
+ const removed=await call('members/eve?workspace='+org,{method:'DELETE'});assert.equal(removed.status,200,JSON.stringify(removed.body));
+ const retained=await call('access/receipt?workspace='+org,{method:'PUT',body:{receipt:receipt(),version:1}});assert.equal(retained.status,409,JSON.stringify(retained.body));
+ const cleaned=await call('access/receipt?workspace='+org,{method:'PUT',body:{receipt:receipt([]),version:1}});assert.equal(cleaned.status,200,JSON.stringify(cleaned.body));
+ assert.equal(count(db,'lite_access_groups'),3);assert.deepEqual(JSON.parse(db.raw.prepare('SELECT receipt_json FROM lite_access_receipts WHERE org_id=?').get(org).receipt_json).bindings,[]);
+ assert.equal(db.raw.prepare("SELECT members_json FROM lite_access_groups WHERE org_id=? AND id='readers'").get(org).members_json,'["eve"]');
+}));
+
+test('access opt-in preserves the mail endpoint attachment size limit',async()=>fixture(async({db,org})=>{
+ await import('./register-native-loader.mjs');const {dispatchRequest}=await import('../runtime/modules/sites-adapter/src/dispatch.ts');const bucket=fakeBucket();
+ const body={idempotencyKey:crypto.randomUUID(),to:['target@example.test'],subject:'Fixture',text:'Mail body',attachments:[{filename:'fixture.bin',content_type:'application/octet-stream',content_base64:Buffer.alloc(70*1024,42).toString('base64')}],access:{snapshot:{state:'adopted'}}};
+ const response=await dispatchRequest(new Request('https://test.example/api/v1/email/drafts?workspace='+org,{method:'POST',headers:{origin:'https://test.example','content-type':'application/json'},body:JSON.stringify(body)}),{app,env:{DB:db,BUCKET:bucket},identity:alice},{access:declaration});
+ const data=await response.json();assert.equal(response.status,201,JSON.stringify(data));assert.equal(data.mail.attachments[0].size_bytes,70*1024);assert.equal(bucket.store.size,1);
+ // The ignored mail field cannot create or upgrade a native adoption receipt.
+ assert.equal(count(db,'lite_access_receipts'),0);
+}));
