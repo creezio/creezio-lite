@@ -487,6 +487,7 @@ function evaluateOperation(
     catalog: Map<string, AccessCatalogEntry>;
     observedProfileIds: readonly string[];
   },
+  options?: { skipBinding?: boolean },
 ): AccessDecision {
   const extra = { operationId };
   const entry = input.catalog.get(operationId);
@@ -504,6 +505,7 @@ function evaluateOperation(
   if (!envelope && !admin && deniedByPolicy(entry, input.denials)) return deny('denied_policy', extra);
   if (envelope || admin) return decision(true, 'allowed', extra);
   if (input.state === 'incomplete' || !input.declaration || !input.receipt) return deny('denied_incomplete', extra);
+  if (options?.skipBinding) return decision(true, 'allowed', extra);
 
   const scan = scanBindings(input.declaration, input.receipt, input.observedProfileIds);
   const granted = grantsOperation(scan.profiles, input.declaration, operationId, input.principal.role);
@@ -548,11 +550,14 @@ export function evaluateAccessDecision(input: EvaluateAccessInput): AccessDecisi
   if (!declaration) return deny('denied_incomplete', { capabilityIds: [query.capabilityId] });
   const capability = declaration.capabilities.find(item => item.id === query.capabilityId);
   if (!capability) return deny('denied_unknown', { capabilityIds: [query.capabilityId] });
-  if (state === 'incomplete') return deny('denied_incomplete', { capabilityIds: [query.capabilityId] });
+  if (state === 'incomplete' || !receipt) return deny('denied_incomplete', { capabilityIds: [query.capabilityId] });
 
+  const scan = scanBindings(declaration, receipt, snapshot.observedProfileIds);
+  const bound = scan.profiles.some(profile => profile.receivableBy.includes(principal.role) && profile.capabilities.includes(query.capabilityId));
   const reasons: AccessDecisionReason[] = [];
+  if (!bound) reasons.push(scan.revisionMismatch ? 'denied_revision' : scan.unknownProfile ? 'denied_unknown' : 'denied_unbound');
   for (const operationId of capability.operations) {
-    const result = evaluateOperation(operationId, ctx);
+    const result = evaluateOperation(operationId, ctx, { skipBinding: true });
     if (!result.allowed) reasons.push(result.reason);
   }
   if (!reasons.length) return decision(true, 'allowed', { capabilityIds: [query.capabilityId] });

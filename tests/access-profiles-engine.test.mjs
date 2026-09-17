@@ -460,6 +460,103 @@ test('capability query requires every operation to pass deny, credential and bin
   assert.equal(legacyCap.reason, 'denied_unknown');
 });
 
+test('capability query must not borrow grants from another capability that shares operations', () => {
+  entryOf('module.clients.create'); entryOf('module.clients.update'); entryOf('dashboard.get');
+  const shared = declaration({
+    capabilities: [
+      { id: 'product.write', operations: ['module.clients.create', 'module.clients.update'] },
+      { id: 'price.edit', operations: ['module.clients.create', 'module.clients.update'] },
+      { id: 'read', operations: ['dashboard.get'] },
+      { id: 'stock.read', operations: ['dashboard.get'] },
+    ],
+    profiles: [
+      {
+        id: 'fx_product_writer', revision: 1,
+        capabilities: ['product.write', 'read'],
+        receivableBy: ['owner', 'admin', 'member'], assignableBy: ['owner', 'admin'], assignmentApproval: 'owner',
+      },
+      {
+        id: 'fx_price_editor', revision: 4,
+        capabilities: ['price.edit', 'stock.read'],
+        receivableBy: ['owner', 'admin', 'member'], assignableBy: ['owner'], assignmentApproval: 'owner',
+      },
+    ],
+  });
+  const boundWriter = {
+    snapshot: snapshot('adopted', { observedProfileIds: ['fx_product_writer'] }),
+    declaration: shared,
+    receipt: receipt({ bindings: [{ groupId: GROUP, profileId: 'fx_product_writer', profileRevision: 1 }] }),
+    principal: principal('member'),
+  };
+  const productWrite = decide({ ...boundWriter, query: { kind: 'capability', capabilityId: 'product.write' } });
+  const priceEdit = decide({ ...boundWriter, query: { kind: 'capability', capabilityId: 'price.edit' } });
+  const dashRead = decide({ ...boundWriter, query: { kind: 'capability', capabilityId: 'read' } });
+  const stockRead = decide({ ...boundWriter, query: { kind: 'capability', capabilityId: 'stock.read' } });
+  const createOp = decide({ ...boundWriter, query: { kind: 'operation', operationId: 'module.clients.create' } });
+  assert.equal(productWrite.allowed, true, 'bound product.write must pass');
+  assert.deepEqual([...productWrite.capabilityIds], ['product.write']);
+  assert.equal(dashRead.allowed, true, 'bound read must pass');
+  assert.equal(createOp.allowed, true, 'operation query may use the bound product.write');
+  assert.equal(priceEdit.allowed, false, `price.edit must not borrow product.write (got ${priceEdit.reason})`);
+  assert.equal(priceEdit.reason, 'denied_unbound');
+  assert.equal(stockRead.allowed, false, `stock.read must not borrow read (got ${stockRead.reason})`);
+  assert.equal(stockRead.reason, 'denied_unbound');
+
+  const observedOnly = decide({
+    ...boundWriter,
+    snapshot: snapshot('adopted', { observedProfileIds: ['fx_product_writer', 'fx_price_editor'] }),
+    query: { kind: 'capability', capabilityId: 'price.edit' },
+  });
+  assert.equal(observedOnly.allowed, false);
+  assert.equal(observedOnly.reason, 'denied_unbound');
+
+  const stale = decide({
+    snapshot: snapshot('adopted', { observedProfileIds: ['fx_price_editor'] }),
+    declaration: shared,
+    receipt: receipt({ bindings: [{ groupId: GROUP, profileId: 'fx_price_editor', profileRevision: 1 }] }),
+    principal: principal('member'),
+    query: { kind: 'capability', capabilityId: 'price.edit' },
+  });
+  assert.equal(stale.allowed, false);
+  assert.equal(stale.reason, 'denied_revision');
+
+  const notReceivable = declaration({
+    capabilities: shared.capabilities,
+    profiles: [{
+      id: 'fx_product_writer', revision: 1,
+      capabilities: ['product.write', 'price.edit'],
+      receivableBy: ['owner'], assignableBy: ['owner'], assignmentApproval: 'owner',
+    }],
+  });
+  const memberBlocked = decide({
+    snapshot: snapshot('adopted', { observedProfileIds: ['fx_product_writer'] }),
+    declaration: notReceivable,
+    receipt: receipt({ bindings: [{ groupId: GROUP, profileId: 'fx_product_writer', profileRevision: 1 }] }),
+    principal: principal('member'),
+    query: { kind: 'capability', capabilityId: 'price.edit' },
+  });
+  assert.equal(memberBlocked.allowed, false);
+  assert.equal(memberBlocked.reason, 'denied_unbound');
+
+  const denyWins = decide({
+    ...boundWriter,
+    denials: [{ operationId: 'module.clients.create', effect: 'deny' }],
+    query: { kind: 'capability', capabilityId: 'price.edit' },
+  });
+  assert.equal(denyWins.allowed, false);
+  assert.equal(denyWins.reason, 'denied_policy');
+
+  const ownerBare = decide({
+    snapshot: snapshot('adopted', { observedProfileIds: [] }),
+    declaration: shared,
+    receipt: receipt({ bindings: [] }),
+    principal: principal('owner'),
+    query: { kind: 'capability', capabilityId: 'product.write' },
+  });
+  assert.equal(ownerBare.allowed, false);
+  assert.equal(ownerBare.reason, 'denied_unbound');
+});
+
 test('role:* bindings never become a profile; native role groups stay skipped', () => {
   assert.equal(NATIVE_ROLE_GROUP.test(GROUP_ROLE), true);
   assert.equal(NATIVE_ROLE_GROUP.test(GROUP), false);
