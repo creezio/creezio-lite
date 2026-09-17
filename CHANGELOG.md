@@ -1,10 +1,11 @@
 # Versions de Lite
 
-## 0.13.1 — Frontmatter de compétence LF et CRLF dans le CLI
+## 0.13.1 — Frontmatter de compétence LF et CRLF dans le CLI (`create`/`adopt` seulement)
 
-- `skillFrontmatter` dans `bin/lite.mjs` accepte les délimiteurs `---` et les fins de ligne LF ou CRLF (`core.autocrlf=true` sur un checkout Windows) ; `name` et `description` restent exigés sur une seule ligne, le frontmatter malformé est toujours refusé.
-- `create` et `adopt` relisent ainsi une skill canonique transformée en CRLF ; les copies applicatives restent les octets du checkout kit, sans fork ni normalisation globale.
-- Aucun changement des ressources distribuées du standard, du transport Cursor, du pool, de la planification, du runtime métier, du schéma, des migrations ni de la politique Git.
+- `skillFrontmatter` dans `bin/lite.mjs` accepte les délimiteurs `---` et les fins de ligne LF ou CRLF ; `name` et `description` restent exigés sur une seule ligne, le frontmatter malformé est toujours refusé sans écriture partielle.
+- `create` et `adopt` (inspect, `--apply`, second `current`) fonctionnent sur un checkout kit `core.autocrlf=true` **via le même checkout source** ; une édition locale réelle d’un fichier géré reste un conflit.
+- Ce n’est pas une compatibilité globale CRLF : empreintes brutes, `doctor` croisé kit LF / copies CRLF, clone d’app converti (faux conflits 12 copies + runtime vs verrou), `check-kit` et le test canonique LF-stricts restent hors lot. Recette kit : octets LF. Réception fiable : checkout isolé `git -c core.autocrlf=false` et `core.eol=lf`, sans config globale. Ne pas falsifier lock/manifest ni forcer `adopt` sur un clone déjà converti.
+- Ressources distribuées inchangées : une adoption 0.13 valide n’exige ni ré-adoption ni upgrade runtime pour W01. Pas de normalisation globale des empreintes (lot distinct). Aucun changement du transport Cursor, du pool, de la planification, du runtime métier, du schéma, des migrations ni de la politique Git.
 
 ## 0.13.0 — Planification parallèle des missions, pool commun de comptes et distribution complète du standard
 
