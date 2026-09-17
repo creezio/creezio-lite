@@ -67,10 +67,10 @@ export function fileScope(scope:ScopeProvider,principal:Principal,ref:{alias:str
 }
 
 /** Unknown/orphan business resources stay hidden; only explicit native recovery events need no business row. */
-export function auditScope(scope:ScopeProvider,principal:Principal,app:AppDefinition,org:Workspace,access?:RequestAccessContext):SqlFragment{
+export function auditScope(scope:ScopeProvider,principal:Principal,app:AppDefinition,org:Workspace,access?:RequestAccessContext,resources?:{records:SqlFragment;files:SqlFragment}):SqlFragment{
   if(!access)return {sql:'1=1',bindings:[]};
-  const records=recordScope(scope,principal,{alias:'r',idColumn:'id',moduleColumn:'module_id'},'read',access);
-  const files=fileScope(scope,principal,{alias:'f',idColumn:'id'},'read',access);
+  const records=resources?.records??recordScope(scope,principal,{alias:'r',idColumn:'id',moduleColumn:'module_id'},'read',access);
+  const files=resources?.files??fileScope(scope,principal,{alias:'f',idColumn:'id'},'read',access);
   const readable=app.modules.filter(m=>canReadModule(org,m.id,access)).map(m=>m.id);
   const recordTest=readable.length?'r.module_id IN ('+readable.map(()=>'?').join(',')+')':'0=1';
   const recovery=['workspace.create','workspace.rename','member.join','member.role','member.remove','invite.create','invite.revoke','access.adopt','access.rebind','access.bind','access.unbind','access.group.create','access.group.update','access.group.delete','access.policy.update','mcp.policy.update','mcp.tool.create','mcp.tool.delete','mcp.client.revoke','mcp.oauth.revoke'];
