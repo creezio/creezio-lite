@@ -92,12 +92,16 @@ export function sanitizeClaimSnapshot(snapshot: SanitizedSnapshot): SanitizedSna
   return snapshot.ok ? { ok: true, status: snapshot.status, body } : { ok: false, status: snapshot.status, body };
 }
 
+function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
 function snapshotJson(snapshot: SanitizedSnapshot | undefined, maxBytes: number): string | undefined {
   if (!snapshot) return undefined;
   const clean = sanitizeClaimSnapshot(snapshot);
   if (!clean) return undefined;
   const json = JSON.stringify(clean);
-  if (typeof json !== 'string' || json.length > maxBytes) return undefined;
+  if (typeof json !== 'string' || utf8ByteLength(json) > maxBytes) return undefined;
   return json;
 }
 

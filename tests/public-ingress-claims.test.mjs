@@ -204,6 +204,43 @@ test('node:sqlite : stale takeover generation+1 ; ancien fence refuse complete/r
   } finally { db.close(); }
 });
 
+test('snapshotMaxBytes compte les octets UTF-8 : accent/emoji refusés sans muter l’état', async () => {
+  const db = await claimSqlite();
+  try {
+    await seedOrg(db, TENANT_A);
+    const utf8 = (text) => new TextEncoder().encode(text).byteLength;
+    const overSnap = { ok: true, status: 200, body: { note: `${'é'.repeat(8)}😀` } };
+    const overJson = JSON.stringify(overSnap);
+    const maxBytes = overJson.length;
+    assert.ok(overJson.length <= maxBytes, 'avant : json.length tiendrait dans le plafond');
+    assert.ok(utf8(overJson) > maxBytes, 'après : les octets UTF-8 dépassent le plafond');
+
+    const { store } = clockStore(db, { snapshotMaxBytes: maxBytes, maxAttempts: 8 });
+    const payload = digest('utf8-bound');
+    const claimed = key({ eventId: 'evt_utf8' });
+    const held = await store.claim(claimed, payload);
+    assert.equal(held.kind, 'acquired');
+    assert.equal(await store.failPermanent(held.fence, { ok: false, status: 422, body: { note: overSnap.body.note } }), false);
+    assert.equal(await store.complete(held.fence, overSnap), false);
+    const frozen = db.raw.prepare('SELECT state, snapshot_json FROM lite_public_ingress_claims WHERE tenant_id=? AND entry_id=? AND event_id=?')
+      .get(claimed.tenantId, claimed.entryId, claimed.eventId);
+    assert.equal(frozen.state, 'processing');
+    assert.equal(frozen.snapshot_json, null);
+    assert.equal((await store.claim(claimed, payload)).kind, 'busy');
+
+    let underNote = 'é';
+    while (utf8(JSON.stringify({ ok: true, status: 200, body: { note: underNote + 'a' } })) <= maxBytes) underNote += 'a';
+    const underSnap = { ok: true, status: 200, body: { note: underNote } };
+    const underJson = JSON.stringify(underSnap);
+    assert.ok(utf8(underJson) <= maxBytes);
+    assert.ok(utf8(JSON.stringify({ ok: true, status: 200, body: { note: underNote + 'a' } })) > maxBytes);
+    assert.equal(await store.complete(held.fence, underSnap), true);
+    const replay = await store.claim(claimed, payload);
+    assert.equal(replay.kind, 'completed');
+    assert.deepEqual(replay.snapshot, underSnap);
+  } finally { db.close(); }
+});
+
 test('sanitizeClaimSnapshot refuse secrets, cookies et corps de requête', () => {
   assert.equal(sanitizeClaimSnapshot({ ok: true, status: 200, body: { token: 'abc' } }), undefined);
   assert.equal(sanitizeClaimSnapshot({ ok: true, status: 200, body: { Authorization: 'Bearer x' } }), undefined);
