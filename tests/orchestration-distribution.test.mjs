@@ -363,7 +363,9 @@ test('CLI create and adopt accept LF and CRLF skill sources with the same discov
       const found = await discoverSkills(out, '.agents/skills');
       assert.equal(found.length, 1);
       assert.deepEqual({ folder: found[0].folder, name: found[0].name, description: found[0].description }, { folder: 'lite-orchestration', ...canonical });
-      assert.equal((await doctor(out)).orchestration.status, 'current');
+      const health = runCli(kit, ['doctor', '--app', out]);
+      assert.equal(health.status, 0, health.stderr);
+      assert.equal(JSON.parse(health.stdout).orchestration.status, 'current');
     };
 
     const lfKit = await kitCopy(join(temp, 'kit-lf'));
