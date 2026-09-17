@@ -182,3 +182,13 @@ export const accessEpochs = sqliteTable('lite_access_epochs', {
   orgId:text('org_id').primaryKey().notNull().references(()=>organizations.id,{onDelete:'cascade'}),
   revision:integer('revision').notNull().default(0),writeToken:text('write_token'),
 },t=>[check('access_epoch_revision',sql`${t.revision} >= 0`)]);
+
+export const generatedFiles = sqliteTable('lite_generated_files', {
+ orgId:text('org_id').notNull().references(()=>organizations.id,{onDelete:'cascade'}),intentId:text('intent_id').notNull(),generation:text('generation').notNull(),
+ fileId:text('file_id').notNull(),digest:text('digest').notNull(),ownerId:text('owner_id').notNull(),actorId:text('actor_id').notNull(),
+ name:text('name').notNull(),contentType:text('content_type').notNull(),size:integer('size').notNull(),capabilitiesJson:text('capabilities_json').notNull(),
+ objectKey:text('object_key').notNull(),state:text('state').notNull(),createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[primaryKey({columns:[t.orgId,t.intentId,t.generation]}),uniqueIndex('lite_generated_files_id').on(t.fileId),uniqueIndex('lite_generated_files_key').on(t.objectKey),
+ uniqueIndex('lite_generated_files_published_intent').on(t.orgId,t.intentId).where(sql`${t.state}='published'`),
+ check('lite_generated_file_size',sql`${t.size}>0 AND ${t.size}<=10485760`),check('lite_generated_file_capabilities',sql`json_valid(${t.capabilitiesJson})`),
+ check('lite_generated_file_state',sql`${t.state} IN ('staging','staged','published','abandoned')`)]);
