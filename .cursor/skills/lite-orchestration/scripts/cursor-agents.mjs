@@ -258,19 +258,24 @@ async function createAgent({ command, mission, entry, registry, registryFile, bo
   }
   if (result.outcome === 'rejected' && result.status === 409) {
     // Conflit : l’agent existe (pour ce compte) ; un 404 juste après serait contradictoire, donc incertain, jamais « non créé ».
+    entry.delivery = { state: 'conflict', httpStatus: 409, at: now() };
     const reconciled = await reconcileEntry({ entry, key, fetchImpl, timeoutMs, now, concludeAbsent: false });
     await saveRegistry(registryFile, registry);
     return { command, status: reconciled.state === 'reconciled' ? 'existing' : 'uncertain', mission, agentId, providerCode: result.providerCode, ...reconciled, ...extra };
   }
   if (result.outcome === 'rejected') { await finish('failed', { reason: 'rejected', httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}) }); return { command, status: 'blocked', mission, agentId, reason: 'rejected', httpStatus: result.status, ...(result.providerCode ? { providerCode: result.providerCode } : {}), ...extra, ...(hint ? { nextAction: hint } : {}) }; }
   if (result.delivery === 'not_sent') { await finish('failed', { reason: result.reason }); return { command, status: 'unavailable', mission, agentId, reason: result.reason, ...extra }; }
-  // Envoi incertain (délai, réseau, 5xx) : l’agent existe peut-être, ou existera dans un instant. Une seule lecture ; un 404 immédiat ne prouve pas l’absence :
-  // l’état reste uncertain, la conclusion « non créé » appartient à un reconcile explicite ultérieur. Un refus explicite (4xx) lu ensuite en 404 vaut bien « non créé ».
+  // Livraison persistée avant la lecture : `refused` (statut 4xx reçu : rien n’a été créé) ou `unknown` (délai, réseau, redirection, 5xx : le fournisseur a peut-être reçu,
+  // et peut encore traiter, la requête). Une seule lecture ; après une livraison inconnue, un 404 — immédiat ou répété — ne prouve pas l’absence : l’état reste uncertain
+  // jusqu’à une preuve fournisseur (agent lisible) ou une attestation humaine explicite (`reconcile --confirm-absent`). Aucune borne de temps n’est inventée.
   const uncertain = deliveryUncertain(result);
+  entry.delivery = { state: uncertain ? 'unknown' : 'refused', reason: result.reason, ...(result.status ? { httpStatus: result.status } : {}), at: now() };
   const reconciled = await reconcileEntry({ entry, key, fetchImpl, timeoutMs, now, unavailableState: 'uncertain', unavailableReason: result.reason, concludeAbsent: !uncertain });
   await saveRegistry(registryFile, registry);
-  return { command, status: reconciled.state === 'reconciled' ? 'existing' : reconciled.state === 'not_created' ? 'unavailable' : 'uncertain', mission, agentId, reason: result.reason, deliveryReason: result.reason, ...reconciled, ...extra, ...(reconciled.state === 'uncertain' ? { nextAction: reconciled.reason === 'not_found_after_unknown_delivery' ? 'reconcile --mission plus tard : livraison incertaine, un 404 immédiat ne prouve pas l’absence ; aucun POST, aucun successeur' : 'reconcile' } : hint ? { nextAction: hint } : {}) };
+  return { command, status: reconciled.state === 'reconciled' ? 'existing' : reconciled.state === 'not_created' ? 'unavailable' : 'uncertain', mission, agentId, reason: result.reason, deliveryReason: result.reason, delivery: entry.delivery, ...reconciled, ...extra, ...(reconciled.state === 'uncertain' ? { nextAction: reconciled.reason === 'not_found_after_unknown_delivery' ? unknownDeliveryAction(mission) : 'reconcile' } : hint ? { nextAction: hint } : {}) };
 }
+const unknownDeliveryAction = mission => `livraison incertaine : un 404 ne prouve pas l’absence, le fournisseur peut encore traiter la requête. reconcile --mission ${mission} plus tard (agent lisible ⇒ réconcilié) ; si le tableau de bord du compte ne montre aucun agent pour cette mission, attester par « reconcile --mission ${mission} --confirm-absent » (décision humaine). Aucun POST, aucun nouvel identifiant, aucun successeur avant.`;
+const unknownDelivery = entry => entry?.delivery?.state === 'unknown' || (entry?.state === 'pending' && !entry?.delivery) || entry?.reason === 'not_found_after_unknown_delivery';
 // Lancement dédupliqué : registre → décision de compte (pool) → préflight → POST avec agentId déterministe → réconciliation des 409 et appels incertains.
 export async function launch({ mission, repo, ref, prUrl, promptText, name, autoCreatePR = false, workOnCurrentBranch = true, config, select, account, key, access, registryFile, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
   if (typeof mission !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(mission)) throw new UsageError('--mission : clé courte [A-Za-z0-9._-] requise.');
@@ -286,7 +291,7 @@ export async function launch({ mission, repo, ref, prUrl, promptText, name, auto
   // pending = POST interrompu avant enregistrement du résultat : l'agent existe peut-être ; reconcile, jamais un nouveau lancement ni une reprise aveugle.
   if (existing && activeStates.has(existing.state)) return { command: 'launch', status: 'deduplicated', mission, entry: existing, nextAction: ['uncertain', 'pending'].includes(existing.state) ? 'reconcile' : hasLineage(existing) ? 'followup --mission (même agent successeur) ; jamais launch sur une mission à chaîne' : 'followup ou nouvelle clé de mission' };
   // Mission à chaîne prédécesseur/successeur : launch écraserait la chaîne et le propriétaire et réutiliserait l’identifiant initial avec une autre clé. Refus ; la suite est successor ou followup.
-  if (existing && hasLineage(existing)) return { command: 'launch', status: 'blocked', mission, reason: 'mission_has_lineage', agentId: existing.agentId, lineage: { successorOf: existing.successorOf ?? null, predecessors: (existing.predecessors ?? []).length, state: existing.state }, nextAction: ['failed', 'not_created'].includes(existing.state) ? 'successor --mission --checkpoint <SHA enregistré> : nouvelle tentative de successeur (relecture du prédécesseur), jamais launch' : 'reconcile --mission puis followup --mission sur le successeur ; jamais launch (historique et propriétaire seraient perdus)' };
+  if (existing && hasLineage(existing)) return { command: 'launch', status: 'blocked', mission, reason: 'mission_has_lineage', agentId: existing.agentId, lineage: { successorOf: existing.successorOf ?? null, predecessors: (existing.predecessors ?? []).length, state: existing.state }, nextAction: ['failed', 'not_created'].includes(existing.state) ? 'successor --mission --checkpoint <SHA enregistré> : nouvelle tentative de successeur (relecture du prédécesseur), ou followup --mission si le propriétaire du prédécesseur est redevenu éligible (reprise réconciliée) ; jamais launch' : 'reconcile --mission puis followup --mission sur le successeur ; jamais launch (historique et propriétaire seraient perdus)' };
   // Décision de compte, déterministe et relue dans l’état partagé : même sélection sur le compte premium éligible ; exception seulement selon la politique du pool.
   let decision = null, accountId = null, active = chosen, exception;
   if (access.pool) {
@@ -339,25 +344,34 @@ function settleFollowup(entry, agent, now) {
   Object.assign(pending, { state: 'not_created', settledAt: now() }); delete pending.reason;
   return { state: 'not_created', priorRunId: pending.priorRunId };
 }
-// concludeAbsent : un 404 ne conclut « non créé » que si l’appelant l’autorise (reconcile explicite, ou lecture après un refus explicite), jamais juste après une livraison incertaine.
-async function reconcileEntry({ entry, key, fetchImpl, timeoutMs, now, unavailableState = 'uncertain', unavailableReason, concludeAbsent = true }) {
+// concludeAbsent : un 404 ne conclut « non créé » qu’après un refus explicite du fournisseur (statut 4xx reçu). Après une livraison inconnue (délai, réseau, 5xx,
+// entrée pending orpheline), aucun 404 — même répété, même tardif — ne prouve l’absence : seule une attestation humaine explicite (confirmAbsent) conclut.
+async function reconcileEntry({ entry, key, fetchImpl, timeoutMs, now, unavailableState = 'uncertain', unavailableReason, concludeAbsent = true, confirmAbsent = false }) {
   const { agent, failure, httpStatus } = await readAgent({ agentId: entry.agentId, key, fetchImpl, timeoutMs });
-  if (agent) { Object.assign(entry, { state: 'reconciled', updatedAt: now(), ...(agent.latestRunId ? { runId: agent.latestRunId } : {}), ...(agent.url ? { url: agent.url } : {}) }); delete entry.reason; const followup = settleFollowup(entry, agent, now); return { state: 'reconciled', agent, ...(followup ? { followup } : {}) }; }
+  if (agent) { Object.assign(entry, { state: 'reconciled', updatedAt: now(), ...(agent.latestRunId ? { runId: agent.latestRunId } : {}), ...(agent.url ? { url: agent.url } : {}) }); delete entry.reason; if (entry.delivery?.state === 'unknown') entry.delivery = { ...entry.delivery, state: 'confirmed', confirmedAt: now() }; const followup = settleFollowup(entry, agent, now); return { state: 'reconciled', agent, ...(followup ? { followup } : {}) }; }
   if (failure.reason === 'invalid_response' && httpStatus === 200) { Object.assign(entry, { state: 'uncertain', reason: 'identity_mismatch', updatedAt: now() }); return { state: 'uncertain', reason: 'identity_mismatch', ...(entry.returned ? { returned: entry.returned } : {}) }; }
-  // 404 ne vaut « jamais créé » que pour un lancement dont aucun run n'a été confirmé, hors identité inattendue et hors lecture immédiate après livraison incertaine ;
-  // un agent connu puis introuvable reste incertain, jamais une permission de recréer.
-  if (httpStatus === 404 && !entry.runId && !entry.followup && concludeAbsent && entry.reason !== 'identity_mismatch') { Object.assign(entry, { state: 'not_created', updatedAt: now() }); delete entry.reason; return { state: 'not_created' }; }
-  const reason = httpStatus === 404 ? (entry.reason === 'identity_mismatch' ? 'identity_mismatch' : concludeAbsent ? 'agent_not_found' : 'not_found_after_unknown_delivery') : unavailableReason ?? failure.reason;
+  if (httpStatus === 404 && !entry.runId && !entry.followup && entry.reason !== 'identity_mismatch' && !entry.returned) {
+    if (unknownDelivery(entry)) {
+      if (confirmAbsent) { Object.assign(entry, { state: 'not_created', updatedAt: now(), delivery: { ...(entry.delivery ?? { state: 'unknown', reason: 'pending_orphan' }), state: 'attested_absent', attestedBy: 'human', attestedAt: now() } }); delete entry.reason; return { state: 'not_created', attested: true, delivery: entry.delivery }; }
+      Object.assign(entry, { state: 'uncertain', reason: 'not_found_after_unknown_delivery', updatedAt: now() });
+      return { state: 'uncertain', reason: entry.reason, delivery: entry.delivery ?? { state: 'unknown', reason: 'pending_orphan' } };
+    }
+    if (concludeAbsent) { Object.assign(entry, { state: 'not_created', updatedAt: now() }); delete entry.reason; return { state: 'not_created' }; }
+  }
+  const reason = httpStatus === 404 ? (entry.reason === 'identity_mismatch' || entry.returned ? 'identity_mismatch' : 'agent_not_found') : unavailableReason ?? failure.reason;
   Object.assign(entry, { state: unavailableState, reason, updatedAt: now() });
   return { state: unavailableState, reason: entry.reason, ...(entry.returned ? { returned: entry.returned } : {}) };
 }
 // Réconciliation : toujours avec la clé du compte propriétaire de l’agent (même inactif pour la dépense) ; un autre compte ne voit pas cet agent (404).
 // Action explicite de l’orchestrateur : c’est ici qu’un 404 peut conclure « non créé » (limite documentée) ; une identité inattendue reste une décision humaine.
-export async function reconcile({ mission, key, access, registryFile, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
+export async function reconcile({ mission, confirmAbsent = false, key, access, registryFile, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
   access = accessOf(access, key);
   const { registry, entry } = await missionEntry({ mission, registryFile });
+  // Attestation humaine d’absence : seulement pour une livraison inconnue sans identité retournée ; jamais pour une identité inattendue (un agent a bien été retourné).
+  if (confirmAbsent && (entry.reason === 'identity_mismatch' || entry.returned)) return { command: 'reconcile', mission, agentId: entry.agentId, ...accountFields(entry.accountId), status: 'blocked', reason: 'confirm_absent_refused', returned: entry.returned ?? null, nextAction: 'identité inattendue : un agent a été retourné par l’API, aucune attestation d’absence possible ; décision humaine sur l’agent retourné, aucun POST.' };
+  if (confirmAbsent && !unknownDelivery(entry)) return { command: 'reconcile', mission, agentId: entry.agentId, ...accountFields(entry.accountId), status: 'blocked', reason: 'confirm_absent_not_applicable', state: entry.state, nextAction: '--confirm-absent ne s’applique qu’à une livraison inconnue (délai, réseau, 5xx, pending orphelin) ; reconcile sans option.' };
   const ownerKey = await access.keyFor(entry.accountId);
-  const reconciled = await reconcileEntry({ entry, key: ownerKey, fetchImpl, timeoutMs, now });
+  const reconciled = await reconcileEntry({ entry, key: ownerKey, fetchImpl, timeoutMs, now, confirmAbsent });
   // Identité inattendue : lire aussi l’identifiant réellement retourné par l’API, sans l’adopter ni rien créer.
   let returnedAgent;
   if (reconciled.state === 'uncertain' && reconciled.reason === 'identity_mismatch' && entry.returned?.agentId && agentIdPattern.test(entry.returned.agentId)) {
@@ -366,11 +380,11 @@ export async function reconcile({ mission, key, access, registryFile, fetchImpl,
   }
   await saveRegistry(registryFile, registry);
   const lineage = hasLineage(entry);
-  const nextAction = reconciled.state === 'not_created' ? (lineage ? 'successeur non créé : successor --mission --checkpoint <même SHA> pour une nouvelle tentative ; jamais launch (la chaîne prédécesseur/successeur serait écrasée)' : 'launch autorisé sur la même clé')
+  const nextAction = reconciled.state === 'not_created' ? (lineage ? 'successeur non créé : successor --mission --checkpoint <même SHA> pour une nouvelle tentative sur le compte suivant, ou followup --mission si le propriétaire du prédécesseur est redevenu éligible (reprise réconciliée du prédécesseur) ; jamais launch (la chaîne prédécesseur/successeur serait écrasée)' : `launch autorisé sur la même clé${reconciled.attested ? ' (absence attestée par l’orchestrateur, pas prouvée par le fournisseur)' : ''}`)
     : reconciled.reason === 'identity_mismatch' ? `identité inattendue : l’API a retourné ${entry.returned?.agentId ?? 'un identifiant inconnu'}${returnedAgent ? (returnedAgent.found ? ' (agent lisible par le propriétaire)' : ' (illisible par le propriétaire)') : ''} au lieu de ${entry.agentId}. Décision humaine : vérifier cet agent dans le tableau de bord ; aucun POST, aucun successeur, aucune nouvelle création tant que non résolu.`
-    : reconciled.reason === 'not_found_after_unknown_delivery' ? 'agent introuvable après livraison incertaine : reconcile à nouveau plus tard ; aucune création ni réémission'
+    : reconciled.reason === 'not_found_after_unknown_delivery' ? unknownDeliveryAction(mission)
     : reconciled.followup?.state === 'accepted' ? 'status --mission sur le nouveau run ; aucune réémission (limite documentée : latestRunId différent vaut acceptation, un run tiers n’est pas exclu)' : reconciled.followup?.state === 'not_created' ? 'followup --mission autorisé (aucun run accepté depuis priorRunId)' : reconciled.followup?.state === 'uncertain' ? 'dernier run de l’agent inconnu : reprise toujours incertaine ; reconcile à nouveau plus tard, aucune réémission' : reconciled.state === 'uncertain' ? 'reconcile à nouveau ; aucune création ni réémission' : undefined;
-  return { command: 'reconcile', mission, agentId: entry.agentId, ...accountFields(entry.accountId), status: reconciled.state, ...(reconciled.agent ? { agent: reconciled.agent } : {}), ...(reconciled.reason ? { reason: reconciled.reason } : {}), ...(reconciled.returned ? { returned: reconciled.returned } : {}), ...(returnedAgent ? { returnedAgent } : {}), ...(reconciled.followup ? { followup: reconciled.followup } : {}), ...(lineage ? { lineage: { successorOf: entry.successorOf ?? null, predecessors: (entry.predecessors ?? []).length } } : {}), ...(nextAction ? { nextAction } : {}) };
+  return { command: 'reconcile', mission, agentId: entry.agentId, ...accountFields(entry.accountId), status: reconciled.state, ...(reconciled.agent ? { agent: reconciled.agent } : {}), ...(reconciled.reason ? { reason: reconciled.reason } : {}), ...(reconciled.delivery ? { delivery: reconciled.delivery } : {}), ...(reconciled.attested ? { attested: true } : {}), ...(reconciled.returned ? { returned: reconciled.returned } : {}), ...(returnedAgent ? { returnedAgent } : {}), ...(reconciled.followup ? { followup: reconciled.followup } : {}), ...(lineage ? { lineage: { successorOf: entry.successorOf ?? null, predecessors: (entry.predecessors ?? []).length } } : {}), ...(nextAction ? { nextAction } : {}) };
 }
 
 // Checkpoint : une lecture du run, diff par rapport au dernier état enregistré, résultat tronqué.
@@ -413,6 +427,27 @@ export async function status({ agentId, runId, mission, account, registryFile, s
   return { command: 'status', status: 'ok', changed: changes.length > 0, changes, terminal: terminalRunStatuses.has(run.status), run, ...accountFields(accountId), ...(entry?.selection ? { selection: selectionReceipt(entry.selection, { createAccepted: true, entry }) } : {}) };
 }
 
+// Reprise du prédécesseur après un successeur définitivement non créé : l’entrée redevient le prédécesseur (agent, compte, run, branche, sélection réelle), la chaîne
+// recule d’un cran, la tentative abandonnée reste tracée (`abandonedSuccessors`, compteur de tentatives conservé pour ne jamais réutiliser un identifiant).
+// Seulement si le propriétaire du prédécesseur est éligible pour sa sélection (sinon blocage unique : successor sur le compte suivant, ou --account explicite après startBlock).
+async function resumePredecessor({ entry, registry, registryFile, mission, access, account, now }) {
+  if (!access.pool) return { blocked: { status: 'blocked', reason: 'pool_required', nextAction: 'mission à chaîne : le pool de comptes est requis pour reprendre le prédécesseur.' } };
+  if (entry.state === 'uncertain') return { blocked: { status: 'blocked', reason: 'successor_uncertain', nextAction: `reconcile --mission ${mission} : le successeur n’est pas prouvé non créé.` } };
+  const pred = entry.predecessors[entry.predecessors.length - 1];
+  const modelId = pred.selection?.modelId ?? entry.selection?.modelId ?? null;
+  const owner = await access.pool.owner({ accountId: pred.accountId, modelId });
+  if (!owner.known) return { blocked: { status: 'blocked', reason: 'predecessor_owner_unknown', predecessor: { agentId: pred.agentId, accountId: pred.accountId }, nextAction: `compte ${pred.accountId} absent de l’état du pool : aucune reprise.` } };
+  if (owner.confirmedUnavailable) return { blocked: { status: 'blocked', reason: 'predecessor_owner_unavailable', predecessor: { agentId: pred.agentId, accountId: pred.accountId }, pool: owner.pool, poolState: owner.poolState, nextAction: `successeur non créé et propriétaire ${pred.accountId} confirmé indisponible (${owner.pool} : ${owner.poolState}) : successor --mission ${mission} --checkpoint <SHA enregistré> pour une nouvelle tentative sur le compte suivant ; aucun POST ici.` } };
+  if (owner.startBlocked && account !== pred.accountId) return { blocked: { status: 'blocked', reason: 'predecessor_owner_start_blocked', predecessor: { agentId: pred.agentId, accountId: pred.accountId }, startBlock: owner.startBlock, nextAction: `départs bloqués sur ${pred.accountId} (plafond) : relever la limite puis valider explicitement « followup --mission ${mission} --account ${pred.accountId} » ; aucun POST.` } };
+  const abandoned = { agentId: entry.agentId, accountId: entry.accountId ?? null, attempt: entry.successorAttempts ?? null, state: entry.state, ...(entry.reason ? { reason: entry.reason } : {}), ...(entry.httpStatus ? { httpStatus: entry.httpStatus } : {}), ...(entry.providerCode ? { providerCode: entry.providerCode } : {}), ...(entry.delivery ? { delivery: entry.delivery } : {}), abandonedAt: now() };
+  for (const field of ['runId', 'url', 'followup', 'followups', 'reason', 'httpStatus', 'providerCode', 'returned', 'delivery', 'currentSelection', 'exception']) delete entry[field];
+  const remaining = entry.predecessors.slice(0, -1);
+  Object.assign(entry, { agentId: pred.agentId, accountId: pred.accountId, runId: pred.runId, ...(pred.url ? { url: pred.url } : {}), ...(pred.followups ? { followups: pred.followups } : {}), state: 'reconciled', predecessors: remaining, abandonedSuccessors: [...(entry.abandonedSuccessors ?? []), abandoned], resumedPredecessorAt: now(), ...(pred.checkpoint?.ref ? { ref: pred.checkpoint.ref } : {}), ...(pred.workOnCurrentBranch !== undefined ? { workOnCurrentBranch: pred.workOnCurrentBranch } : {}), updatedAt: now() });
+  if (remaining.length) entry.successorOf = remaining[remaining.length - 1].agentId; else delete entry.successorOf;
+  if (pred.exception && pred.selection) Object.assign(entry, { currentSelection: { key: pred.selection.key, modelId: pred.selection.modelId, params: pred.selection.params, catalog: null }, exception: pred.exception });
+  await saveRegistry(registryFile, registry);
+  return { resumed: true };
+}
 // Reprise du même agent (docs/MAINTENANCE.md : pas de doublon). Toujours : lire l'agent réel et son latestRunId, lire ce run, exiger un état terminal,
 // puis un seul POST sans champ model (la sélection initiale s'applique telle quelle). Avec --mission, la tentative est persistée avant l'envoi et
 // une livraison inconnue impose reconcile avant toute réémission. Sans registre (--agent), garde minimale seulement : aucune idempotence.
@@ -420,8 +455,17 @@ export async function status({ agentId, runId, mission, account, registryFile, s
 export async function followup({ agentId, mission, account, registryFile, promptText, key, access, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
   access = accessOf(access, key);
   let registry, entry, accountId = account === undefined ? undefined : assertAccountId(account);
+  // Mode pool sans registre de mission : le raccourci --agent contournerait le propriétaire, l’indisponibilité du pool, le startBlock et un prédécesseur remplacé. Refus ;
+  // les anciens agents restent lisibles (status --agent --account). Le mode CURSOR_API_KEY (un seul compte implicite) garde sa garde minimale historique.
+  if (mission === undefined && access.pool) return { command: 'followup', status: 'blocked', reason: 'registry_required', ...(agentId ? { agentId } : {}), ...accountFields(accountId), nextAction: 'mode pool : reprise seulement par « followup --mission K --registry f » (propriétaire, pool, startBlock et chaîne vérifiés) ; sans mission connue, reconcile --mission ou lecture seule par status --agent … --account <propriétaire>. Aucun POST.' };
   if (mission !== undefined) {
     ({ registry, entry } = await missionEntry({ mission, registryFile }));
+    // Successeur définitivement non créé (refus explicite, non émis ou absence attestée) et propriétaire du prédécesseur redevenu éligible : reprise réconciliée du
+    // prédécesseur terminal (même agent, même compte, chaîne et sélection conservées, tentative abandonnée enregistrée), plutôt qu’un renvoi en boucle vers successor.
+    if (['failed', 'not_created'].includes(entry.state) && hasLineage(entry) && Array.isArray(entry.predecessors) && entry.predecessors.length) {
+      const resumed = await resumePredecessor({ entry, registry, registryFile, mission, access, account, now });
+      if (resumed.blocked) return { command: 'followup', agentId: entry.agentId, ...accountFields(entry.accountId), ...resumed.blocked };
+    }
     if (!['launched', 'reconciled'].includes(entry.state)) throw new UsageError(`Mission en état ${entry.state} : ${entry.state === 'not_created' || entry.state === 'failed' ? (hasLineage(entry) ? 'successor --checkpoint <SHA enregistré> (nouvelle tentative, jamais launch)' : 'launch') : 'reconcile'} avant toute reprise.`);
     agentId ??= entry.agentId;
     if (agentId !== entry.agentId) throw new UsageError('L’agent indiqué n’est pas celui de la mission.');
@@ -431,7 +475,7 @@ export async function followup({ agentId, mission, account, registryFile, prompt
   assertAgentId(agentId);
   if (typeof promptText !== 'string' || !promptText.trim() || promptText.length > 200_000) throw new UsageError('Brief de reprise vide ou trop long.');
   const receipt = entry
-    ? { selection: entry.selection ? selectionReceipt(entry.selection, { createAccepted: true, entry }) : undefined, modelSent: false, persistent: true }
+    ? { selection: entry.selection ? selectionReceipt(entry.selection, { createAccepted: true, entry }) : undefined, modelSent: false, persistent: true, ...(entry.abandonedSuccessors?.length ? { resumedPredecessor: { abandonedSuccessors: entry.abandonedSuccessors.map(a => ({ agentId: a.agentId, accountId: a.accountId, attempt: a.attempt, state: a.state })), lineage: { successorOf: entry.successorOf ?? null, predecessors: (entry.predecessors ?? []).length } } } : {}) }
     : { modelSent: false, persistent: false, note: 'Sans registre : aucune idempotence ; en cas de livraison inconnue, lire l’agent (latestRunId) soi-même ; aucune répétition automatique. Utiliser --mission/--registry pour une reprise réconciliable.' };
   const report = (fields) => ({ command: 'followup', agentId, ...accountFields(accountId), ...fields, ...receipt });
   const persist = async (fields) => { if (!entry) return; Object.assign(entry, fields, { updatedAt: now() }); await saveRegistry(registryFile, registry); };
@@ -610,7 +654,7 @@ function parseArgs(args) {
     const arg = args[i];
     if (!arg.startsWith('--')) throw new UsageError(`Argument inconnu : ${arg}`);
     const name = arg.slice(2);
-    if (['follow', 'full', 'auto-pr', 'new-branch'].includes(name)) options.flags.add(name);
+    if (['follow', 'full', 'auto-pr', 'new-branch', 'confirm-absent'].includes(name)) options.flags.add(name);
     else if (['model-file', 'select', 'mission', 'repo', 'ref', 'pr-url', 'prompt-file', 'registry', 'name', 'agent', 'run', 'state', 'account', 'checkpoint', 'exclude', 'branch'].includes(name) && i + 1 < args.length) options[name] = args[++i];
     else throw new UsageError(`Option inconnue ou incomplète : ${arg}`);
   }
@@ -619,10 +663,10 @@ function parseArgs(args) {
 const help = `cursor-agents — orchestration Creezio Lite (accès : CURSOR_API_KEY en environnement, sinon pool commun de comptes via CURSOR_CREDENTIALS_FILE)
   preflight [--select fable|opus|grok] [--model-file f] [--account id]
   launch --mission K --repo URL (--ref BRANCHE | --pr-url URL) --prompt-file f --registry f [--select clé] [--account id] [--name n] [--auto-pr] [--new-branch]
-  reconcile --mission K --registry f            (tranche aussi une reprise pending/uncertain : accepté ou non créé ; clé du compte propriétaire)
+  reconcile --mission K --registry f [--confirm-absent]   (tranche une reprise pending/uncertain ; livraison inconnue : 404 ≠ absence, seule l’attestation humaine --confirm-absent conclut non créé)
   status (--mission K --registry f | --agent bc-… --run run-… [--account id]) [--state f] [--follow] [--full]
   followup --mission K --registry f --prompt-file f   (reprise persistée et réconciliable, même agent, même compte propriétaire)
-  followup --agent bc-… --prompt-file f [--account id] (sans registre : garde minimale, aucune idempotence ; livraison inconnue ⇒ lire l’agent soi-même)
+  followup --agent bc-… --prompt-file f                (CURSOR_API_KEY seulement : garde minimale, aucune idempotence ; refusé en mode pool, où le registre de mission est requis)
   successor --mission K --registry f --prompt-file f --checkpoint SHA [--branch b] [--name n]   (pool : propriétaire confirmé indisponible, prédécesseur relu terminal, branche de travail observée, checkpoint attesté, compte premium suivant, même sélection)
   accounts [--select clé] [--exclude id]         (pool : état des comptes et décision à blanc, aucun appel API)
 Reprise : lecture de l’agent réel (latestRunId) puis du run actuel ; terminal exigé ; un seul POST sans champ model ; livraison inconnue ⇒ reconcile avant réémission.
@@ -649,7 +693,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
       const promptText = await readFile(options['prompt-file'], 'utf8');
       return emit(await launch({ mission: options.mission, repo: options.repo, ref: options.ref, prUrl: options['pr-url'], promptText, name: options.name, autoCreatePR: options.flags.has('auto-pr'), workOnCurrentBranch: !options.flags.has('new-branch'), config, select: options.select, account: options.account, access, registryFile: options.registry, fetchImpl }));
     }
-    if (command === 'reconcile') return emit(await reconcile({ mission: options.mission, access, registryFile: options.registry, fetchImpl }));
+    if (command === 'reconcile') return emit(await reconcile({ mission: options.mission, confirmAbsent: options.flags.has('confirm-absent'), access, registryFile: options.registry, fetchImpl }));
     if (command === 'status') {
       let interval = 0, code = exitCodes.ok;
       for (;;) {
