@@ -1,53 +1,61 @@
 # Profils, capacités, groupes — proposition KIT-ACCESS-CONTRACT
 
-Statut : **proposition** (heads `0e85503` → `800f348`). Pas de capacité livrée. Astra tranche ; pilotes d’app gardent leur plan. Aucun schéma privé d’app.
+Statut : proposition. Revue ACCESS-R `REQUEST_CHANGES` B1–B8 sur `9b3bf63`. Ancêtres `0e85503`, `800f348`. Pas de runtime livré. Astra tranche ; pilotes d’app gardent leur plan. Aucun schéma privé d’app.
 
 ## 1. Limite actuelle
 
-Identité, invitations, `lite_members`, admin d’espace : natifs. Rôles `owner|admin|member|viewer` (`types.ts`). Groupes `lite_access_groups.members_json` ⊂ membres du `org_id` (`access.ts`). `workspace()` unionne `role:{role}` et groupes custom (`api.ts`). `operationAllowed` : `op.roles`, puis `essential` **ou owner → true**, puis seul `deny` refuse ; **`allow` inerte**. UI : inherit ≠ grant ; deny prioritaire ; effet à la requête suivante. MCP ∩ `tokenAllowed` ∩ mode ; OAuth `crm:read`/`crm:write`. Clé : membership vivant. `ScopeProvider` filtre SQL ; pas de bypass owner sur les lignes ; owner court-circuite ops/module. Native : tout admin `PUT` membres/politiques des groupes non-owner — **pas** de séparation délégation/détention, **pas** d’API d’évaluation consommable.
+Identité, invitations, `lite_members`, admin d’espace : natifs (`types.ts`, `api.ts`, `access.ts`). `operationAllowed` : `op.roles`, puis `essential` **ou owner → true**, puis seul `deny` ; **`allow` inerte**. `canReadModule` : owner → true, deny `module:${id}` (`operations.ts`). `AppExtensions` = `beforeWrite` | `operations` | `scope` (`types.ts`) ; `defineExtensions` n’a pas de détecteur d’accès (`commands.ts`). Nav / `session.me` / `modules.list` (essential) s’appuient sur `canReadModule`. Groupes `role:*` exposés comme groupes UI. Pas de helper consommable. Pas d’ops `access.receipt.*`.
 
-## 2. Décisions
+## 2. Décisions (B1–B8)
 
-1. Identité/auth/membership/invitations/admin d’espace **natifs**.
-2. Profils/capacités déclarés, IDs stables ≠ labels, **révision** par profil. Capacités v1 = **IDs d’opération explicites** (pas de joker `module:<id>`).
-3. Liaison versionnée `groupId→profileId` ; **interdit** de la reconstruire depuis `allow`. Stockage additif **après inventaire** (pas de schéma/numéro ici). Pas de RBAC app parallèle. Groupes/UI deny-inherit conservés.
-4. Lien métier `userId`↔entité sans y stocker rôle/auth/adhésion. `ScopeProvider` app **ne refait pas** le RBAC.
-5. **Q2** : bypass owner **seulement** `workspaceAdminOperationIds`. Ops app **et** données : profil + scope. `kind:'system'` n’est pas un blanc-seing. Owner : **aucun** bypass row-scope. Audit admin **n’expose pas** d’IDs de ressources privées.
-6. Deny prioritaire. Grant n’élève pas le rôle et n’ouvre pas d’`essential`.
-7. **Legacy permissif uniquement si `AccessDeclaration` absente.** Déclaration présente + reçu absent / périmé / `catalogRevision` ≠ déclaration = **configuration incomplète** : default-deny ops/données app ; **seule** récupération = admin d’espace borné (§3) + essential.
-8. Premier reçu : `allow` inertes **non** activés ; bindings explicites ; default-deny initial.
-9. Inconnus (profil, capacité, révision, scope, mode, snapshot) → refus. Snapshot **par requête** ; jobs/`defer` **revalident** ; provenance body/query **refusée**.
-10. Délégation transitive : binding, `PUT` membres d’un groupe déjà lié, changement de rôle natif, adoption/rebind — `assignableBy`/`receivableBy`/`assignmentApproval`. Autorité **avant** transaction, état serveur, CAS révisions ou garde atomique. Échec → **zéro effet**.
-11. Helper natif readonly : intersection deny ∩ credential ∩ révision ∩ bornes ; décision + raison bornée. IDs de profil observés **≠** autorisation.
+1. Opt-in = `AppExtensions.access?: AccessDeclaration`. **Absent ⇒ `legacy`.** Présent ⇒ `incomplete` | `adopted` selon le reçu. `defineExtensions` **valide** la déclaration (fail-closed) ; deux kits ne divergents pas sur « présent ».
+2. Récupération `incomplete`→`adopted` : ops natives `access.receipt.update` (adopt/rebind), `access.bind`, `access.unbind` ∈ `workspaceAdminOperationIds`. Skip (7) **n’exempte pas** `authorizeDelegationDecision`.
+3. `groupId` matching `/^role:/` **refusé** à bind/adopt (pas de profil métier inféré de owner/admin/member/viewer). Invitations, `members.remove`, `access.groups.delete` d’un groupe **lié** : `DelegationMutation` + délégation avant commit.
+4. `op.roles` = **plafond**. Déclaration invalide si un `receivableBy` ∉ `op.roles` d’une op citée.
+5. Helper **pur** `evaluateAccessDecision` / `authorizeDelegationDecision` (entrée ci-dessous). Fermetures **de cette requête** sur `AppOperationContext`, `BeforeWrite`, `FileDeletionContext`. CRUD, search, files, `canReadModule`, nav, `session.me`, `tools/list`, OpenAPI : **le même** évaluateur. `observedProfileIds` = observation, pas un droit.
+6. Owner : aucun shortcut hors liste §3, **y compris** découverte. `module:` n’est jamais un **grant** (deny `module:` reste fail-closed).
+7. `assignmentApproval` v1 = `'owner'` seulement. `'workspace-rule'` **hors v1** (pas de hook, pas T21 moteur app).
+8. Listes vides, capability inconnue, op `module:` / essential, `assignableBy`/`receivableBy` vides → **refus de déclaration**.
+9. Capability query : **toutes** les ops de la capability doivent passer. Cardinalité : N liaisons / groupe custom ; unique `(groupId, profileId)` ; `groupId` = id `lite_access_groups` (pas `role:*`).
+10. `catalogRevision` : chaîne opaque, égalité seulement. `validUntil` : RFC3339 optionnel vs `now` **serveur**. HTTP public inchangé (`403 operation_forbidden`, `409 version_conflict`) ; `reason` reste le helper.
+11. `mcp.tools.available` / `mcp.tools.call` essential = enveloppe ; l’outil interne passe par le même évaluateur (comme `tools.ts` ∩ `operationAllowed` aujourd’hui).
+12. Legacy permissif **uniquement** sans déclaration. `allow` inertes au premier reçu. Inconnus → refus. Snapshot par requête ; jobs revalident. Scope user↔entité ≠ RBAC. Audit sans `resource_id` hors scope.
 
-## 3. Types minimaux
+## 3. Types
 
 ```ts
 export type AccessProfileId = string;
 export type AccessCapabilityId = string;
 export type AccessCapability = {
   id: AccessCapabilityId; label?: string;
-  operations: readonly string[]; // Operation.id v1
+  operations: readonly string[]; // Operation.id, uniques, pas de module:
 };
 export type AccessProfile = {
   id: AccessProfileId; label?: string; revision: number;
   capabilities: readonly AccessCapabilityId[];
-  receivableBy: readonly Role[];
-  assignableBy: readonly Role[];
-  assignmentApproval: 'owner' | 'workspace-rule';
+  receivableBy: readonly Role[]; // non vide
+  assignableBy: readonly Role[]; // non vide
+  assignmentApproval: 'owner';   // v1 ; workspace-rule hors v1
 };
 export type GroupProfileBinding = {
-  groupId: string; profileId: AccessProfileId; profileRevision: number;
+  groupId: string; // UUID lite_access_groups, pas /^role:/
+  profileId: AccessProfileId; profileRevision: number;
 };
 export type AccessAdoptionReceipt = {
   catalogRevision: string;
   bindings: readonly GroupProfileBinding[];
-  validUntil?: string; // optionnel ; dépassé ⇒ incomplet
+  validUntil?: string;
 };
 export type AccessDeclaration = {
   catalogRevision: string;
   profiles: readonly AccessProfile[];
   capabilities: readonly AccessCapability[];
+};
+export type AppExtensions = {
+  beforeWrite?: BeforeWrite;
+  operations?: AppOperationDefinition[];
+  scope?: ScopeProvider;
+  access?: AccessDeclaration; // absent ⇒ legacy
 };
 export type AccessAdoptionState = 'legacy' | 'incomplete' | 'adopted';
 export type AccessDecisionReason =
@@ -60,19 +68,40 @@ export type AccessQuery =
 export type AccessDecision = Readonly<{
   allowed: boolean; reason: AccessDecisionReason;
   operationId?: string;
-  capabilityIds: readonly AccessCapabilityId[]; // celles qui autorisent vraiment ; [] si refus
+  capabilityIds: readonly AccessCapabilityId[];
 }>;
 export type AccessSnapshot = Readonly<{
   state: AccessAdoptionState;
   catalogRevision: string | null;
   receiptRevision: string | null;
-  observedProfileIds: readonly AccessProfileId[]; // observation, pas un jeton
+  observedProfileIds: readonly AccessProfileId[];
 }>;
 export type DelegationMutation =
   | { kind: 'bind' | 'unbind'; groupId: string; profileId: AccessProfileId; profileRevision?: number }
   | { kind: 'groupMembers'; groupId: string; userIds: readonly string[] }
   | { kind: 'memberRole'; userId: string; role: Role }
+  | { kind: 'memberRemove'; userId: string }
+  | { kind: 'groupDelete'; groupId: string }
+  | { kind: 'inviteCreate'; role: Role }
   | { kind: 'adopt' | 'rebind'; receipt: AccessAdoptionReceipt };
+export type EvaluateAccessInput = Readonly<{
+  snapshot: AccessSnapshot;
+  declaration: AccessDeclaration | null;
+  receipt: AccessAdoptionReceipt | null;
+  principal: Principal; // snapshot déjà noyau, pas recalculé du body
+  credential: CredentialContext;
+  denials: readonly { operationId: string; effect: 'deny' }[];
+  catalog: readonly { id: string; roles: Role[]; essential?: boolean }[];
+  query: AccessQuery;
+}>;
+export function evaluateAccessDecision(input: EvaluateAccessInput): AccessDecision;
+export function authorizeDelegationDecision(
+  input: EvaluateAccessInput & {
+    mutation: DelegationMutation;
+    group: { id: string; version: number; memberIds: readonly string[]; builtin: boolean } | null;
+    actorUserId: string;
+  }
+): AccessDecision;
 export const workspaceAdminOperationIds = [
   'workspaces.update',
   'members.list','members.get','members.update','members.remove',
@@ -80,6 +109,7 @@ export const workspaceAdminOperationIds = [
   'audit.list','audit.get',
   'access.catalog','access.groups.create','access.groups.update',
   'access.groups.delete','access.policies.update',
+  'access.receipt.update','access.bind','access.unbind',
   'tokens.list','tokens.create','tokens.revoke',
   'mcp.status','mcp.tools','mcp.clients','mcp.diagnostics','mcp.metrics',
   'mcp.clients.revoke','mcp.diagnostics.export','mcp.policies.update',
@@ -87,52 +117,45 @@ export const workspaceAdminOperationIds = [
 ] as const;
 ```
 
-Hors liste (incomplet/adopté → pas de bypass owner) : files, dashboard, search.query, mail, CRUD modules, search admin, `api.catalog`, logs, analytics, integrations, assistant.
+`defineExtensions(app, ext, catalog?)` : si `ext.access` absent → legacy, pas d’autre contrôle d’accès ; si présent → valide ou throw (même famille qu’aujourd’hui pour les ops).
 
-Validation déclaration : IDs uniques, ops ⊂ catalogue non-essential, bornes ⊂ `Role`, `assignmentApproval` obligatoire. **Pas** de défaut `assignableBy=['admin']`.
+**Fail-closed déclaration** : IDs profils/capabilities uniques ; `profile.capabilities ⊆ capabilities.id` ; chaque `operations[]` unique, ⊂ catalogue, **sans** `module:` ni `essential` ; chaque `receivableBy` ⊆ `op.roles` de **chaque** op citée (plafond) ; `assignableBy`/`receivableBy` **non vides** (vide = invalide, pas « personne » fail-open) ; `assignmentApproval === 'owner'` ; `catalogRevision` non vide ; pas de défaut `assignableBy=['admin']`. Bindings du reçu : `groupId` ≰ `/^role:/`, `(groupId, profileId)` unique, `profileId` ∈ déclaration, `profileRevision` = révision déclarée.
 
-## 4. États et évaluation
+## 4. États, snapshot, évaluation
 
-| État | Condition | Ops/données app | Admin espace + essential |
+| État | Détecteur | (7) ops/données | Admin §3 + essential enveloppe |
 |---|---|---|---|
-| `legacy` | **pas** de `AccessDeclaration` | régime actuel (`op.roles`, deny, owner bypass deny) | inchangé |
-| `incomplete` | déclaration **et** (reçu absent \| `validUntil` dépassé \| `receipt.catalogRevision` ≠ déclaration) | **default-deny** | récupération native bornée seulement |
-| `adopted` | reçu vivant, révisions concordantes | § évaluation (7) | liste §3, régime natif |
+| `legacy` | `access` **absent** | `operationAllowed` actuel | inchangé |
+| `incomplete` | `access` présent et (reçu absent, `validUntil` dépassé côté serveur, ou révision ≠) | **default-deny** | récupération ; `access.receipt.update` **avec** délégation |
+| `adopted` | reçu vivant, révisions égales | helper (7) | skip (7) ≠ skip délégation |
 
-`legacy` n’est **jamais** le repli d’un reçu manquant. `allow` historiques ignorés dès qu’une déclaration existe.
+`legacy` n’est jamais le repli d’un reçu manquant. `allow` ignorés dès que `access` est présent.
 
-Évaluation `adopted`, serveur : (1) identité + membership `org_id` ; (2) credential ∩ mode/scopes ; (3) `op.roles` ; (4) `essential` inchangé ; (5) deny groupe → refuse (**y compris owner** hors liste) ; (6) liste §3 → rôle natif, skip (7) ; (7) liaison vivante `profileRevision` = déclaration, op ∈ capability, rôle ∈ `receivableBy` — via helper, pas via « j’ai le profil P » ; (8) `ScopeProvider` (owner inclus). `incomplete` : (1)–(6) puis refuse (7). Snapshot figé **pour cette requête** ; un job reconstruit puis rappelle le helper.
+**Snapshot** (noyau, par requête) : `declaration` = `AppExtensions.access` ; `receipt` = reçu vivant d’espace ; `observedProfileIds` = profils des liaisons **custom** dont le membre fait partie et dont la révision concorde — **pas** une autorisation. Jobs : reconstruire l’entrée, rappeler le helper. Body/query (`access`, `profileId`, `observedProfileIds`, `catalogRevision`, `evaluateAccess`, `authorizeDelegation`) → 400, ignorés.
 
-## 5. API consommable (bind, pas l’implémentation)
+Éval `adopted` : (1) identité + membership `org_id` ; (2) credential ∩ mode/scopes ; (3) `op.roles` (plafond déjà validé) ; (4) essential **enveloppe** (session/health/`mcp.tools.*` transport) — le **contenu** découverte n’est pas essential ; (5) deny (id op ; `module:` deny fail-closed) y compris owner hors §3 ; (6) si op ∈ liste §3 : rôle natif, skip (7), **délégation si mutation** ; (7) sinon `evaluateAccessDecision` : liaison vivante, op ∈ capability, rôle ∈ `receivableBy` ; (8) `ScopeProvider`. `kind:'capability'` : `allowed` ssi **toutes** les ops de la capability passent (7)+(2)+(5). `incomplete` : refuse (7). `canReadModule` / nav / `modules.list` / `session.me` permissions / OpenAPI / `tools/list` : pour chaque module, `evaluateAccessDecision` sur `module.<id>.list` (ou get) — **pas** owner→true. Pas de grant `module:`.
 
-Champs **additifs readonly**, construits par le noyau, jamais depuis body/query (`rejectedCommandFields` déjà : `principal`, `role`, … — y ajouter `access`, `evaluateAccess`).
+Pas de keep-alive shell implicite après adoption : dashboard/search/files/mail/assistant exigent des **IDs d’op** dans une capability liée (proposition : l’app les déclare ; le kit n’invente pas un profil magique).
 
-- `Principal.access: AccessSnapshot`
-- `AppOperationContext.access` + `evaluateAccess(query: AccessQuery): AccessDecision` (fermeture sur le snapshot de **cette** requête)
-- `BeforeWrite` : reçoit `principal` (donc le snapshot) — delta vs signature actuelle `{workspace, identity}`
-- `ScopeProvider.recordFilter(principal, …)` : relation user↔entité ; **interdit** de réimplémenter groupes/profils/SQL d’accès
+## 5. Fermetures request-scope
 
-```ts
-evaluateAccess(query: AccessQuery): AccessDecision;
-authorizeDelegation(mutation: DelegationMutation): AccessDecision;
-```
+Noyau construit `EvaluateAccessInput` une fois par requête. Il expose :
 
-Le helper intersecte deny, credential, révisions, `receivableBy`/`assignableBy`. Sortie = `AccessDecision` (raison fermée, pas d’internals SQL). `observedProfileIds` ne suffit jamais. Appels jobs : **nouvel** `evaluateAccess` / `authorizeDelegation` à l’exécution. Pas une promesse livrée par ce lot.
+`evaluateAccess(query)` → `evaluateAccessDecision(input+query)`  
+`authorizeDelegation(mutation, group)` → `authorizeDelegationDecision(...)`
 
-## 6. Délégation transitive et atomicité
+sur `AppOperationContext`, `BeforeWrite` (delta vs `{workspace, identity}`), `FileDeletionContext`. L’app **n’importe pas** un moteur de rôles et **ne relit pas** SQL groupes. `ScopeProvider` = user↔entité seulement.
 
-Réutiliser : `requireRole`, `role:owner` locked, `owner_protected`, `members.update` owner-only, `WHERE version=?` / `changes()=1`.
+## 6. Délégation
 
-**Requis (absent aujourd’hui)** : `authorizeDelegation` **avant** toute mutation, sur l’état serveur (membres réels du groupe, liaisons, rôles, reçu, révisions) :
+Réutiliser `requireRole`, `role:owner` locked, `owner_protected`, `members.update` owner-only, `WHERE version=?` / `changes()=1`.
 
-- `bind`/`rebind`/`adopt` ; `groupMembers` si le groupe **a déjà** un profil ; `memberRole` si l’utilisateur est dans un groupe lié (le nouveau rôle peut entrer dans `receivableBy`) ; l’acteur dans le groupe cible **ou** qui gagnerait des ops app = self-grant → `assignmentApproval`.
+Avant transaction, état serveur : `bind`/`unbind`/`adopt`/`rebind` ; `groupMembers` si groupe lié ; `memberRole` / `memberRemove` si l’utilisateur est dans un groupe lié ; `groupDelete` si lié ; `inviteCreate` (rôle natif seulement — aucun profil, car `role:*` interdit ; si un bind `role:` fuyait : refus). Self-grant (acteur dans le groupe cible ou nouvelles ops app) → `assignmentApproval: 'owner'`. `builtin === true` (`role:*`) → `denied_delegation`. CAS `group.version` + révision liaison + membership **ou** batch atomique. Concurrent / révision périmée / revoke : `denied_conflict` | `denied_delegation`, **zéro effet**.
 
-Garde : CAS `group.version` + révision de liaison + empreinte membership **ou** batch atomique unique. Concurrent membership/binding, révision périmée, revoke : `denied_conflict` / `denied_delegation`, **zéro effet** (aucun membre ajouté, aucune liaison). Pas un simple contrôle « un profil est lié ».
-
-Audit `audit.list`/`get` : métadonnées d’action ; **pas** d’`resource_id` de fiche/fichier hors scope (pas d’oracle via alias admin). Row-scope owner : inchangé, pas de bypass.
+Audit : pas d’oracle `resource_id` hors scope. Owner : pas de bypass row-scope.
 
 ## 7. Hors lot
 
-Runtime, tests code, migration, version, changelog, skill, R01, C01. Forme physique de la liaison : inventaire. `workspace-rule` = déclaration d’app.
+Runtime, tests exécutables, migration, version, changelog, skill, R01, C01, `'workspace-rule'`, forme physique de la liaison (inventaire). Suggestions : format hash de `catalogRevision` ; profil « shell » kit — **non retenues** en v1 (opaque + ops explicites).
 
-Prochaine action : revue indépendante, puis Astra. Pas de fusion ici.
+Prochaine action : revue indépendante, puis Astra. Pas de fusion.
