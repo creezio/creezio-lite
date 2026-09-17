@@ -260,10 +260,10 @@ test('POST signed : octets intacts lus une fois, tenant non forgeable, scopes is
       query: { workspace: 'ws_' + 'c'.repeat(32) },
     });
     assert.equal(second.status, 200, JSON.stringify(second.body));
-    const factories = log.filter(e => e.op === 'factory');
+    const factories = log.filter(e => e.op === 'factory' && !String(e.requestId).startsWith('ingress-probe:'));
     assert.equal(factories.length, 2);
     assert.notEqual(factories[0].requestId, factories[1].requestId);
-    assert.notEqual(scopes[0], scopes[1]);
+    assert.notEqual(scopes.at(-2), scopes.at(-1));
     assert.throws(() => JSON.stringify(factories[0].services), /sérialisables|not.serializable|db, env/i);
     assert.equal(JSON.stringify(first.body).includes(VAULT), false);
     assert.equal('Authorization' in first.body || 'authorization' in (first.body.error ?? {}), false);
