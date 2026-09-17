@@ -6,6 +6,11 @@ import {defineExtensions} from '../runtime/core/commands.ts';
 import {createRequestAccessContext,assertRequestAccessContext,disposeRequestAccessContext,updateAccessReceipt,commitAccessMutation,accessReceiptState} from '../runtime/core/access-profiles-store.ts';
 const declaration={catalogRevision:'catalog-v1',capabilities:[{id:'read',operations:['module.clients.list']}],profiles:[{id:'reader',revision:1,capabilities:['read'],receivableBy:['owner','admin','member','viewer'],assignableBy:['owner','admin'],assignmentApproval:'owner'}]};
 const catalog=coreOperations(app);
+function grantedFixture(db,org,operationIds){
+ const access={...declaration,capabilities:[...declaration.capabilities,{id:'fixture',operations:operationIds}],profiles:[...declaration.profiles,{...declaration.profiles[0],id:'fixture',capabilities:['fixture'],receivableBy:['owner']}]};
+ db.raw.prepare('INSERT INTO lite_access_receipts(org_id,receipt_json,version,updated_at) VALUES(?,?,1,?)').run(org,JSON.stringify({catalogRevision:access.catalogRevision,bindings:[{groupId:'owners',profileId:'fixture',profileRevision:1}]}),new Date().toISOString());
+ return access;
+}
 async function fixture(fn){const db=await localDb();try{const org=await boot(client(db,alice));await boot(client(db,bob));await boot(client(db,eve));db.raw.prepare('INSERT INTO lite_members(org_id,user_id,role) VALUES(?,?,?)').run(org,'bob','admin');db.raw.prepare('INSERT INTO lite_members(org_id,user_id,role) VALUES(?,?,?)').run(org,'eve','member');for(const [id,ids]of [['readers',['eve']],['admins',['bob']],['owners',['alice']]])db.raw.prepare('INSERT INTO lite_access_groups(org_id,id,name,members_json,version,created_at) VALUES(?,?,?,?,1,?)').run(org,id,id,JSON.stringify(ids),new Date().toISOString());await fn({db,org});}finally{db.close();}}
 const receipt=(bindings=[{groupId:'readers',profileId:'reader',profileRevision:1}],extra={})=>({catalogRevision:'catalog-v1',bindings,...extra});
 async function lease(db,org,identity=alice,extra={}){const request=extra.request??new Request('https://test.example/api/v1/access/receipt'),requestId=crypto.randomUUID();const workspace={id:org,name:'Test',role:identity===alice?'owner':identity===bob?'admin':'member'};const access=await createRequestAccessContext({db,request,requestId,workspace,identity,credential:{kind:'session'},declaration,catalog,...extra});return{access,request,requestId,workspace};}
@@ -96,7 +101,8 @@ test('dispatcher passes a request lease to app commands and disposes it after re
  const {dispatchRequest}=await import('../runtime/modules/sites-adapter/src/dispatch.ts');
  const {command}=await import('../runtime/core/commands.ts');let captured;
  const op=command({moduleId:'clients',name:'access-fixture',description:'Inspect request access lease',target:'module',idempotencyKey:'none',handle:async ctx=>{captured=ctx.access;assert.ok(captured);assert.equal(captured.evaluateAccess({kind:'operation',operationId:'access.catalog'}).allowed,true);return{body:{ok:true}};}});
- const response=await dispatchRequest(new Request('https://test.example/api/v1/modules/clients/commands/access-fixture?workspace='+org,{method:'POST',headers:{origin:'https://test.example','content-type':'application/json'},body:'{}'}),{app,env:{DB:db},identity:alice},{access:declaration,operations:[op]});
+ const allowed=grantedFixture(db,org,[op.operation.id]);
+ const response=await dispatchRequest(new Request('https://test.example/api/v1/modules/clients/commands/access-fixture?workspace='+org,{method:'POST',headers:{origin:'https://test.example','content-type':'application/json'},body:'{}'}),{app,env:{DB:db},identity:alice},{access:allowed,operations:[op]});
  assert.equal(response.status,200,await response.text());assert.ok(captured);assert.equal(captured.evaluateAccess({kind:'operation',operationId:'access.catalog'}).allowed,false);
 }));
 
@@ -130,9 +136,10 @@ test('owner can remove a stale binding after member removal without weakening re
 
 test('access opt-in preserves the mail endpoint attachment size limit',async()=>fixture(async({db,org})=>{
  await import('./register-native-loader.mjs');const {dispatchRequest}=await import('../runtime/modules/sites-adapter/src/dispatch.ts');const bucket=fakeBucket();
+ const allowed=grantedFixture(db,org,['mail.draft.create']);
  const body={idempotencyKey:crypto.randomUUID(),to:['target@example.test'],subject:'Fixture',text:'Mail body',attachments:[{filename:'fixture.bin',content_type:'application/octet-stream',content_base64:Buffer.alloc(70*1024,42).toString('base64')}],access:{snapshot:{state:'adopted'}}};
- const response=await dispatchRequest(new Request('https://test.example/api/v1/email/drafts?workspace='+org,{method:'POST',headers:{origin:'https://test.example','content-type':'application/json'},body:JSON.stringify(body)}),{app,env:{DB:db,BUCKET:bucket},identity:alice},{access:declaration});
+ const response=await dispatchRequest(new Request('https://test.example/api/v1/email/drafts?workspace='+org,{method:'POST',headers:{origin:'https://test.example','content-type':'application/json'},body:JSON.stringify(body)}),{app,env:{DB:db,BUCKET:bucket},identity:alice},{access:allowed});
  const data=await response.json();assert.equal(response.status,201,JSON.stringify(data));assert.equal(data.mail.attachments[0].size_bytes,70*1024);assert.equal(bucket.store.size,1);
- // The ignored mail field cannot create or upgrade a native adoption receipt.
- assert.equal(count(db,'lite_access_receipts'),0);
+ // The ignored mail field cannot upgrade the server receipt.
+ assert.equal(count(db,'lite_access_receipts'),1);assert.equal(db.raw.prepare('SELECT version FROM lite_access_receipts WHERE org_id=?').get(org).version,1);
 }));

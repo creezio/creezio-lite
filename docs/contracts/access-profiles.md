@@ -187,3 +187,10 @@ Audit : pas d’oracle `resource_id` hors scope. Owner : pas de bypass row-scope
 Runtime, tests exécutables, migration, version, changelog, skill, R01, C01, `'workspace-rule'`, forme physique de la liaison (inventaire). Suggestions : format hash de `catalogRevision` ; profil « shell » kit — **non retenues** en v1 (opaque + ops explicites).
 
 Prochaine action : revue indépendante, puis Astra. Pas de fusion.
+
+
+### Filtered discovery envelopes
+
+The transport adapter treats exactly `modules.list`, `registry.list`, `api.openapi` and `nav.list` as filtered discovery envelopes. Role, credential and explicit operation/module denies remain enforced before returning the envelope. Each contained module or operation is evaluated separately with the same request context. This does not change the engine transport-envelope helper, does not grant business capabilities and does not extend to other essential operations. An incomplete owner sees no business content; only role-authorized native recovery operations remain available.
+
+Audit list/detail and indexed search correlate business resource IDs with the existing record/file scopes before returning rows or snippets. Unknown or orphan business resources are hidden conservatively, including resources of removed modules. Only an explicit list of native workspace/access recovery events can be shown without a business row; audit permission alone grants no business resource visibility.

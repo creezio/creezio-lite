@@ -180,3 +180,20 @@ export async function updateAccessReceipt(context:RequestAccessContext,mutation:
   ],{action:'access.'+mutation.kind,resourceId:lease.workspaceId});
   return lease.state.receiptVersion+1;
 }
+
+/** Validate an existing server lease; this helper never constructs authority. */
+export function requestAccessMatches(context:RequestAccessContext|null,workspaceId:string,role:Role,userId?:string,credential?:Principal['credential']):boolean{
+ const lease=context?leases.get(context):undefined;
+ return !!lease?.active&&lease.workspaceId===workspaceId&&lease.input.principal.role===role&&(userId===undefined||lease.actorUserId===userId)&&(credential===undefined||lease.input.principal.credential===credential);
+}
+export function scopeAccessMatches(context:RequestAccessContext|null,principal:Principal):boolean{
+ if(!requestAccessMatches(context,principal.workspaceId,principal.role,principal.userId,principal.credential))return false;
+ const lease=leases.get(context!)!;
+ return lease.input.snapshot.state==='adopted'&&(!lease.input.receipt?.validUntil||Date.parse(lease.input.receipt.validUntil)>Date.now());
+}
+export function accessModuleReadable(context:RequestAccessContext,moduleId:string):boolean{
+ const lease=leases.get(context);if(!lease?.active)return false;
+ const ids=['module.'+moduleId+'.list',moduleId+'.list','module.'+moduleId+'.get',moduleId+'.get',moduleId+'.detail'];
+ const operationId=ids.find(id=>lease.input.catalog.some(op=>op.id===id));
+ return !!operationId&&context.evaluateAccess({kind:'operation',operationId}).allowed;
+}

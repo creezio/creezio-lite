@@ -28,8 +28,8 @@ export function nativeEntries(app: AppDefinition): NavCatalogEntry[] {
     ...moduleRegistry(app).filter(m=>m.kind==='business'&&m.navigation).map((m,i):NavCatalogEntry=>({id:`module.${m.id}`,href:m.href,label:m.name,icon:'FileText',group:'brand',order:40+i,source:'module',available:true,defaultVisible:true,permission:`module.${m.id}.read`}))];
 }
 export function permissions(c:NativeContext,app:AppDefinition):string[] {
-  return [...(['owner','admin'].includes(c.workspace.role)?['platform.access.manage','platform.users.manage']:[]),
-    ...app.modules.filter(m=>(m.readRoles??['owner','admin','member','viewer']).includes(c.workspace.role)&&canReadModule(c.workspace,m.id)).map(m=>`module.${m.id}.read`)];
+  return [...(['owner','admin'].includes(c.workspace.role)&&(!c.access||c.access.evaluateAccess({kind:'operation',operationId:'access.catalog'}).allowed)?['platform.access.manage','platform.users.manage']:[]),
+    ...app.modules.filter(m=>(m.readRoles??['owner','admin','member','viewer']).includes(c.workspace.role)&&canReadModule(c.workspace,m.id,c.access)).map(m=>`module.${m.id}.read`)];
 }
 export function navMount(c: NativeContext, app: AppDefinition) {
   const org = c.workspace.id;
@@ -49,7 +49,13 @@ export function navMount(c: NativeContext, app: AppDefinition) {
     return {value,statement};
   }
   return createNavMount({
-    osEntries:()=>nativeEntries(app).filter(e=>{const id=moduleRegistry(app).find(m=>m.href===e.href)?.id;return !id||canReadModule(c.workspace,id);}), features:{plugins:false,fleet:false},
+    osEntries:()=>nativeEntries(app).filter(e=>{
+      const id=moduleRegistry(app).find(m=>m.href===e.href)?.id;
+      if(!c.access)return !id||canReadModule(c.workspace,id);
+      if(id)return canReadModule(c.workspace,id,c.access);
+      const mapped:Record<string,string>={'os.dashboard':'dashboard.get','os.mails':'mail.list','os.documents':'files.list','os.support':'support.list','os.audit':'audit.list','os.analytics':'analytics.overview','os.search':'search.settings','os.api':'api.catalog','os.mcp':'mcp.status','os.access':'access.catalog','os.integrations':'integrations.list','os.connections':'tokens.list',[OS_ADMIN_NAV_ENTRY.id]:'access.catalog'};
+      return !!mapped[e.id]&&c.access.evaluateAccess({kind:'operation',operationId:mapped[e.id]}).allowed;
+    }), features:{plugins:false,fleet:false},
     getSession:()=>({sub:c.user.userId,role:c.workspace.role==='owner'?'owner':'collaborator',permissions:permissions(c,app),impersonating:false}),
     persistence:{list,
       async upsert(patch,actor) {admin(c);const p=await prepare(patch,actor);await c.db.batch([p.statement,audit(c,'nav.update',patch.entryId)]);return (await list()).find(v=>v.entryId===patch.entryId)!;},

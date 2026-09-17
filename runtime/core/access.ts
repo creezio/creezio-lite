@@ -1,4 +1,4 @@
-import { createRequestAccessContext, assertRequestAccessContext, disposeRequestAccessContext, accessReceiptState, updateAccessReceipt, commitAccessMutation } from './access-profiles-store.ts';
+import { createRequestAccessContext, assertRequestAccessContext, disposeRequestAccessContext, accessReceiptState, updateAccessReceipt, commitAccessMutation, type RequestAccessContext } from './access-profiles-store.ts';
 import { sessionCredential } from './scope.ts';
 import { validateSchema } from './tools.ts';
 import type { ApiContext, AppExtensions, Workspace } from './types.ts';
@@ -88,8 +88,8 @@ export async function accessRoute(request:Request,c:ApiContext,org:Workspace,ope
   }finally{if(!c.access)disposeRequestAccessContext(access);}
 }
 
-export function openApiDocument(operations:Operation[],app:ApiContext['app'],org:Workspace){
-  const paths:Record<string,any>={};for(const op of operations.filter(o=>operationAllowed(o,org))){
+export function openApiDocument(operations:Operation[],app:ApiContext['app'],org:Workspace,access?:RequestAccessContext){
+  const paths:Record<string,any>={};for(const op of operations.filter(o=>operationAllowed(o,org,access))){
     const path=op.path.replace(/:([A-Za-z0-9_]+)/g,'{$1}');const parameters=[...op.path.matchAll(/:([A-Za-z0-9_]+)/g)].map(m=>({name:m[1],in:'path',required:true,schema:{type:'string'}}));
     for(const [key,schema] of Object.entries(op.querySchema?.properties??{}))parameters.push({name:key,in:'query',required:op.querySchema?.required?.includes(key)??false,schema:schema as any});
     (paths[path]??={})[op.method.toLowerCase()]={operationId:op.id,summary:op.description,tags:[op.moduleName],parameters,...(op.bodySchema?{requestBody:{required:true,content:{'application/json':{schema:op.bodySchema}}}}:{}),...(op.requestType==='file'?{requestBody:{required:true,content:{'application/octet-stream':{schema:{type:'string',format:'binary'}}}}}:{}),responses:{[op.method==='POST'&&/create|upload$/.test(op.id)?'201':'200']:{description:'Succès'},'400':{description:'Entrée invalide'},'401':{description:'Authentification requise'},'403':{description:'Accès refusé'},'409':{description:'Conflit de version'}},'x-lite-essential':Boolean(op.essential),'x-lite-mcp':op.mcp};
