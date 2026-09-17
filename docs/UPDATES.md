@@ -124,3 +124,11 @@ Hors périmètre (empreintes brutes **préexistantes**, pas le parser corrigé) 
 Réception fiable : checkout isolé exact en LF, sans changer la configuration Git globale — `git -c core.autocrlf=false` et `core.eol=lf` à la création ou au checkout. Ne jamais falsifier `lite.lock.json` ni `manifest.json`, ni écraser de vraies modifications locales. Un clone d’application déjà converti en CRLF exige une réception explicite depuis les octets Git, pas un `adopt --apply` forcé et silencieux.
 
 Les ressources distribuées du standard sont **inchangées** par rapport à 0.13.0. Le CLI 0.13.1 suffit au parser ; une adoption 0.13 déjà valide n’a **ni ré-adoption ni upgrade runtime** à faire pour fermer W01. La normalisation globale des empreintes CRLF reste un lot distinct. Aucune migration, aucun secret, aucune fusion de pages applicatives.
+
+## Correction 0.13.2 — Boucle active et fermeture de cycle (skill / maintenance)
+
+Documentation seulement : `SKILL.md` décrit la boucle active d’orchestration (rester dans le tour, outils existants, polling progressif ; `status --follow` émet au changement et continue tant que non terminal). `CONTRACT.md` §10 renvoie à cette compétence, sans moteur ni daemon. `docs/MAINTENANCE.md` fixe la fermeture de cycle (réception → revue → CI exacte → fusion → CI `main` → release → notification → suppression de branche, preuves SHA/PR) et interdit de supprimer une branche active ou non fusionnée (`delete_branch_on_merge` déjà configuré).
+
+Ce n’est **pas** `--references-file`, pas une capacité multi-dépôts, pas un nouveau runtime métier. Aucun cron, aucune routine nouvelle, aucune promesse de processus autonome après la fin de session. Les applications conservent leur mandat. Une copie personnelle de compétence n’est pas écrasée.
+
+Mise à jour du skill : `node <checkout-kit>/bin/lite.mjs adopt --app <dossier>` puis `--apply` depuis un checkout de cette version. **Pas d’upgrade runtime forcé** pour cette documentation ; l’upgrade habituel, s’il est lancé, n’aligne que le verrou et les chaînes de version API/MCP. Aucune migration, aucun secret.
