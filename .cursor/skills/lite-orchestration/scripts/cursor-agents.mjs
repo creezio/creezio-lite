@@ -173,16 +173,81 @@ export function targetRepoEntry({ repo, ref, prUrl }) {
 export function attachedRepos({ repo, ref, prUrl, sources = [] }) {
   return [targetRepoEntry({ repo, ref, prUrl }), ...sources.map(s => ({ url: s.url, startingRef: s.sha }))];
 }
-export function repositoryReceipt({ repo, ref, prUrl, sources = [], catalog = {}, attached, accountId }) {
-  const demanded = [repo, ...sources.map(s => s.url)];
-  const visible = (catalog.urls ?? []).filter(u => demanded.some(d => d.toLowerCase() === u.toLowerCase()));
-  return {
-    demanded: { target: targetRepoEntry({ repo, ref, prUrl }), sources },
-    visible: { urls: visible, catalogCheckedAt: catalog.checkedAt ?? null, pages: catalog.pages ?? 0, complete: catalog.complete === true, ...(accountId ? { accountId } : {}) },
-    attached: attached ?? [],
-    checkout: { observed: null, note: 'Le catalogue GET /v1/repositories atteste une visibilité du compte, pas un clonage dans le pod.' },
+const checkoutObservedNote = 'Un dépôt soumis ou annoncé n’est pas une preuve de checkout dans le pod (checkoutObserved).';
+export function parseExposedRepos(value) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length > maxAgentRepos) return null;
+  const repos = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    if (typeof item.url !== 'string') return null;
+    let url;
+    try { url = normalizeRepo(item.url); } catch { return null; }
+    const out = { url };
+    if (item.startingRef !== undefined) {
+      if (typeof item.startingRef !== 'string' || !item.startingRef || item.startingRef.length > 250 || /[\s~^:?*[\\\x00-\x1f\x7f]|\.\.|^[-/]|\/$|\.lock$|@\{/.test(item.startingRef)) return null;
+      out.startingRef = item.startingRef;
+    }
+    if (item.prUrl !== undefined) {
+      try {
+        const parsed = new URL(item.prUrl);
+        if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com' || !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+\/?$/.test(parsed.pathname) || parsed.search || parsed.hash || parsed.username) return null;
+        out.prUrl = `https://github.com${parsed.pathname.replace(/\/$/, '')}`;
+      } catch { return null; }
+    }
+    repos.push(out);
+  }
+  return repos;
+}
+export function repositoryMismatch(demanded, accepted) {
+  if (!accepted) return false;
+  const expected = [demanded.target, ...demanded.sources.map(s => ({ url: s.url, startingRef: s.sha }))];
+  if (accepted.length !== expected.length) return true;
+  const byUrl = new Map(accepted.map(r => [r.url.toLowerCase(), r]));
+  for (const item of expected) {
+    const got = byUrl.get(item.url.toLowerCase());
+    if (!got) return true;
+    if (item.prUrl) { if (got.prUrl !== item.prUrl) return true; }
+    else if ((item.startingRef ?? '').toLowerCase() !== (got.startingRef ?? '').toLowerCase()) return true;
+  }
+  return false;
+}
+export function repositoryReceipt({ repo, ref, prUrl, sources = [], catalog, submitted = null, accepted = null, accountId, mismatch = false }) {
+  const demanded = { target: targetRepoEntry({ repo, ref, prUrl }), sources };
+  const receipt = {
+    demanded,
+    submitted,
+    accepted: accepted ?? null,
+    checkoutObserved: null,
     sourceAccess: { kind: 'instruction', providerAcl: null, note: 'Lecture seule des sources : consigne d’orchestration. L’API publique n’expose pas de restriction d’écriture.' },
+    note: checkoutObservedNote,
   };
+  if (catalog) {
+    const demandedUrls = [repo, ...sources.map(s => s.url)];
+    const visible = (catalog.urls ?? []).filter(u => demandedUrls.some(d => d.toLowerCase() === u.toLowerCase()));
+    receipt.visible = { urls: visible, catalogCheckedAt: catalog.checkedAt ?? null, pages: catalog.pages ?? 0, complete: catalog.complete === true, ...(accountId ? { accountId } : {}) };
+  }
+  if (mismatch) receipt.mismatch = { demanded, accepted: accepted ?? null };
+  return receipt;
+}
+function validationErrorNextAction(sources) {
+  if (sources.some(s => typeof s.sha === 'string' && shaPattern.test(s.sha))) {
+    return '400 validation_error (providerCode seulement). Un SHA source a été soumis. Cause non prouvée (docs officielles autorisent un SHA ; une limite SHA hors branche default/PR n’est pas établie pour une source). Échec visible ≠ crédits épuisés. Aucun remplacement automatique SHA→branche, aucune omission de source, aucune sonde nouvelle. Obtenir un appel accepté utile et un checkout observé avant publication de la capacité.';
+  }
+  return '400 validation_error (providerCode seulement). Cause non prouvée. Échec visible ≠ crédits épuisés. Aucune sonde nouvelle sans mainteneur.';
+}
+function withRepositoryOutcome({ created, repo, ref, prUrl, sources, catalog, submitted, accountId }) {
+  const accepted = created.status === 'launched' || created.status === 'existing' ? (created.exposedRepos ?? null) : null;
+  const mismatch = repositoryMismatch({ target: targetRepoEntry({ repo, ref, prUrl }), sources }, accepted);
+  const { exposedRepos: _exposed, ...rest } = created;
+  const repositories = repositoryReceipt({ repo, ref, prUrl, sources, catalog, submitted, accepted, accountId, mismatch });
+  if (mismatch) {
+    return { ...rest, status: 'blocked', reason: 'repository_mismatch', repositories, nextAction: 'Les refs demandées et les repos exposés par le fournisseur diffèrent ; les deux preuves sont conservées. Ne pas recevoir ni exploiter avant checkout observé dans le pod. Aucun remplacement automatique SHA→branche, aucune omission de source.' };
+  }
+  if (rest.httpStatus === 400 && rest.providerCode === 'validation_error' && !rest.nextAction) {
+    return { ...rest, repositories, nextAction: validationErrorNextAction(sources) };
+  }
+  return { ...rest, repositories };
 }
 function parseRepositoryCatalogPage(data) {
   if (!data || typeof data !== 'object' || !Array.isArray(data.items) || data.items.length > 1_000) return null;
@@ -387,13 +452,14 @@ async function createAgent({ command, mission, entry, registry, registryFile, bo
   if (result.outcome === 'ok') {
     const agent = agentSummary(result.data?.agent), run = runSummary(result.data?.run);
     if (!agent || !run || agent.agentId !== agentId || run.agentId !== agentId) {
-      // L’API a accepté quelque chose sous une identité inattendue : conserver ce qu’elle a réellement retourné ; aucun nouvel identifiant, aucun POST, décision humaine après reconcile.
+      // L’API a accepté quelque chose sous une identité inattendue : conserver ce qu’elle a réellement retourné ; aucun nouvel identifiant, aucun POST, décision humaine après reconcile. Ne pas adopter les repos d’une autre identité comme accepted.
       const returned = { agentId: agent?.agentId ?? run?.agentId ?? null, runId: run?.runId ?? null, ...(agent?.url ? { url: agent.url } : {}) };
       await finish('uncertain', { reason: 'identity_mismatch', returned });
       return { command, status: 'uncertain', mission, agentId, reason: 'identity_mismatch', returned, nextAction: 'reconcile --mission : lit l’identifiant attendu et l’identifiant retourné ; aucun POST, aucun successeur tant que non résolu', ...extra };
     }
+    const exposedRepos = parseExposedRepos(result.data?.agent?.repos);
     await finish('launched', { runId: run.runId, url: agent.url });
-    return { command, status: 'launched', mission, agentId, runId: run.runId, url: agent.url, selection: selectionReceipt(entry.selection, { createAccepted: true, entry }), ...extra };
+    return { command, status: 'launched', mission, agentId, runId: run.runId, url: agent.url, selection: selectionReceipt(entry.selection, { createAccepted: true, entry }), exposedRepos, ...extra };
   }
   if (result.outcome === 'rejected' && result.status === 409) {
     // Conflit : le fournisseur revendique l’existence ; un 404 juste après est contradictoire ⇒ conflict_unreadable, jamais « non créé ».
@@ -458,18 +524,19 @@ export async function launch({ mission, repo, ref, prUrl, promptText, name, auto
   if (sources.length) {
     const visibility = await assertRepositoriesVisible({ key: ownerKey, fetchImpl, repo: repoUrl, sources, accountId });
     catalog = visibility.catalog;
-    if (visibility.failure) return { command: 'launch', mission, ...visibility.failure, ...accountFields(accountId, decision), repositories: repositoryReceipt({ repo: repoUrl, ref, prUrl, sources, catalog, attached: [], accountId }) };
+    if (visibility.failure) return { command: 'launch', mission, ...visibility.failure, ...accountFields(accountId, decision), repositories: repositoryReceipt({ repo: repoUrl, ref, prUrl, sources, catalog, submitted: null, accepted: null, accountId }) };
   }
   const agentId = missionAgentId(repoUrl, mission);
   // La sélection est fixée ici, une fois, et conservée pour toute la mission (reprises comprises). En cas d’exception, initiale et courante restent distinctes.
   const catalogSelection = { checkedAt: check.catalog.checkedAt, displayName: check.catalog.displayName, variant: check.catalog.variant };
   const selection = { key: chosen.key, modelId: chosen.modelId, params: chosen.params, catalog: exception ? { checkedAt: check.catalog.checkedAt, validated: false, note: 'sélection initiale non validée : exception au lancement' } : catalogSelection };
-  const attached = attachedRepos({ repo: repoUrl, ref, prUrl, sources });
+  const submitted = attachedRepos({ repo: repoUrl, ref, prUrl, sources });
   const entry = { agentId, repo: repoUrl, ...(prUrl ? { prUrl } : { ref }), workOnCurrentBranch: workOnCurrentBranch !== false, selection, ...(exception ? { currentSelection: { key: active.key, modelId: active.modelId, params: active.params, catalog: catalogSelection }, exception } : {}), ...(accountId ? { accountId } : {}), ...(sources.length ? { references: sources } : {}), state: 'pending', updatedAt: now() };
   registry.missions[mission] = entry; await saveRegistry(registryFile, registry);
-  const body = { agentId, prompt: { text: sentPrompt }, model: active.params.length ? { id: active.modelId, params: active.params } : { id: active.modelId }, repos: attached, workOnCurrentBranch, autoCreatePR, ...(name ? { name: String(name).slice(0, 100) } : {}) };
+  const body = { agentId, prompt: { text: sentPrompt }, model: active.params.length ? { id: active.modelId, params: active.params } : { id: active.modelId }, repos: submitted, workOnCurrentBranch, autoCreatePR, ...(name ? { name: String(name).slice(0, 100) } : {}) };
   const created = await createAgent({ command: 'launch', mission, entry, registry, registryFile, body, key: ownerKey, access, accountId, decision, modelId: active.modelId, fetchImpl, timeoutMs, now });
-  return sources.length ? { ...created, repositories: repositoryReceipt({ repo: repoUrl, ref, prUrl, sources, catalog, attached, accountId }) } : created;
+  if (!sources.length) { const { exposedRepos: _drop, ...rest } = created; return rest; }
+  return withRepositoryOutcome({ created, repo: repoUrl, ref, prUrl, sources, catalog, submitted, accountId });
 }
 // Compte imposé (--account) : décision humaine explicite, par exemple une mission bornée grok destinée à produire la preuve d’accès standard, ou la validation
 // d’un compte en startBlock après relèvement manuel du plafond (l’acceptation lève le blocage). Composer reste interdit, un pool confirmé indisponible aussi.
@@ -650,7 +717,7 @@ export async function followup({ agentId, mission, account, registryFile, prompt
   const sentPrompt = withSourceInstructions(promptText, followupSources);
   if (sentPrompt.length > 200_000) throw new UsageError('Brief de reprise trop long une fois les consignes de sources ajoutées.');
   const receipt = entry
-    ? { selection: entry.selection ? selectionReceipt(entry.selection, { createAccepted: true, entry }) : undefined, modelSent: false, persistent: true, ...(followupSources.length ? { repositories: { demanded: { target: targetRepoEntry({ repo: entry.repo, ref: entry.ref, prUrl: entry.prUrl }), sources: followupSources }, attached: 'unchanged', checkout: { observed: null, note: 'followup ne change pas repos ; le catalogue n’est pas une preuve de checkout.' } } } : {}), ...(entry.abandonedSuccessors?.length ? { resumedPredecessor: { abandonedSuccessors: entry.abandonedSuccessors.map(a => ({ agentId: a.agentId, accountId: a.accountId, attempt: a.attempt, state: a.state })), lineage: { successorOf: entry.successorOf ?? null, predecessors: (entry.predecessors ?? []).length } } } : {}) }
+    ? { selection: entry.selection ? selectionReceipt(entry.selection, { createAccepted: true, entry }) : undefined, modelSent: false, persistent: true, ...(followupSources.length ? { repositories: { demanded: { target: targetRepoEntry({ repo: entry.repo, ref: entry.ref, prUrl: entry.prUrl }), sources: followupSources }, submitted: 'unchanged', accepted: null, checkoutObserved: null, note: 'followup ne change pas repos ; checkoutObserved reste null.' } } : {}), ...(entry.abandonedSuccessors?.length ? { resumedPredecessor: { abandonedSuccessors: entry.abandonedSuccessors.map(a => ({ agentId: a.agentId, accountId: a.accountId, attempt: a.attempt, state: a.state })), lineage: { successorOf: entry.successorOf ?? null, predecessors: (entry.predecessors ?? []).length } } } : {}) }
     : { modelSent: false, persistent: false, note: 'Sans registre : aucune idempotence ; en cas de livraison inconnue, lire l’agent (latestRunId) soi-même ; aucune répétition automatique. Utiliser --mission/--registry pour une reprise réconciliable.' };
   const report = (fields) => ({ command: 'followup', agentId, ...accountFields(accountId), ...fields, ...receipt });
   const persist = async (fields) => { if (!entry) return; Object.assign(entry, fields, { updatedAt: now() }); await saveRegistry(registryFile, registry); };
@@ -800,7 +867,7 @@ export async function successor({ mission, registryFile, promptText, checkpoint,
   if (sources.length) {
     const visibility = await assertRepositoriesVisible({ key: await access.keyFor(decision.accountId), fetchImpl, repo: entry.repo, sources, accountId: decision.accountId });
     repoCatalog = visibility.catalog;
-    if (visibility.failure) return report({ ...visibility.failure, ...accountFields(decision.accountId, decision), repositories: repositoryReceipt({ repo: entry.repo, ref: working.branch, prUrl: pred.prUrl, sources, catalog: repoCatalog, attached: [], accountId: decision.accountId }), ...stale });
+    if (visibility.failure) return report({ ...visibility.failure, ...accountFields(decision.accountId, decision), repositories: repositoryReceipt({ repo: entry.repo, ref: working.branch, prUrl: pred.prUrl, sources, catalog: repoCatalog, submitted: null, accepted: null, accountId: decision.accountId }), ...stale });
   }
   // Identifiant dérivé de la mission et du numéro de tentative : jamais l’identifiant du prédécesseur (refus possible entre comptes), idempotence persistée avant le POST.
   const attempt = (entry.successorAttempts ?? 0) + 1;
@@ -812,10 +879,12 @@ export async function successor({ mission, registryFile, promptText, checkpoint,
   else { delete entry.currentSelection; delete entry.exception; }
   const predecessors = retrying ? [...entry.predecessors.slice(0, -1), predecessor] : [...(entry.predecessors ?? []), predecessor];
   await persist({ agentId, accountId: decision.accountId, successorAttempts: attempt, successorOf: predecessor.agentId, predecessors, state: 'pending', workOnCurrentBranch: true, ...(pred.prUrl ? { prUrl: pred.prUrl } : { ref: working.branch }), ...(sources.length ? { references: sources } : {}) });
-  const attached = attachedRepos({ repo: entry.repo, ref: working.branch, prUrl: pred.prUrl, sources });
-  const body = { agentId, prompt: { text: successorPrompt }, model: active.params.length ? { id: active.modelId, params: active.params } : { id: active.modelId }, repos: attached, workOnCurrentBranch: true, autoCreatePR: false, ...(name ? { name: String(name).slice(0, 100) } : {}) };
+  const submitted = attachedRepos({ repo: entry.repo, ref: working.branch, prUrl: pred.prUrl, sources });
+  const body = { agentId, prompt: { text: successorPrompt }, model: active.params.length ? { id: active.modelId, params: active.params } : { id: active.modelId }, repos: submitted, workOnCurrentBranch: true, autoCreatePR: false, ...(name ? { name: String(name).slice(0, 100) } : {}) };
   const created = await createAgent({ command: 'successor', mission, entry, registry, registryFile, body, key: await access.keyFor(decision.accountId), access, accountId: decision.accountId, decision, modelId: active.modelId, fetchImpl, timeoutMs, now });
-  return report({ ...created, attempt, predecessorRun: { runId: run.runId, runStatus: run.status }, branch: { name: working.branch, source: working.source }, checkpoint: { sha, attestation: checkpointAttestation }, ...(sources.length ? { repositories: repositoryReceipt({ repo: entry.repo, ref: working.branch, prUrl: pred.prUrl, sources, catalog: repoCatalog, attached, accountId: decision.accountId }) } : {}), ...stale });
+  const outcome = sources.length ? withRepositoryOutcome({ created, repo: entry.repo, ref: working.branch, prUrl: pred.prUrl, sources, catalog: repoCatalog, submitted, accountId: decision.accountId }) : created;
+  const { exposedRepos: _ignored, ...createdView } = outcome;
+  return report({ ...createdView, attempt, predecessorRun: { runId: run.runId, runStatus: run.status }, branch: { name: working.branch, source: working.source }, checkpoint: { sha, attestation: checkpointAttestation }, ...stale });
 }
 
 // Vue du pool et décision déterministe à blanc (aucun appel API, aucune écriture hors création initiale de l’état).
@@ -849,7 +918,7 @@ const help = `cursor-agents — orchestration Creezio Lite (accès : CURSOR_API_
   preflight [--select fable|opus|grok] [--model-file f] [--account id]
   launch --mission K --repo URL (--ref BRANCHE | --pr-url URL) --prompt-file f --registry f [--references-file f] [--select clé] [--account id] [--name n] [--auto-pr] [--new-branch]
     --references-file : JSON strict [{url,sha}] (SHA 40 hex immuable, ≤19 sources). Autorisation de lecture fournie par le pilote, pas une inclusion automatique du catalogue.
-    Cible unique : --repo/--ref ou --pr-url. Sources lecture seule (consigne, pas ACL fournisseur). Catalogue GET /v1/repositories du compte sélectionné avant POST ; visibilité ≠ clonage pod.
+    Cible unique : --repo/--ref ou --pr-url. Sources lecture seule (consigne, pas ACL fournisseur). Catalogue GET /v1/repositories du compte sélectionné avant POST. Reçu : demanded / visible / submitted / accepted / checkoutObserved (null). 400 ⇒ accepted null ; 201 ⇒ repos exposés sinon null, jamais un écho du payload. Visibilité ≠ checkout pod.
   reconcile --mission K --registry f [--confirm-absent]   (tranche une reprise pending/uncertain ; livraison inconnue : 404 ≠ absence, seule l’attestation humaine --confirm-absent conclut non créé — déclaration non vérifiée, pas une signature ; 409 puis 404 = conflict_unreadable, jamais not_created)
   status (--mission K --registry f | --agent bc-… --run run-… [--account id]) [--state f] [--follow] [--full]
   followup --mission K --registry f --prompt-file f [--references-file f]   (reprise persistée, même agent, même compte, même ensemble de dépôts ; --references-file différent ⇒ conflit, pas de POST)

@@ -118,11 +118,13 @@ test('valid references: catalog pagination, canonical serialization, receipt dis
     assert.match(post.prompt.text, /pas une ACL fournisseur/);
     assert.match(post.prompt.text, /bloquer la mission/);
     assert.ok(post.prompt.text.endsWith(`brief ${PROMPT_MARKER}`));
-    assert.equal(launched.repositories.checkout.observed, null);
+    assert.equal(launched.repositories.checkoutObserved, null);
     assert.equal(launched.repositories.sourceAccess.kind, 'instruction');
     assert.equal(launched.repositories.sourceAccess.providerAcl, null);
     assert.deepEqual(launched.repositories.demanded.sources, canonicalAz());
-    assert.deepEqual(launched.repositories.attached, post.repos);
+    assert.deepEqual(launched.repositories.submitted, post.repos);
+    assert.equal(launched.repositories.accepted, null);
+    assert.equal(launched.repositories.attached, undefined);
     assert.deepEqual(launched.repositories.visible.urls.sort(), [REPO, SRC_A, SRC_Z].sort());
     const entry = (await agents.loadRegistry(registryFile)).missions.R01;
     assert.deepEqual(entry.references, canonicalAz());
@@ -141,7 +143,9 @@ test('missing catalog ref blocks with zero POST; catalog visibility is not a pod
     assert.equal(blocked.reason, 'repository_not_visible');
     assert.deepEqual(blocked.missing.sort(), [SRC_A, SRC_Z].sort());
     assert.equal(r.posts().length, 0);
-    assert.equal(blocked.repositories.checkout.observed, null);
+    assert.equal(blocked.repositories.checkoutObserved, null);
+    assert.equal(blocked.repositories.submitted, null);
+    assert.equal(blocked.repositories.accepted, null);
     assert.deepEqual((await agents.loadRegistry(registryFile)).missions, {});
     assertNoLeak(blocked);
   });
@@ -232,8 +236,9 @@ test('followup keeps the initial repo set; a new references file is an explicit 
     assert.equal(resumed.status, 'launched');
     assert.equal(resumed.modelSent, false);
     assert.deepEqual(resumed.repositories.demanded.sources, canonicalAz());
-    assert.equal(resumed.repositories.attached, 'unchanged');
-    assert.equal(resumed.repositories.checkout.observed, null);
+    assert.equal(resumed.repositories.submitted, 'unchanged');
+    assert.equal(resumed.repositories.accepted, null);
+    assert.equal(resumed.repositories.checkoutObserved, null);
     assert.match(ok.posts()[0].body.prompt.text, /lecture seule/);
     assert.ok(!('repos' in ok.posts()[0].body));
     const silent = recorder({});
@@ -316,7 +321,7 @@ test('successor recopies immutable source SHAs, rechecks catalog on the target a
     const succeeded = await agents.successor({ mission: 'R01', registryFile, promptText: `suite ${PROMPT_MARKER}`, checkpoint: SHA_OTHER, config, access, fetchImpl: ok.fetchImpl });
     assert.equal(succeeded.status, 'launched');
     assert.equal(succeeded.selection.requested.modelId, 'claude-fable-5-1');
-    assert.equal(succeeded.repositories.checkout.observed, null);
+    assert.equal(succeeded.repositories.checkoutObserved, null);
     assert.deepEqual(succeeded.repositories.demanded.sources, canonicalAz());
     const entry = (await agents.loadRegistry(registryFile)).missions.R01;
     assert.equal(entry.agentId, R01b);
@@ -326,5 +331,149 @@ test('successor recopies immutable source SHAs, rechecks catalog on the target a
     assert.deepEqual(entry.references, canonicalAz());
     assert.equal(entry.ref, 'agents/R01');
     assertNoLeak(succeeded); assertNoLeak(entry); assertNoLeak(blocked);
+  });
+});
+
+const exposedMatching = () => [
+  { url: REPO, startingRef: 'agents/R01' },
+  { url: SRC_A, startingRef: SHA_A },
+  { url: SRC_Z, startingRef: SHA_Z },
+];
+
+test('400 validation_error: accepted null, no payload echo, providerCode only, sources kept, GET 404 not_created', async () => {
+  const config = await selections();
+  await withTemp('lite-refs-400-', async (temp) => {
+    const registryFile = join(temp, 'registry.json');
+    const r = recorder({
+      'GET /v1/models': models,
+      'GET /v1/repositories': () => catalogItems(REPO, SRC_A, SRC_Z),
+      'POST /v1/agents': () => json({ error: { code: 'validation_error', message: `invalid_argument ${BODY_MARKER}` } }, 400),
+    });
+    const refused = await agents.launch({ mission: 'R01', repo: REPO, ref: 'agents/R01', promptText: `brief ${PROMPT_MARKER}`, config, key: KEY, registryFile, fetchImpl: r.fetchImpl, references: canonicalAz() });
+    assert.equal(refused.status, 'blocked');
+    assert.equal(refused.reason, 'rejected');
+    assert.equal(refused.httpStatus, 400);
+    assert.equal(refused.providerCode, 'validation_error');
+    assert.equal(refused.providerMessage, undefined);
+    assert.equal(refused.repositories.accepted, null);
+    assert.equal(refused.repositories.checkoutObserved, null);
+    assert.equal('attached' in refused.repositories, false);
+    assert.deepEqual(refused.repositories.submitted, [{ url: REPO, startingRef: 'agents/R01' }, { url: SRC_A, startingRef: SHA_A }, { url: SRC_Z, startingRef: SHA_Z }]);
+    assert.match(refused.nextAction, /validation_error/);
+    assert.match(refused.nextAction, /SHA/);
+    assert.match(refused.nextAction, /non prouvée/);
+    assert.match(refused.nextAction, /crédits épuisés/);
+    assert.ok(!refused.nextAction.includes(BODY_MARKER));
+    assert.equal(r.posts().length, 1);
+    const entry = (await agents.loadRegistry(registryFile)).missions.R01;
+    assert.equal(entry.state, 'failed');
+    assert.deepEqual(entry.references, canonicalAz());
+    assert.ok(!JSON.stringify(entry).includes(PROMPT_MARKER));
+    const settled = recorder({ [`GET /v1/agents/${AGENT}`]: () => json({ error: { code: 'not_found' } }, 404) });
+    const absent = await agents.reconcile({ mission: 'R01', key: KEY, registryFile, fetchImpl: settled.fetchImpl });
+    assert.equal(absent.status, 'not_created');
+    assert.deepEqual((await agents.loadRegistry(registryFile)).missions.R01.references, canonicalAz());
+    assertNoLeak(refused); assertNoLeak(absent); assertNoLeak(entry);
+  });
+});
+
+test('201 exposed repos present match; absent stay null; mismatch keeps both proofs and blocks', async () => {
+  const config = await selections();
+  await withTemp('lite-refs-201-', async (temp) => {
+    const presentFile = join(temp, 'present.json');
+    const r = recorder({
+      'GET /v1/models': models,
+      'GET /v1/repositories': () => catalogItems(REPO, SRC_A, SRC_Z),
+      'POST /v1/agents': () => json({ agent: agentRecord(AGENT, { repos: exposedMatching() }), run: runRecord() }),
+    });
+    const present = await agents.launch({ mission: 'R01', repo: REPO, ref: 'agents/R01', promptText: 'brief', config, key: KEY, registryFile: presentFile, fetchImpl: r.fetchImpl, references: canonicalAz() });
+    assert.equal(present.status, 'launched');
+    assert.deepEqual(present.repositories.accepted, exposedMatching());
+    assert.deepEqual(present.repositories.submitted, exposedMatching());
+    assert.equal(present.repositories.checkoutObserved, null);
+    assert.equal(present.exposedRepos, undefined);
+    assert.equal(present.mismatch, undefined);
+
+    const absentFile = join(temp, 'absent.json');
+    const absentLaunch = await agents.launch({
+      mission: 'R01', repo: REPO, ref: 'agents/R01', promptText: 'brief', config, key: KEY, registryFile: absentFile,
+      fetchImpl: recorder({
+        'GET /v1/models': models,
+        'GET /v1/repositories': () => catalogItems(REPO, SRC_A, SRC_Z),
+        'POST /v1/agents': () => json({ agent: agentRecord(), run: runRecord() }),
+      }).fetchImpl,
+      references: canonicalAz(),
+    });
+    assert.equal(absentLaunch.status, 'launched');
+    assert.equal(absentLaunch.repositories.accepted, null);
+    assert.ok(Array.isArray(absentLaunch.repositories.submitted));
+    assert.equal(absentLaunch.repositories.checkoutObserved, null);
+
+    const mismatchFile = join(temp, 'mismatch.json');
+    const exposedWrong = [{ url: REPO, startingRef: 'agents/R01' }, { url: SRC_A, startingRef: SHA_OTHER }];
+    const mismatched = await agents.launch({
+      mission: 'R01', repo: REPO, ref: 'agents/R01', promptText: 'brief', config, key: KEY, registryFile: mismatchFile,
+      fetchImpl: recorder({
+        'GET /v1/models': models,
+        'GET /v1/repositories': () => catalogItems(REPO, SRC_A, SRC_Z),
+        'POST /v1/agents': () => json({ agent: agentRecord(AGENT, { repos: exposedWrong }), run: runRecord() }),
+      }).fetchImpl,
+      references: canonicalAz(),
+    });
+    assert.equal(mismatched.status, 'blocked');
+    assert.equal(mismatched.reason, 'repository_mismatch');
+    assert.equal(mismatched.agentId, AGENT);
+    assert.equal(mismatched.runId, RUN);
+    assert.deepEqual(mismatched.repositories.demanded.sources, canonicalAz());
+    assert.deepEqual(mismatched.repositories.accepted, exposedWrong);
+    assert.deepEqual(mismatched.repositories.mismatch.accepted, exposedWrong);
+    assert.equal(mismatched.repositories.checkoutObserved, null);
+    assert.match(mismatched.nextAction, /preuves/);
+    const mismatchEntry = (await agents.loadRegistry(mismatchFile)).missions.R01;
+    assert.equal(mismatchEntry.state, 'launched');
+    assert.deepEqual(mismatchEntry.references, canonicalAz());
+    const silent = recorder({});
+    const dedup = await agents.launch({ mission: 'R01', repo: REPO, ref: 'agents/R01', promptText: 'brief', config, key: KEY, registryFile: mismatchFile, fetchImpl: silent.fetchImpl, references: canonicalAz() });
+    assert.equal(dedup.status, 'deduplicated');
+    assert.equal(silent.calls.length, 0);
+    assertNoLeak(present); assertNoLeak(absentLaunch); assertNoLeak(mismatched);
+  });
+});
+
+test('unexpected identity and unknown delivery keep sources, never echo returned repos as accepted', async () => {
+  const config = await selections();
+  const OTHER = 'bc-ffffffff-ffff-4fff-8fff-ffffffffffff';
+  await withTemp('lite-refs-identity-', async (temp) => {
+    const registryFile = join(temp, 'id.json');
+    const r = recorder({
+      'GET /v1/models': models,
+      'GET /v1/repositories': () => catalogItems(REPO, SRC_A, SRC_Z),
+      'POST /v1/agents': () => json({ agent: agentRecord(OTHER, { repos: exposedMatching() }), run: runRecord(OTHER) }),
+    });
+    const unexpected = await agents.launch({ mission: 'R01', repo: REPO, ref: 'agents/R01', promptText: `brief ${PROMPT_MARKER}`, config, key: KEY, registryFile, fetchImpl: r.fetchImpl, references: canonicalAz() });
+    assert.equal(unexpected.status, 'uncertain');
+    assert.equal(unexpected.reason, 'identity_mismatch');
+    assert.equal(unexpected.repositories.accepted, null);
+    assert.ok(Array.isArray(unexpected.repositories.submitted));
+    assert.equal(unexpected.exposedRepos, undefined);
+    assert.deepEqual((await agents.loadRegistry(registryFile)).missions.R01.references, canonicalAz());
+    assert.equal((await agents.loadRegistry(registryFile)).missions.R01.state, 'uncertain');
+    assertNoLeak(unexpected);
+
+    const unknownFile = join(temp, 'unk.json');
+    const lost = recorder({
+      'GET /v1/models': models,
+      'GET /v1/repositories': () => catalogItems(REPO, SRC_A, SRC_Z),
+      'POST /v1/agents': () => { throw new TypeError('socket hang up'); },
+    });
+    const unknown = await agents.launch({ mission: 'R02', repo: REPO, ref: 'agents/R02', promptText: 'brief', config, key: KEY, registryFile: unknownFile, fetchImpl: lost.fetchImpl, references: canonicalAz() });
+    assert.equal(unknown.status, 'uncertain');
+    assert.equal(unknown.repositories.accepted, null);
+    assert.ok(Array.isArray(unknown.repositories.submitted));
+    assert.deepEqual((await agents.loadRegistry(unknownFile)).missions.R02.references, canonicalAz());
+    const silent = recorder({});
+    assert.equal((await agents.launch({ mission: 'R02', repo: REPO, ref: 'agents/R02', promptText: 'brief', config, key: KEY, registryFile: unknownFile, fetchImpl: silent.fetchImpl, references: canonicalAz() })).status, 'deduplicated');
+    assert.equal(silent.calls.length, 0);
+    assertNoLeak(unknown);
   });
 });
