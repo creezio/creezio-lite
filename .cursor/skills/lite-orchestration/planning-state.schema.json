@@ -1,0 +1,309 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "planning-state.schema.json",
+  "title": "Creezio Lite — état d’exécution d’un plan (privé, hors dépôt), formatVersion 1",
+  "description": "Ce qui est réellement engagé : statut par mission, sélection choisie une fois, branche/base/agent/run/PR, jalons datés, capacité factuelle, pauses ciblées, preuves de conditions. Tenu par l’orchestrateur à partir du registre cursor-agents et des lectures réconciliées ; jamais versionné dans un dépôt public. Contrat : PLANNING.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["formatVersion", "plan", "reconciledAt", "capacity", "pauses", "conditions", "missions"],
+  "properties": {
+    "formatVersion": { "const": 1 },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/key", "description": "Doit être égal à plan.id du plan ; sinon contrat invalide." },
+        "revision": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "reconciledAt": { "$ref": "#/$defs/dateTime", "description": "Dernière réconciliation des runs (cursor-agents reconcile/status) avant écriture de cet état." },
+    "capacity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "maxActiveRuns", "origin", "source", "observedAt", "maxReviewBacklog"],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/key",
+          "description": "Identifiant descriptif du périmètre compté (ex. kit, app-x). maxActiveRuns et observedActiveRuns portent EXACTEMENT sur ce périmètre : on ne soustrait jamais les runs d’un compte entier à un plafond local d’un périmètre plus étroit. L’inventaire externe du compte reste dans le registre de l’orchestrateur, hors de ce format."
+        },
+        "maxActiveRuns": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Nombre maximal de runs actifs simultanés pour scope. null = inconnu : ready répond code 3 sans proposition. 0 = plan valide, tout start/resume waiting capacity_full. Un quota fournisseur non exposé ne rend pas cette valeur nulle : un plafond local configuré suffit."
+        },
+        "origin": {
+          "enum": ["configured", "observed"],
+          "description": "configured : plafond local décidé par l’orchestrateur pour scope (ce n’est pas un quota fournisseur). observed : limite factuelle constatée chez le fournisseur pour ce même périmètre (source obligatoire : réponse datée, document du plan)."
+        },
+        "source": { "type": "string", "minLength": 1, "maxLength": 300, "description": "Provenance factuelle du plafond, sur le périmètre scope." },
+        "observedAt": { "$ref": "#/$defs/dateTime" },
+        "maxReviewBacklog": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Nombre maximal de missions dev livrées en attente d’intégration ; atteint ⇒ aucun nouveau start dev (reviews, investigations et corrections restent proposables)."
+        },
+        "observedActiveRuns": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value", "source", "at"],
+          "description": "Comptage indépendant des runs actifs du MÊME périmètre que capacity.scope (ex. agents de ce périmètre lus par cursor-agents). L’outil retient le maximum entre ce relevé et le comptage des missions actives. Un relevé portant sur un périmètre plus large (compte entier) n’a pas sa place ici.",
+          "properties": {
+            "value": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "source": { "type": "string", "minLength": 1, "maxLength": 300, "description": "Comment et sur quel périmètre le comptage a été fait ; prouve qu’il s’agit bien de scope." },
+            "at": { "$ref": "#/$defs/dateTime" }
+          }
+        },
+        "note": { "type": "string", "maxLength": 300 }
+      }
+    },
+    "pauses": {
+      "type": "array",
+      "maxItems": 100,
+      "description": "Pauses ciblées : aucune proposition start/resume pour la cible ; les runs déjà actifs ne sont pas interrompus.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scope", "reason", "since"],
+        "properties": {
+          "scope": { "enum": ["mission", "lot", "repo", "all"] },
+          "target": { "$ref": "#/$defs/key", "description": "Identifiant de mission, de lot ou de dépôt selon scope ; absent pour all." },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "since": { "$ref": "#/$defs/dateTime" }
+        },
+        "if": { "properties": { "scope": { "const": "all" } } },
+        "then": { "not": { "required": ["target"] } },
+        "else": { "required": ["target"] }
+      }
+    },
+    "conditions": {
+      "type": "object",
+      "description": "Preuves des conditions du plan. Condition absente ⇒ non vérifiée (bloquante) ; satisfied=false ⇒ échec explicite.",
+      "maxProperties": 200,
+      "propertyNames": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["satisfied", "evidence", "at"],
+        "properties": {
+          "satisfied": { "type": "boolean" },
+          "evidence": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Lien, SHA ou sortie de commande ; jamais un secret." },
+          "at": { "$ref": "#/$defs/dateTime" },
+          "by": { "type": "string", "minLength": 1, "maxLength": 100, "description": "Rôle qui a constaté la preuve." }
+        }
+      }
+    },
+    "missions": {
+      "type": "object",
+      "description": "Une entrée par mission engagée. Mission du plan absente ici = pending. Clé inconnue du plan ⇒ contrat invalide.",
+      "maxProperties": 500,
+      "propertyNames": { "$ref": "#/$defs/key" },
+      "additionalProperties": { "$ref": "#/$defs/missionState" }
+    }
+  },
+  "$defs": {
+    "key": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+    "dateTime": { "type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$" },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "ref": { "type": "string", "minLength": 1, "maxLength": 250, "pattern": "^[^\\s~^:?*\\[\\\\]+$" },
+    "url": { "type": "string", "pattern": "^https://[A-Za-z0-9._-]+(?:/[A-Za-z0-9._~%/-]*)?$", "maxLength": 500 },
+    "terminalRunStatus": {
+      "enum": ["FINISHED", "ERROR", "CANCELLED", "EXPIRED"],
+      "description": "Statuts de run terminaux : seuls admis pour delivered."
+    },
+    "historical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step", "evidence", "at"],
+      "description": "Jalon réellement atteint d’un lot reçu avant la tenue de cet état, dont sélection, agent et run sont inconnus. Rien n’est inventé : seul le jalon prouvé est porté. closed seulement pour review/investigation ; integrated/published seulement pour dev (vérifié par le contrat, le plan portant kind).",
+      "properties": {
+        "step": { "enum": ["integrated", "published", "closed"] },
+        "evidence": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Preuve publique du jalon : SHA de fusion, URL de PR fusionnée, tag de release, réception close ; jamais un secret." },
+        "at": { "$ref": "#/$defs/dateTime" }
+      }
+    },
+    "providerId": {
+      "type": "string",
+      "maxLength": 120,
+      "pattern": "^(?:bc|run)-[A-Za-z0-9-]{1,100}$",
+      "description": "Identifiant Cursor tel que renvoyé par cursor-agents (bc-<uuid> pour un agent, run-<uuid> pour un run). Les exemples publics utilisent des substituts non hexadécimaux."
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "modelId", "params", "chosenAt"],
+      "description": "Sélection choisie une fois à l’attribution (cursor-model.json) et conservée pour toute la mission, corrections et reprises comprises. Ne change jamais.",
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+        "modelId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$" },
+        "params": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "value"],
+            "properties": { "id": { "type": "string", "minLength": 1, "maxLength": 50 }, "value": { "type": "string", "minLength": 1, "maxLength": 50 } }
+          }
+        },
+        "chosenAt": { "$ref": "#/$defs/dateTime" }
+      }
+    },
+    "legacySelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "requestedAt", "evidence"],
+      "description": "Provenance d’un lot lancé avant le standard (POST de création sans champ model, ou sélection non relevée) : la sélection effective est inconnue et n’est jamais reconstituée — pas de modelId par défaut. Alternative exclusive à selection, admise seulement sur un jalon terminal prouvé (delivered, integrated, published pour dev ; delivered, closed pour review/investigation). Une mission ainsi documentée ne reçoit jamais start ni resume : toute correction est une mission corrective distincte avec sélection choisie à l’attribution.",
+      "properties": {
+        "reason": { "const": "model_omitted" },
+        "requestedAt": { "$ref": "#/$defs/dateTime", "description": "Instant de la requête de création (registre, réponse API ou réception), sans modèle." },
+        "evidence": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Preuve publique de la provenance : réception, PR, entrée de registre datée ; jamais un secret ni un nom de modèle supposé." }
+      }
+    },
+    "reopened": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "closedAt", "at", "reason"],
+      "description": "Événement privé tracé : une review/investigation closed a été rouverte explicitement vers delivered par l’orchestrateur (nouveau head de l’auteur à revoir, verdict à compléter). La preuve terminale (selection ou legacySelection, branch, base, agentId, run terminal, launch réconcilié, headSha, deliveredAt) est conservée ; closedAt est déplacé ici. Admis seulement sur delivered (kind review/investigation, vérifié par le contrat). Une reprise passe ensuite par correction.requested ⇒ resume sur le MÊME agent et la même sélection ; aucun agent n’est créé.",
+      "properties": {
+        "from": { "const": "closed" },
+        "closedAt": { "$ref": "#/$defs/dateTime", "description": "Instant de la clôture rouverte (ancien closedAt)." },
+        "at": { "$ref": "#/$defs/dateTime", "description": "Instant de la réouverture." },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 300, "description": "Motif public : nouveau head de l’auteur, écart à re-vérifier ; jamais un secret." },
+        "by": { "type": "string", "minLength": 1, "maxLength": 100, "description": "Rôle qui a décidé la réouverture." }
+      }
+    },
+    "missionState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["pending", "active", "delivered", "integrated", "published", "closed", "cancelled", "historical", "unknown"],
+          "description": "pending : rien n’a été lancé ; avant tout POST l’orchestrateur écrit active + launch pending, donc une entrée pending portant launch pending/uncertain ou un run CREATING/RUNNING/UNKNOWN est incohérente et rejetée (elle sous-compterait la capacité et doublerait la création) ; on ne la normalise jamais en effaçant l’incertitude, on la corrige en active. active : run en cours ou incertain (CREATING, RUNNING, POST incertain), compte dans la capacité et tient ses réservations. delivered : run terminal (aucun POST incertain), head réel et réception disponibles (PR exigée pour un dev ; une review/investigation peut livrer sur branche + headSha sans PR) ; réservations toujours tenues, aucune place active ; l’artefact existe mais n’est pas accepté pour autant. closed : review/investigation terminée ; conserve la preuve terminale (branch, base, agentId, run terminal, launch réconcilié, headSha, jalons ; provenance selection ou legacySelection, jamais un modèle inventé) afin de rester rouvrable explicitement vers delivered (événement reopened), puis resume sur le même agent via correction.requested. integrated/published/closed/cancelled/historical : réservations libérées, aucune place consommée, agent historique non compté ; jamais de launch pending/uncertain ni de run CREATING/RUNNING/UNKNOWN non réconcilié. historical : lot réellement reçu avant cet état, sélection/agent/run inconnus, jalon prouvé dans historical ; aucun resume/start proposé, toute reprise est une mission corrective distincte. unknown : l’orchestrateur ne sait pas ; ready répond code 3."
+        },
+        "historical": { "$ref": "#/$defs/historical" },
+        "selection": { "$ref": "#/$defs/selection" },
+        "legacySelection": { "$ref": "#/$defs/legacySelection" },
+        "branch": { "$ref": "#/$defs/ref" },
+        "base": { "$ref": "#/$defs/sha", "description": "SHA validé de départ (Base du brief)." },
+        "agentId": { "$ref": "#/$defs/providerId" },
+        "runId": { "oneOf": [{ "$ref": "#/$defs/providerId" }, { "type": "null" }] },
+        "runStatus": {
+          "type": "string",
+          "pattern": "^[A-Z_]{2,20}$",
+          "description": "Dernier statut de run lu (CREATING, RUNNING, FINISHED, ERROR, CANCELLED, EXPIRED) ; UNKNOWN si aucune lecture fiable."
+        },
+        "launch": {
+          "enum": ["pending", "launched", "reconciled", "uncertain", "not_created", "failed"],
+          "description": "Copie de l’état du registre cursor-agents. uncertain/pending : la mission est réservée (comptée active, aucune relance) jusqu’à reconcile ; ces deux valeurs n’existent que sur une mission active, jamais sur pending ni sur un statut libéré."
+        },
+        "prUrl": { "$ref": "#/$defs/url", "description": "PR du livrable. Requise par le contrat pour un dev delivered/integrated/published (prUrl + headSha) ; une review/investigation delivered peut porter seulement branch + headSha (verdict sur la PR de l’auteur ou sur une branche, sans PR propre)." },
+        "headSha": { "$ref": "#/$defs/sha", "description": "Head réel du livrable (dev) ou head réellement revu/inspecté (review/investigation). Requis sur delivered." },
+        "reopened": { "$ref": "#/$defs/reopened" },
+        "followups": { "type": "integer", "minimum": 0, "maximum": 1000, "description": "Reprises déjà envoyées sur le même agent, sans champ model." },
+        "correction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requested", "reason", "at"],
+          "description": "Correction demandée après revue : ready propose resume (même agent, même sélection) et retient l’intégration tant que requested=true.",
+          "properties": {
+            "requested": { "type": "boolean" },
+            "reason": { "type": "string", "minLength": 1, "maxLength": 300 },
+            "at": { "$ref": "#/$defs/dateTime" }
+          }
+        },
+        "readyAt": { "$ref": "#/$defs/dateTime", "description": "Première fois où ready a listé la mission comme prête." },
+        "assignedAt": { "$ref": "#/$defs/dateTime", "description": "Lancement accepté (launch) ; début de la tenue des réservations." },
+        "deliveredAt": { "$ref": "#/$defs/dateTime" },
+        "integratedAt": { "$ref": "#/$defs/dateTime" },
+        "publishedAt": { "$ref": "#/$defs/dateTime" },
+        "closedAt": { "$ref": "#/$defs/dateTime" },
+        "waiting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "since"],
+          "description": "Dernière raison d’attente rapportée par ready, recopiée par l’orchestrateur pour la traçabilité.",
+          "properties": {
+            "code": { "type": "string", "pattern": "^[a-z_]{3,40}$" },
+            "since": { "$ref": "#/$defs/dateTime" },
+            "detail": { "type": "string", "maxLength": 300 }
+          }
+        },
+        "note": { "type": "string", "maxLength": 300 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "pending" } } },
+          "then": {
+            "properties": {
+              "launch": { "not": { "enum": ["pending", "uncertain"] } },
+              "runStatus": { "not": { "enum": ["CREATING", "RUNNING", "UNKNOWN"] } }
+            }
+          }
+        },
+        { "if": { "properties": { "status": { "const": "active" } } }, "then": { "required": ["selection", "branch", "base", "agentId", "launch", "assignedAt"] } },
+        {
+          "if": { "properties": { "status": { "enum": ["delivered", "integrated", "published", "closed"] } } },
+          "then": { "oneOf": [{ "required": ["selection"] }, { "required": ["legacySelection"] }] },
+          "else": { "properties": { "legacySelection": false } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "delivered" } } },
+          "then": {
+            "required": ["branch", "base", "agentId", "launch", "runStatus", "headSha", "assignedAt", "deliveredAt"],
+            "properties": {
+              "launch": { "enum": ["launched", "reconciled"] },
+              "runStatus": { "$ref": "#/$defs/terminalRunStatus" },
+              "closedAt": false
+            }
+          },
+          "else": { "properties": { "reopened": false } }
+        },
+        { "if": { "properties": { "status": { "const": "integrated" } } }, "then": { "required": ["prUrl", "headSha", "deliveredAt", "integratedAt"] } },
+        { "if": { "properties": { "status": { "const": "published" } } }, "then": { "required": ["prUrl", "headSha", "integratedAt", "publishedAt"] } },
+        {
+          "if": { "properties": { "status": { "const": "closed" } } },
+          "then": {
+            "required": ["branch", "base", "agentId", "launch", "runStatus", "headSha", "assignedAt", "deliveredAt", "closedAt"],
+            "properties": {
+              "launch": { "enum": ["launched", "reconciled"] },
+              "runStatus": { "$ref": "#/$defs/terminalRunStatus" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "historical" } } },
+          "then": {
+            "required": ["historical"],
+            "properties": {
+              "selection": false,
+              "legacySelection": false,
+              "agentId": false,
+              "runId": false,
+              "runStatus": false,
+              "launch": false,
+              "correction": false,
+              "waiting": false,
+              "readyAt": false,
+              "assignedAt": false
+            }
+          },
+          "else": { "properties": { "historical": false } }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["integrated", "published", "closed", "cancelled", "historical"] } } },
+          "then": {
+            "properties": {
+              "launch": { "not": { "enum": ["pending", "uncertain"] } },
+              "runStatus": { "not": { "enum": ["CREATING", "RUNNING", "UNKNOWN"] } },
+              "correction": { "type": "object", "properties": { "requested": { "const": false } } }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

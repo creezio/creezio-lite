@@ -1,0 +1,249 @@
+{
+  "formatVersion": 1,
+  "plan": {
+    "id": "example-program",
+    "title": "Exemple générique : programme parallèle d’un kit et de son template (aucune mission réelle)",
+    "revision": "2026-09-16"
+  },
+  "repos": {
+    "kit": { "url": "https://github.com/example/kit", "defaultBase": "main" },
+    "app": { "url": "https://github.com/example/app", "defaultBase": "main" }
+  },
+  "resources": {
+    "kit:version": "package.json, package-lock.json, template/package.json, CHANGELOG.md : version et notes de release",
+    "db:schema": "runtime/db/schema.ts et migrations : évolutions additives, un seul auteur à la fois"
+  },
+  "conditions": {
+    "ci-green-main": {
+      "check": "Le workflow Lite est vert sur le SHA courant de la branche d’intégration",
+      "proof": "URL du run GitHub Actions et SHA de main"
+    },
+    "upstream-schema-frozen": {
+      "check": "Le contrat de schéma partagé est publié et figé pour cette version",
+      "proof": "URL de la PR fusionnée du contrat ou tag de version"
+    },
+    "a01-ranking-contract-accepted": {
+      "check": "Le contrat de classement livré par A01 est accepté par l’orchestrateur après revue R01, sans correction ouverte",
+      "proof": "URL de la réception acceptée dans la PR de A01 et head SHA accepté"
+    }
+  },
+  "missions": [
+    {
+      "id": "X00",
+      "lot": "foundation",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Socle initial du kit (lot reçu avant la tenue de l’état)",
+      "source": "docs/missions/foundation.md",
+      "deliverable": "Socle runtime/core publié en v1.0.0 ; sélection et agent de l’époque inconnus, jalon prouvé par la release",
+      "criteria": ["Release v1.0.0 publiée avec SHA et notes"],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "dependencies": {},
+      "reserves": { "paths": ["runtime/core/"] }
+    },
+    {
+      "id": "A01",
+      "lot": "search",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Classement des résultats de recherche",
+      "source": "docs/missions/search.md",
+      "section": "§1",
+      "deliverable": "Classement par pertinence dans runtime/core/search avec droits et org_id appliqués avant les extraits",
+      "criteria": ["Tests positifs et négatifs sur org_id", "Aucune fiche hors espace dans les extraits", "Documentation docs/SEARCH.md à jour"],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "contracts": ["docs/contracts/domain-extension.md"],
+      "dependencies": { "integrate": [{ "mission": "R01", "step": "delivered" }] },
+      "reserves": { "paths": ["runtime/core/search/", "docs/SEARCH.md"] }
+    },
+    {
+      "id": "R01",
+      "lot": "search",
+      "kind": "review",
+      "repo": "kit",
+      "title": "Revue indépendante de A01",
+      "source": "docs/missions/search.md",
+      "section": "§1 revue",
+      "deliverable": "Revue centrée droits, org_id, extraits ; verdict et écarts dans la PR de A01",
+      "criteria": ["Chaque écart cite le fichier et le test manquant"],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "dependencies": { "start": [{ "mission": "A01", "step": "delivered" }] },
+      "reserves": {}
+    },
+    {
+      "id": "B01",
+      "lot": "mail",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Connecteur mail : accusés de réception",
+      "source": "docs/missions/mail.md",
+      "deliverable": "Accusés de réception dans runtime/modules/mail sans envoi réel en test",
+      "criteria": ["Aucun envoi réseau dans les tests", "Journal sans secret"],
+      "owner": "kit-maintainer",
+      "priority": 2,
+      "dependencies": {},
+      "reserves": { "paths": ["runtime/modules/mail/"] }
+    },
+    {
+      "id": "C01",
+      "lot": "search",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Fixtures de recherche du template sur l’artefact livré par A01",
+      "source": "docs/missions/search.md",
+      "section": "§2",
+      "deliverable": "Fixtures et scénarios de recherche du template construits sur l’artefact effectivement livré par A01 (head de sa PR), réalignés à l’intégration ; ne dépend pas de l’acceptation du contrat de classement",
+      "criteria": ["Réutilise les primitives et le thème existants", "Typecheck et build du template verts"],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "dependencies": { "start": [{ "mission": "A01", "step": "delivered" }] },
+      "reserves": { "paths": ["template/app/search/fixtures/"] }
+    },
+    {
+      "id": "K01",
+      "lot": "search",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Interface de recherche du template sur le contrat de classement accepté",
+      "source": "docs/missions/search.md",
+      "section": "§2 bis",
+      "deliverable": "Onglet de recherche du template consommant le contrat de classement de A01 une fois accepté ; un artefact livré mais en correction ne suffit pas",
+      "criteria": ["Contrat de classement figé et accepté avant le premier commit", "Typecheck et build du template verts"],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "dependencies": { "start": [{ "mission": "A01", "step": "delivered" }, { "condition": "a01-ranking-contract-accepted" }] },
+      "reserves": { "paths": ["template/app/search/ui/"] }
+    },
+    {
+      "id": "D01",
+      "lot": "records",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Export des fiches",
+      "source": "docs/missions/records.md",
+      "deliverable": "Export CSV des fiches lite_records filtré par droits",
+      "criteria": ["Droits et org_id appliqués côté serveur", "Test négatif d’accès croisé"],
+      "owner": "kit-maintainer",
+      "priority": 2,
+      "dependencies": { "integrate": [{ "mission": "A01", "step": "integrated" }] },
+      "reserves": { "paths": ["runtime/core/records/"] }
+    },
+    {
+      "id": "E01",
+      "lot": "search",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Index plein texte : synonymes",
+      "source": "docs/missions/search.md",
+      "section": "§3",
+      "deliverable": "Table de synonymes appliquée à l’index dans la transaction d’écriture",
+      "criteria": ["Déclencheurs D1 inchangés dans leur contrat", "Migration additive"],
+      "owner": "kit-maintainer",
+      "priority": 2,
+      "dependencies": { "start": [{ "mission": "X00", "step": "integrated" }] },
+      "reserves": { "paths": ["runtime/core/search/index.ts"] }
+    },
+    {
+      "id": "F01",
+      "lot": "mail",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Passerelle mail : reprise sur erreur",
+      "source": "docs/missions/mail.md",
+      "deliverable": "Reprise idempotente des envois en échec",
+      "criteria": ["Aucun doublon d’envoi", "Tests sans réseau"],
+      "owner": "kit-maintainer",
+      "priority": 2,
+      "dependencies": {},
+      "reserves": { "paths": ["connectors/mail-gateway/"] }
+    },
+    {
+      "id": "G01",
+      "lot": "release",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Notes de version et montée de version",
+      "source": "docs/missions/release.md",
+      "deliverable": "CHANGELOG et versions cohérentes (package, lock, template)",
+      "criteria": ["npm run check vert", "Version identique dans tous les manifestes"],
+      "owner": "kit-maintainer",
+      "priority": 3,
+      "dependencies": { "publish": [{ "mission": "D01", "step": "integrated" }] },
+      "reserves": { "paths": ["CHANGELOG.md"], "resources": ["kit:version"] }
+    },
+    {
+      "id": "H01",
+      "lot": "docs",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Documentation API des clés",
+      "source": "docs/missions/docs.md",
+      "deliverable": "docs/API.md décrit l’expiration et le hachage des clés",
+      "criteria": ["Aucun secret d’exemple réel"],
+      "owner": "kit-maintainer",
+      "priority": 4,
+      "dependencies": {},
+      "reserves": { "paths": ["docs/API.md"] }
+    },
+    {
+      "id": "I01",
+      "lot": "schema",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Colonnes additives du schéma",
+      "source": "docs/missions/schema.md",
+      "deliverable": "Migration additive alignée sur le contrat de schéma figé",
+      "criteria": ["Fichiers SQL déjà appliqués intacts", "Nouvelle migration seulement"],
+      "owner": "kit-maintainer",
+      "priority": 2,
+      "dependencies": { "start": [{ "condition": "upstream-schema-frozen" }] },
+      "reserves": { "paths": ["runtime/db/"], "resources": ["db:schema"] }
+    },
+    {
+      "id": "J01",
+      "lot": "docs",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "README : parcours de démarrage",
+      "source": "docs/missions/docs.md",
+      "deliverable": "README avec commandes de création et de vérification",
+      "criteria": ["Commandes réellement exécutées"],
+      "owner": "kit-maintainer",
+      "priority": 3,
+      "dependencies": {},
+      "reserves": { "paths": ["README.md"] }
+    },
+    {
+      "id": "L01",
+      "lot": "search",
+      "kind": "dev",
+      "repo": "app",
+      "title": "Recherche de l’application : même chemin qu’A01, autre dépôt",
+      "source": "docs/missions/search.md",
+      "section": "§4",
+      "deliverable": "Adaptation de runtime/core/search dans le dépôt app ; le chemin identique à la réservation d’A01 (dépôt kit) n’est pas une collision",
+      "criteria": ["Droits et org_id appliqués côté serveur"],
+      "owner": "app-maintainer",
+      "priority": 5,
+      "dependencies": {},
+      "reserves": { "paths": ["runtime/core/search/"] }
+    },
+    {
+      "id": "Z00",
+      "lot": "release",
+      "kind": "dev",
+      "repo": "kit",
+      "title": "Version précédente : correctif de release",
+      "source": "docs/missions/release.md",
+      "deliverable": "Correctif du script de publication et version associée",
+      "criteria": ["Release publiée avec SHA et notes"],
+      "owner": "kit-maintainer",
+      "priority": 1,
+      "dependencies": { "publish": [{ "condition": "ci-green-main" }] },
+      "reserves": { "paths": ["scripts/publish-release.mjs"], "resources": ["kit:version"] }
+    }
+  ]
+}

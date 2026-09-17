@@ -46,19 +46,35 @@ function assertNoLeak(value) {
   for (const marker of [KEY, BODY_MARKER, PROMPT_MARKER, 'Bearer ']) assert.ok(!text.includes(marker), `fuite de « ${marker.trim()} » dans ${text.slice(0, 200)}`);
 }
 async function withTemp(prefix, run) { const temp = await mkdtemp(join(tmpdir(), prefix)); try { return await run(temp); } finally { await rm(temp, { recursive: true, force: true }); } }
+// Ressources distribuées par le standard composé (O01 transport + P1 contrat de planification + P2 outil + P5 adaptateur du pool de comptes) : liste explicite, jamais dérivée du code testé.
+export const DISTRIBUTED = [
+  orchestrationRule,
+  `${orchestrationDir}/SKILL.md`, `${orchestrationDir}/CONTRACT.md`, `${orchestrationDir}/cursor-model.json`, `${orchestrationDir}/scripts/cursor-agents.mjs`,
+  `${orchestrationDir}/PLANNING.md`, `${orchestrationDir}/planning-plan.schema.json`, `${orchestrationDir}/planning-state.schema.json`, `${orchestrationDir}/examples/planning-plan.json`, `${orchestrationDir}/examples/planning-state.json`,
+  `${orchestrationDir}/scripts/plan-missions.mjs`,
+  `${orchestrationDir}/scripts/cursor-account-pool.mjs`,
+].sort();
 
 test('the canonical skill has a valid frontmatter, fixed selections without fallback and no private data', async () => {
   const skill = await readFile(join(root, orchestrationDir, 'SKILL.md'), 'utf8');
   const front = skill.match(/^---\n([\s\S]*?)\n---\n/); assert.ok(front, 'frontmatter YAML attendu');
   assert.match(front[1], /^name: lite-orchestration$/m);
   const description = front[1].match(/^description: (.+)$/m); assert.ok(description && description[1].length > 40 && description[1].length <= 1024);
+  const desc = description[1];
+  for (const needle of ['plan d’orchestration parallèle', 'PLANNING.md', 'ready', 'resources', 'graphe complet dès plan approuvé', 'start', 'integrate', 'publish', 'transition', 'sans vagues', 'Interdiction nominale de changer de modèle', 'exception globale Grok 4.6']) {
+    assert.ok(desc.includes(needle), `description SKILL doit déclencher ${needle}`);
+  }
   for (const link of ['CONTRACT.md', 'cursor-model.json', 'scripts/cursor-agents.mjs']) assert.ok(skill.includes(link) && (await readdir(join(root, orchestrationDir, link.includes('/') ? 'scripts' : '.'))).includes(link.split('/').pop()));
   const sources = await orchestrationSources();
-  assert.deepEqual(Object.keys(sources).sort(), [orchestrationRule, `${orchestrationDir}/CONTRACT.md`, `${orchestrationDir}/SKILL.md`, `${orchestrationDir}/cursor-model.json`, `${orchestrationDir}/scripts/cursor-agents.mjs`].sort());
+  assert.deepEqual(Object.keys(sources).sort(), DISTRIBUTED, 'douze ressources distribuées : transport O01, cinq ressources du contrat de planification, outil plan-missions, adaptateur du pool de comptes');
   for (const source of Object.values(sources)) {
     const content = await readFile(source, 'utf8');
     assert.doesNotMatch(content, /bc-[0-9a-f]{8}-[0-9a-f]{4}|run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}|\/home\/|\/Users\/|[A-Z]:\\|key_[A-Za-z0-9]{20}|sk-[A-Za-z0-9]{20}/, `donnée privée dans ${source}`);
     assert.ok(!content.includes('Codex ') || /pas de|aucun|ni /i.test(content));
+  }
+  for (const script of ['cursor-agents.mjs', 'plan-missions.mjs', 'cursor-account-pool.mjs']) {
+    const imports = [...(await readFile(sources[`${orchestrationDir}/scripts/${script}`], 'utf8')).matchAll(/^import .* from ['"]([^'"]+)['"]/gm)].map(m => m[1]);
+    assert.ok(imports.length > 0 && imports.every(i => i.startsWith('node:')), `${script} doit rester autonome, sans import du kit : ${imports}`);
   }
   const config = agents.validateSelections(JSON.parse(await readFile(sources[`${orchestrationDir}/cursor-model.json`], 'utf8')));
   assert.equal(config.default, 'fable'); assert.deepEqual(Object.keys(config.selections), ['fable', 'opus', 'grok']);
@@ -196,12 +212,50 @@ test('launch deduplicates missions, fixes the selection once in the payload and 
     assert.equal((await agents.loadRegistry(registryFile)).missions.O01.state, 'reconciled');
 
     await agents.saveRegistry(registryFile, { formatVersion: 1, missions: {} });
+    const conflict404 = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => json({ error: { code: 'agent_id_conflict', message: BODY_MARKER } }, 409), [`GET /v1/agents/${AGENT}`]: () => json({ error: { code: 'not_found' } }, 404) });
+    const conflictUnread = await agents.launch({ ...base, fetchImpl: conflict404.fetchImpl });
+    assert.equal(conflictUnread.status, 'uncertain'); assert.equal(conflictUnread.reason, 'conflict_unreadable');
+    assert.equal(conflictUnread.delivery.state, 'conflict'); assert.equal(conflictUnread.delivery.httpStatus, 409);
+    assert.match(conflictUnread.nextAction, /existence revendiquée/); assert.match(conflictUnread.nextAction, /--confirm-absent inapplicable/);
+    let conflictEntry = (await agents.loadRegistry(registryFile)).missions.O01;
+    assert.equal(conflictEntry.state, 'uncertain'); assert.equal(conflictEntry.delivery.state, 'conflict'); assert.equal(conflictEntry.reason, 'conflict_unreadable');
+    for (let i = 0; i < 3; i++) {
+      const again = await agents.reconcile({ mission: 'O01', key: KEY, registryFile, fetchImpl: conflict404.fetchImpl });
+      assert.equal(again.status, 'uncertain'); assert.equal(again.reason, 'conflict_unreadable'); assert.equal(again.delivery.state, 'conflict');
+    }
+    assert.equal((await agents.launch({ ...base, fetchImpl: conflict404.fetchImpl })).status, 'deduplicated', 'aucun POST tant que le conflit n’est pas lu');
+    assert.equal(conflict404.calls.filter(c => c.method === 'POST').length, 1, 'un seul POST malgré 404 répétés');
+    const noAttest = await agents.reconcile({ mission: 'O01', confirmAbsent: true, key: KEY, registryFile, fetchImpl: conflict404.fetchImpl });
+    assert.equal(noAttest.status, 'blocked'); assert.equal(noAttest.reason, 'confirm_absent_not_applicable');
+    assert.match(noAttest.nextAction, /409/); assert.equal((await agents.loadRegistry(registryFile)).missions.O01.state, 'uncertain');
+    assert.equal((await agents.loadRegistry(registryFile)).missions.O01.delivery.state, 'conflict');
+
+    await agents.saveRegistry(registryFile, { formatVersion: 1, missions: {} });
+    // Livraison inconnue (délai/réseau après le POST) puis 404 : le fournisseur a peut-être reçu la requête ; un 404 — immédiat ou répété — ne prouve pas l’absence.
+    // L’entrée reste uncertain (raison de livraison persistée), launch se déduplique sans second POST, aucune borne de temps n’est inventée ; seule une attestation humaine explicite conclut.
     const lost = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => { throw new TypeError('socket hang up'); }, [`GET /v1/agents/${AGENT}`]: () => json({ error: { code: 'not_found' } }, 404) });
-    const notCreated = await agents.launch({ ...base, fetchImpl: lost.fetchImpl });
-    assert.equal(notCreated.status, 'unavailable'); assert.equal(notCreated.state, 'not_created'); assert.equal(notCreated.reason, 'network');
-    assert.equal((await agents.loadRegistry(registryFile)).missions.O01.state, 'not_created');
+    const unknownDelivery = await agents.launch({ ...base, fetchImpl: lost.fetchImpl });
+    assert.equal(unknownDelivery.status, 'uncertain'); assert.equal(unknownDelivery.state, 'uncertain'); assert.equal(unknownDelivery.reason, 'not_found_after_unknown_delivery'); assert.equal(unknownDelivery.deliveryReason, 'network');
+    assert.match(unknownDelivery.nextAction, /404 ne prouve pas l’absence/); assert.match(unknownDelivery.nextAction, /--confirm-absent/); assertNoLeak(unknownDelivery);
+    let persisted = (await agents.loadRegistry(registryFile)).missions.O01;
+    assert.equal(persisted.state, 'uncertain'); assert.deepEqual({ state: persisted.delivery.state, reason: persisted.delivery.reason }, { state: 'unknown', reason: 'network' });
+    for (let i = 0; i < 3; i++) { const again = await agents.reconcile({ mission: 'O01', key: KEY, registryFile, fetchImpl: lost.fetchImpl }); assert.equal(again.status, 'uncertain'); assert.equal(again.reason, 'not_found_after_unknown_delivery'); assert.equal(again.delivery.state, 'unknown'); }
+    assert.equal((await agents.launch({ ...base, fetchImpl: lost.fetchImpl })).status, 'deduplicated', 'aucun POST tant que la livraison est inconnue');
+    assert.equal(lost.calls.filter(c => c.method === 'POST').length, 1, 'un seul POST malgré timeout, 404 répétés et reconcile répétés');
+    const attested = await agents.reconcile({ mission: 'O01', confirmAbsent: true, key: KEY, registryFile, fetchImpl: lost.fetchImpl });
+    assert.equal(attested.status, 'not_created'); assert.equal(attested.attested, true); assert.equal(attested.delivery.state, 'attested_absent'); assert.equal(attested.delivery.attestedBy, 'human'); assert.equal(attested.delivery.attestationKind, 'unverified_declaration'); assert.match(attested.nextAction, /attestée par l’orchestrateur/); assert.match(attested.nextAction, /déclaration non vérifiée/);
+    persisted = (await agents.loadRegistry(registryFile)).missions.O01; assert.equal(persisted.state, 'not_created'); assert.equal(persisted.delivery.state, 'attested_absent', 'décision humaine tracée au registre');
+    assert.equal(lost.calls.filter(c => c.method === 'POST').length, 1);
     const relaunch = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => json({ agent: agentRecord(), run: runRecord() }) });
-    assert.equal((await agents.launch({ ...base, fetchImpl: relaunch.fetchImpl })).status, 'launched', 'not_created autorise une relance sur la même clé');
+    assert.equal((await agents.launch({ ...base, fetchImpl: relaunch.fetchImpl })).status, 'launched', 'not_created attesté autorise une relance sur la même clé');
+    // Refus fournisseur explicite (4xx reçu au POST) : rien n’a été créé, aucune lecture 404 nécessaire ; distinct d’une livraison inconnue.
+    await agents.saveRegistry(registryFile, { formatVersion: 1, missions: {} });
+    const refusedPost = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => json({ error: { code: 'invalid_request', message: BODY_MARKER } }, 400) });
+    const explicit = await agents.launch({ ...base, fetchImpl: refusedPost.fetchImpl });
+    assert.equal(explicit.status, 'blocked'); assert.equal(explicit.reason, 'rejected'); assert.equal(explicit.httpStatus, 400); assert.deepEqual(refusedPost.calls.map(c => c.method), ['GET', 'POST']); assertNoLeak(explicit);
+    assert.equal((await agents.loadRegistry(registryFile)).missions.O01.state, 'failed');
+    const notApplicable = await agents.reconcile({ mission: 'O01', confirmAbsent: true, key: KEY, registryFile, fetchImpl: recorder({}).fetchImpl });
+    assert.equal(notApplicable.status, 'blocked'); assert.equal(notApplicable.reason, 'confirm_absent_not_applicable', 'l’attestation d’absence ne s’applique qu’à une livraison inconnue');
 
     await agents.saveRegistry(registryFile, { formatVersion: 1, missions: {} });
     const unknown = recorder({ 'GET /v1/models': () => models([fable]), 'POST /v1/agents': () => { throw new TypeError('socket hang up'); }, [`GET /v1/agents/${AGENT}`]: () => json({}, 503) });
@@ -380,7 +434,7 @@ test('the generator installs the standard as an exact managed copy usable withou
     await createApp({ out, spec: join(root, 'examples/services.json') });
     const manifest = JSON.parse(await readFile(join(out, orchestrationManifest), 'utf8'));
     const sources = await orchestrationSources();
-    assert.equal(manifest.formatVersion, 1); assert.equal(manifest.owner, 'creezio-lite'); assert.equal(manifest.kitVersion, '0.12.0');
+    assert.equal(manifest.formatVersion, 1); assert.equal(manifest.owner, 'creezio-lite'); assert.equal(manifest.kitVersion, '0.13.0');
     assert.deepEqual(Object.keys(manifest.files).sort(), Object.keys(sources).sort());
     for (const [path, source] of Object.entries(sources)) {
       const copy = await readFile(join(out, path)), original = await readFile(source);
@@ -388,7 +442,7 @@ test('the generator installs the standard as an exact managed copy usable withou
       assert.equal(manifest.files[path], createHash('sha256').update(copy).digest('hex'));
     }
     const report = await doctor(out);
-    assert.equal(report.ok, true); assert.deepEqual(report.orchestration, { status: 'current', installedVersion: '0.12.0', targetVersion: '0.12.0', conflicts: [] });
+    assert.equal(report.ok, true); assert.deepEqual(report.orchestration, { status: 'current', installedVersion: '0.13.0', targetVersion: '0.13.0', conflicts: [] });
     const lock = JSON.parse(await readFile(join(out, 'lite.lock.json'), 'utf8'));
     assert.ok(!Object.keys(lock.runtimeFiles).some(f => f.includes('.cursor')), 'le verrou runtime ne couvre pas le standard');
     const standalone = join(temp, 'standalone');
@@ -424,7 +478,7 @@ test('adopt inspects, applies once, preserves local rules and unmanaged files, a
     assert.ok(!(await readdir(join(app, '.cursor'))).includes('skills'), 'l’inspection n’écrit rien');
 
     const applied = await adopt(app, true);
-    assert.equal(applied.applied, true); assert.equal(applied.written.length, 5);
+    assert.equal(applied.applied, true); assert.deepEqual([...applied.written].sort(), DISTRIBUTED);
     const again = await adopt(app, true);
     assert.equal(again.applied, false); assert.equal(again.changed, false); assert.equal(again.status, 'current');
     assert.equal(await readFile(join(app, '.cursor/rules/metier.mdc'), 'utf8'), localRule);
@@ -449,7 +503,7 @@ test('adopt inspects, applies once, preserves local rules and unmanaged files, a
     assert.equal(outdated.status, 'outdated'); assert.equal(outdated.files[`${orchestrationDir}/SKILL.md`], 'outdated'); assert.equal(outdated.installedVersion, '0.11.9');
     const upgraded = await adopt(app, true);
     assert.deepEqual(upgraded.written, [`${orchestrationDir}/SKILL.md`]); assert.equal(await readFile(skillPath, 'utf8'), previous);
-    assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.12.0');
+    assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.13.0');
     assert.equal(await readFile(join(app, orchestrationDir, 'notes-locales.md'), 'utf8'), 'préservé\n');
 
     await writeFile(manifestPath, JSON.stringify({ formatVersion: 9 }) + '\n');
@@ -491,7 +545,7 @@ test('adopt refuses symlinked managed paths and parents before any write, and re
     await rm(join(app, '.cursor/skills/lite-orchestration'));
 
     // 3. Fichier géré symlinké vers une cible externe, avec manifeste le déclarant outdated.
-    const normal = await adopt(app, true); assert.equal(normal.applied, true); assert.equal(normal.written.length, 5);
+    const normal = await adopt(app, true); assert.equal(normal.applied, true); assert.deepEqual([...normal.written].sort(), DISTRIBUTED);
     const skillPath = join(app, orchestrationDir, 'SKILL.md'), target = join(outside, 'target.md');
     const stale = 'ancienne copie externe\n'; await writeFile(target, stale);
     await rm(skillPath); await symlink(target, skillPath, 'file');

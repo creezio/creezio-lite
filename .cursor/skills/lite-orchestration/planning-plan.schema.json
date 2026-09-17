@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "planning-plan.schema.json",
+  "title": "Creezio Lite — plan de missions parallèles (public), formatVersion 1",
+  "description": "Ce que le programme doit produire : missions, dépendances par étape (start/integrate/publish), réservations. Aucune donnée privée (ni branche, ni agent, ni run, ni PR, ni sélection : voir planning-state.schema.json). Contrat : PLANNING.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["formatVersion", "plan", "repos", "resources", "conditions", "missions"],
+  "properties": {
+    "formatVersion": { "const": 1 },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/key" },
+        "title": { "$ref": "#/$defs/text200" },
+        "revision": { "$ref": "#/$defs/text100", "description": "Révision informative du plan (date, tag) ; un écart avec l’état est un avertissement, pas une erreur." }
+      }
+    },
+    "repos": {
+      "type": "object",
+      "description": "Dépôts du programme ; clé courte reprise par mission.repo. Les chemins réservés sont relatifs à la racine du dépôt.",
+      "minProperties": 1,
+      "maxProperties": 50,
+      "propertyNames": { "$ref": "#/$defs/key" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+          "defaultBase": { "type": "string", "minLength": 1, "maxLength": 250, "description": "Branche d’intégration (ex. main). Les fusions et publications y sont séquentielles." }
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "description": "Ressources sémantiques exclusives partagées, déclarées une fois puis référencées par mission.reserves.resources. Globales au plan : deux missions qui réservent la même ressource sont en collision quels que soient leurs dépôts et leurs branches.",
+      "maxProperties": 100,
+      "propertyNames": { "$ref": "#/$defs/resourceId" },
+      "additionalProperties": { "$ref": "#/$defs/text200" }
+    },
+    "conditions": {
+      "type": "object",
+      "description": "Conditions vérifiables, déclarées une fois puis référencées par dépendance {condition}. L’état privé porte la preuve (planning-state conditions). Les validations faites par le pilotage lui-même (adoption locale d’une compétence, transition observée, CI verte, contrat accepté) sont des conditions sourcées : jamais des missions review/investigation fictives, qui exigeraient sélection, agent et livrable.",
+      "maxProperties": 200,
+      "propertyNames": { "$ref": "#/$defs/conditionId" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "proof"],
+        "properties": {
+          "check": { "$ref": "#/$defs/text200", "description": "Ce qu’il faut vérifier, en clair." },
+          "proof": { "$ref": "#/$defs/text200", "description": "Preuve acceptée (type de lien, SHA, sortie de commande)." }
+        }
+      }
+    },
+    "missions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": { "$ref": "#/$defs/mission" }
+    }
+  },
+  "$defs": {
+    "key": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+    "text100": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "text200": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "text500": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "resourceId": { "type": "string", "maxLength": 100, "pattern": "^[a-z][a-z0-9-]*(?::[A-Za-z0-9._-]+)+$" },
+    "conditionId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$" },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Chemin POSIX relatif normalisé : segments [A-Za-z0-9._@-], sans « . » ni « .. », sans « / » initial ni « ./ ». Un « / » final désigne un répertoire et tout son contenu.",
+      "pattern": "^(?:(?!\\.\\.?(?:/|$))[A-Za-z0-9._@-]+)(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._@-]+)*/?$"
+    },
+    "milestone": {
+      "enum": ["delivered", "integrated", "published"],
+      "description": "Jalon d’une mission productrice : delivered (run terminal + PR + réception : l’artefact existe, il n’est PAS accepté ; une correction peut être demandée), integrated (fusionnée dans la base), published (release contenant l’intégration). Un consommateur qui exige un contrat stable dépend d’une condition d’acceptation sourcée, pas de delivered brut. Une mission en statut historical atteint le jalon historical.step et ceux qui le précèdent."
+    },
+    "missionDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mission", "step"],
+      "properties": {
+        "mission": { "$ref": "#/$defs/key", "description": "Mission productrice (autre que la mission courante)." },
+        "step": { "$ref": "#/$defs/milestone" }
+      }
+    },
+    "conditionDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["condition"],
+      "properties": {
+        "condition": { "$ref": "#/$defs/conditionId", "description": "Identifiant déclaré dans plan.conditions ; satisfaite seulement si l’état porte une preuve satisfied=true." }
+      }
+    },
+    "dependency": { "oneOf": [{ "$ref": "#/$defs/missionDependency" }, { "$ref": "#/$defs/conditionDependency" }] },
+    "dependencyList": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/dependency" } },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Dépendances distinctes par étape. start : avant de lancer le run. integrate : avant de fusionner. publish : avant la release. Une dépendance integrate/publish ne bloque jamais start.",
+      "properties": {
+        "start": { "$ref": "#/$defs/dependencyList" },
+        "integrate": { "$ref": "#/$defs/dependencyList" },
+        "publish": { "$ref": "#/$defs/dependencyList" }
+      }
+    },
+    "reserves": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Réservations exclusives tenues de l’attribution (start) jusqu’à l’intégration (ou clôture/annulation). Collision : chemins du MÊME dépôt (mission.repo) dont la liste de segments est préfixe l’une de l’autre, ou ressource identique (globale au plan).",
+      "properties": {
+        "paths": { "type": "array", "maxItems": 100, "uniqueItems": true, "items": { "$ref": "#/$defs/path" } },
+        "resources": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "$ref": "#/$defs/resourceId" } }
+      }
+    },
+    "mission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "lot", "kind", "repo", "title", "source", "deliverable", "criteria", "owner", "priority", "dependencies", "reserves"],
+      "properties": {
+        "id": { "$ref": "#/$defs/key", "description": "Identifiant stable (clé de mission cursor-agents) ; ne change jamais, même après recadrage." },
+        "lot": { "$ref": "#/$defs/key", "description": "Lot ou thème de regroupement (cible possible d’une pause)." },
+        "kind": {
+          "enum": ["dev", "review", "investigation"],
+          "description": "dev : cycle start → delivered → integrated → published ; livrable = PR (prUrl + headSha). review / investigation : start → delivered → closed ; aucune étape integrate/publish ; livrable = verdict ou constat sur branche + headSha réels, PR facultative ; closed rouvrable explicitement vers delivered. Seuls les vrais travaux attribués à Cursor sont des missions ; une validation faite par le pilotage est une condition."
+        },
+        "repo": { "$ref": "#/$defs/key" },
+        "title": { "$ref": "#/$defs/text200" },
+        "source": { "$ref": "#/$defs/path", "description": "Document public du dépôt qui décrit la mission." },
+        "section": { "$ref": "#/$defs/text100" },
+        "deliverable": { "$ref": "#/$defs/text500" },
+        "criteria": { "type": "array", "minItems": 1, "maxItems": 30, "items": { "$ref": "#/$defs/text500" } },
+        "owner": { "$ref": "#/$defs/text100", "description": "Rôle responsable de la décision et de la réception (jamais une personne ni un identifiant privé)." },
+        "priority": { "type": "integer", "minimum": 1, "maximum": 9, "description": "1 = la plus urgente ; ordre des propositions : priorité croissante puis id." },
+        "contracts": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "$ref": "#/$defs/path" }, "description": "Contrats publics du dépôt que le livrable doit respecter." },
+        "dependencies": { "$ref": "#/$defs/dependencies" },
+        "reserves": { "$ref": "#/$defs/reserves" }
+      }
+    }
+  }
+}

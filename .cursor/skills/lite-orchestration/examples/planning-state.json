@@ -1,0 +1,149 @@
+{
+  "formatVersion": 1,
+  "plan": { "id": "example-program", "revision": "2026-09-16" },
+  "reconciledAt": "2026-09-16T18:40:00Z",
+  "capacity": {
+    "scope": "example-program",
+    "maxActiveRuns": 5,
+    "origin": "configured",
+    "source": "Plafond local décidé par l’orchestrateur pour le périmètre example-program (dépôts kit et app) ; aucun quota fournisseur vérifié, le quota global du compte reste inconnu",
+    "observedAt": "2026-09-16T18:40:00Z",
+    "maxReviewBacklog": 3,
+    "observedActiveRuns": { "value": 1, "source": "Agents des missions de example-program lus par cursor-agents status et réconciliés ; les autres agents du compte ne sont pas comptés ici", "at": "2026-09-16T18:40:00Z" }
+  },
+  "pauses": [
+    { "scope": "mission", "target": "F01", "reason": "Attente d’arbitrage sur le connecteur mail", "since": "2026-09-16T17:00:00Z" }
+  ],
+  "conditions": {
+    "ci-green-main": {
+      "satisfied": true,
+      "evidence": "https://github.com/example/kit/actions/runs/1234 sur 3f2a9c1d5e7b8a6f4c2d1e0b9a8f7e6d5c4b3a21",
+      "at": "2026-09-16T18:20:00Z",
+      "by": "orchestrator"
+    }
+  },
+  "missions": {
+    "X00": {
+      "status": "historical",
+      "historical": {
+        "step": "published",
+        "evidence": "Release v1.0.0 https://github.com/example/kit/releases/tag/v1.0.0 sur 1111111111111111111111111111111111111111 ; PR fusionnée https://github.com/example/kit/pull/30",
+        "at": "2026-09-10T12:00:00Z"
+      },
+      "prUrl": "https://github.com/example/kit/pull/30",
+      "headSha": "1111111111111111111111111111111111111111",
+      "note": "Lot reçu avant la tenue de cet état : sélection, agent et run inconnus, non inventés. Réservation runtime/core/ non tenue ; toute reprise serait une mission corrective distincte."
+    },
+    "Z00": {
+      "status": "integrated",
+      "selection": {
+        "key": "fable",
+        "modelId": "claude-fable-5-1",
+        "params": [{ "id": "thinking", "value": "true" }, { "id": "context", "value": "300k" }, { "id": "effort", "value": "high" }],
+        "chosenAt": "2026-09-15T09:00:00Z"
+      },
+      "branch": "agents/Z00-release-fix",
+      "base": "1111111111111111111111111111111111111111",
+      "agentId": "bc-example-z00",
+      "runId": "run-example-z00-1",
+      "runStatus": "FINISHED",
+      "launch": "launched",
+      "prUrl": "https://github.com/example/kit/pull/40",
+      "headSha": "3f2a9c1d5e7b8a6f4c2d1e0b9a8f7e6d5c4b3a21",
+      "followups": 0,
+      "assignedAt": "2026-09-15T09:05:00Z",
+      "deliveredAt": "2026-09-15T15:00:00Z",
+      "integratedAt": "2026-09-16T18:10:00Z"
+    },
+    "A01": {
+      "status": "delivered",
+      "selection": {
+        "key": "fable",
+        "modelId": "claude-fable-5-1",
+        "params": [{ "id": "thinking", "value": "true" }, { "id": "context", "value": "300k" }, { "id": "effort", "value": "high" }],
+        "chosenAt": "2026-09-15T10:00:00Z"
+      },
+      "branch": "agents/A01-search-ranking",
+      "base": "3f2a9c1d5e7b8a6f4c2d1e0b9a8f7e6d5c4b3a21",
+      "agentId": "bc-example-a01",
+      "runId": "run-example-a01-2",
+      "runStatus": "FINISHED",
+      "launch": "launched",
+      "prUrl": "https://github.com/example/kit/pull/41",
+      "headSha": "8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d",
+      "followups": 1,
+      "correction": { "requested": true, "reason": "Revue R01 : test négatif d’accès croisé org_id manquant", "at": "2026-09-16T18:30:00Z" },
+      "readyAt": "2026-09-15T10:00:00Z",
+      "assignedAt": "2026-09-15T10:05:00Z",
+      "deliveredAt": "2026-09-16T12:00:00Z"
+    },
+    "R01": {
+      "status": "closed",
+      "selection": {
+        "key": "opus",
+        "modelId": "claude-opus-5",
+        "params": [{ "id": "thinking", "value": "true" }, { "id": "context", "value": "300k" }, { "id": "effort", "value": "medium" }, { "id": "fast", "value": "false" }, { "id": "cyber", "value": "false" }],
+        "chosenAt": "2026-09-16T12:10:00Z"
+      },
+      "branch": "agents/A01-search-ranking",
+      "base": "8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d",
+      "agentId": "bc-example-r01",
+      "runId": "run-example-r01-1",
+      "runStatus": "FINISHED",
+      "launch": "launched",
+      "prUrl": "https://github.com/example/kit/pull/41",
+      "headSha": "8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d",
+      "followups": 0,
+      "readyAt": "2026-09-16T12:00:00Z",
+      "assignedAt": "2026-09-16T12:15:00Z",
+      "deliveredAt": "2026-09-16T18:25:00Z",
+      "closedAt": "2026-09-16T18:30:00Z",
+      "note": "Verdict rendu dans la PR de A01 sur le head revu ; preuve terminale conservée pour une réouverture explicite (§3.1.2)"
+    },
+    "B01": {
+      "status": "active",
+      "selection": {
+        "key": "fable",
+        "modelId": "claude-fable-5-1",
+        "params": [{ "id": "thinking", "value": "true" }, { "id": "context", "value": "300k" }, { "id": "effort", "value": "high" }],
+        "chosenAt": "2026-09-16T18:35:00Z"
+      },
+      "branch": "agents/B01-mail-receipts",
+      "base": "3f2a9c1d5e7b8a6f4c2d1e0b9a8f7e6d5c4b3a21",
+      "agentId": "bc-example-b01",
+      "runId": null,
+      "runStatus": "UNKNOWN",
+      "launch": "uncertain",
+      "followups": 0,
+      "readyAt": "2026-09-16T18:00:00Z",
+      "assignedAt": "2026-09-16T18:36:00Z",
+      "note": "POST de création sans réponse exploitable : réservée, comptée active, reconcile avant toute relance"
+    },
+    "J01": {
+      "status": "delivered",
+      "selection": {
+        "key": "grok",
+        "modelId": "grok-4.6",
+        "params": [{ "id": "effort", "value": "medium" }, { "id": "fast", "value": "false" }],
+        "chosenAt": "2026-09-16T09:00:00Z"
+      },
+      "branch": "agents/J01-readme-start",
+      "base": "3f2a9c1d5e7b8a6f4c2d1e0b9a8f7e6d5c4b3a21",
+      "agentId": "bc-example-j01",
+      "runId": "run-example-j01-1",
+      "runStatus": "FINISHED",
+      "launch": "launched",
+      "prUrl": "https://github.com/example/kit/pull/42",
+      "headSha": "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d",
+      "followups": 0,
+      "readyAt": "2026-09-16T09:00:00Z",
+      "assignedAt": "2026-09-16T09:05:00Z",
+      "deliveredAt": "2026-09-16T16:00:00Z"
+    },
+    "H01": {
+      "status": "pending",
+      "readyAt": "2026-09-16T17:30:00Z",
+      "waiting": { "code": "capacity_full", "since": "2026-09-16T17:30:00Z", "detail": "Priorité 4 ; places prises par des missions plus prioritaires" }
+    }
+  }
+}
