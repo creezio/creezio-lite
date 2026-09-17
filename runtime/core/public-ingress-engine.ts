@@ -603,7 +603,9 @@ function sanitizeSnapshot(snapshot: SanitizedSnapshot): SanitizedSnapshot | unde
 }
 
 async function digestOf(bytes: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  const owned = new Uint8Array(bytes.byteLength);
+  owned.set(bytes);
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', owned.buffer as ArrayBuffer));
 }
 
 function claimFence(value: ClaimFence | undefined): ClaimFence | undefined {
