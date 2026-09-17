@@ -34,5 +34,11 @@ Matrice contractuelle (HTTP, MCP, search, files, UI, **helper pur** `evaluateAcc
 | T28 | `receivableBy:['member']` alors que l’op est `roles:['owner','admin']` | **refus `defineExtensions`** | — | N/A |
 | T29 | `assignableBy: []` ou capability id inconnu ou ops dupliquées | refus déclaration | — | N/A |
 | T30 | Helper pur : `AccessCatalogEntry` + `denials` bruts (`id` et `module:…`) ; pas d’expansion app, pas de SQL | déterministe (T7/T25 inclus) | `denied_incomplete` | N/A |
+| T31 | Owner adopté, aucune capability ; `recordFilter` + `evaluateAccess` | helper refuse (7) **avant** les rows ; filtre non court-circuité | refuse (7) | owner `canReadModule` |
+| T32 | Deux profils ; deny sur l’op d’un groupe | `evaluateAccess` deny prioritaire ; le filtre ne choisit pas un profil | incomplet | deny sauf owner |
+| T33 | Helper `allowed` + filtre user↔entité `0=1` | 404 ligne ; `allowed` ≠ row | 404 si filtre atteint | scope SQL |
+| T34 | `evaluateAccess` depuis `recordFilter` | pas de réentrée `ScopeProvider` / search / files | idem | N/A |
+| T35 | Opt-in présent, surface native **sans** `ScopeAccessContext` | fail-closed `0=1` | idem | N/A (3 args) |
+| T36 | Snapshot d’un autre `org_id` / job | interdit ; nouvel input | idem | N/A |
 
-Hors : perf, DDL, UI d’assignation, `findByTitle` app sans scope (dette consommateur, pas un modèle).
+Hors : perf, DDL, UI d’assignation, `findByTitle` app sans scope (dette consommateur, pas un modèle). Oracles T31–T34 : owner sans capability, deny multi-profils, row préservée, non-récursion.

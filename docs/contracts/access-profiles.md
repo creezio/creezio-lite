@@ -1,6 +1,6 @@
 # Profils, capacités, groupes — proposition KIT-ACCESS-CONTRACT
 
-Statut : proposition. B1–B8 levés (revue sur `482f7ba`). Ancêtres `0e85503`, `800f348`, `9b3bf63`. B9 : catalogue d’entrée du helper. Pas de runtime livré. Astra tranche ; pilotes d’app gardent leur plan. Aucun schéma privé d’app.
+Statut : proposition. B1–B8 levés. B9 catalogue helper (`4991f36`). Raccordement `ScopeProvider` (signature additive). Ancêtres `0e85503`, `800f348`, `9b3bf63`, `482f7ba`. Pas de runtime livré. Astra tranche. Aucun schéma privé d’app.
 
 ## 1. Limite actuelle
 
@@ -20,6 +20,7 @@ Identité, invitations, `lite_members`, admin d’espace : natifs (`types.ts`, `
 10. `catalogRevision` : chaîne opaque, égalité seulement. `validUntil` : RFC3339 optionnel vs `now` **serveur**. `AccessDecision.reason` est **interne** au helper, jamais le `error.code` HTTP. Public inchangé : `403 operation_forbidden`, `403 read_only_token` / `token_scope`, `409 version_conflict`.
 11. `mcp.tools.available` / `mcp.tools.call` essential = enveloppe ; l’outil interne passe par le même évaluateur (comme `tools.ts` ∩ `operationAllowed` aujourd’hui).
 12. Legacy permissif **uniquement** sans déclaration. `allow` inertes au premier reçu. Inconnus → refus. Snapshot par requête ; jobs revalident. Scope user↔entité ≠ RBAC. Audit sans `resource_id` hors scope.
+13. `recordFilter` / `fileFilter` : 4e argument additif `ScopeAccessContext` (`evaluateAccess` lié au **même** snapshot). Helper **non récursif**. `allowed` n’autorise pas une ligne ni un champ. Intersection filtre user↔entité **toujours**, owner inclus. Opt-in absent = callbacks 3 args historiques. Opt-in présent + contexte omis = fail-closed. Snapshot non forgeable, non réutilisable inter-espace / inter-requête / job.
 
 ## 3. Types
 
@@ -104,6 +105,16 @@ export type EvaluateAccessInput = Readonly<{
   query: AccessQuery;
 }>;
 export function evaluateAccessDecision(input: EvaluateAccessInput): AccessDecision;
+// Pur : grant/deny/credential seulement. Interdit : appeler ScopeProvider, lire rows, projections, search, files.
+export type ScopeAccessContext = Readonly<{
+  snapshot: AccessSnapshot; // cette requête, cet org_id ; pas un argument client
+  evaluateAccess: (query: AccessQuery) => AccessDecision;
+}>;
+// Signatures actuelles inchangées si `access?` omis (legacy).
+// recordFilter(principal, ref, action, access?: ScopeAccessContext): SqlFragment
+// fileFilter(principal, ref, action, access?: ScopeAccessContext): SqlFragment
+// recordScope(..., access?: ScopeAccessContext) ; fileScope(..., access?: ScopeAccessContext)
+
 export function authorizeDelegationDecision(
   input: EvaluateAccessInput & {
     mutation: DelegationMutation;
@@ -148,14 +159,20 @@ Le **helper** applique deny `module:` et credential ; l’app ne pré-filtre pas
 
 Pas de keep-alive shell implicite après adoption : dashboard/search/files/mail/assistant exigent des **IDs d’op** dans une capability liée (proposition : l’app les déclare ; le kit n’invente pas un profil magique).
 
-## 5. Fermetures request-scope
+## 5. Fermetures request-scope et ScopeProvider
 
-Noyau construit `EvaluateAccessInput` une fois par requête. Il expose :
+Noyau construit `EvaluateAccessInput` **une fois par requête** (`requestId` + `workspaceId`). Fermetures :
 
-`evaluateAccess(query)` → `evaluateAccessDecision(input+query)`  
-`authorizeDelegation(mutation, group)` → `authorizeDelegationDecision(...)`
+`evaluateAccess(query)` → `evaluateAccessDecision` (même snapshot)  
+`authorizeDelegation(mutation, group)` → `authorizeDelegationDecision`
 
-sur `AppOperationContext`, `BeforeWrite` (delta vs `{workspace, identity}`), `FileDeletionContext`. L’app **n’importe pas** un moteur de rôles et **ne relit pas** SQL groupes. `ScopeProvider` = user↔entité seulement.
+sur `AppOperationContext`, `BeforeWrite`, `FileDeletionContext`, et 4e argument de `recordFilter` / `fileFilter`.
+
+Surfaces natives qui **passent** ce contexte (opt-in présent) : `recordScope` / `fileScope` (CRUD, dashboard, history), `searchScope` (`search.ts` : index records **et** files), listes/métadonnées/téléchargement fichiers. Les projections champs/extraits de recherche/fichiers **n’ont pas** d’API parallèle : elles reçoivent le même `ScopeAccessContext` uniquement par ces surfaces. Pas de SQL groupes ; `observedProfileIds` n’est pas une permission. Plusieurs profils = autant d’appels au **même** `evaluateAccess` kit (deny prioritaire déjà dans le helper). Aucun bypass owner dans le filtre.
+
+**Non-récursion.** `evaluateAccessDecision` ne rappelle pas `ScopeProvider`, ne lit aucune ligne, n’applique aucune projection. Un `allowed` n’ouvre pas de row/champ : le fragment app (user↔entité) est **AND** obligatoire, y compris owner. Un filtre qui se fonderait sur des IDs de profil comme ACL viole le contrat.
+
+**Additif / fail-closed.** `access` absent : appels 3 arguments, `openScope` `1=1`, comportement historique. `access` présent : la surface native **doit** fournir `ScopeAccessContext` ; omission → fragment fail-closed `0=1` (pas `1=1`). Un callback legacy à 3 paramètres reste callable (4e argument JS ignoré) ; le kit n’omet pas le contexte. Snapshot d’une autre requête, d’un autre `org_id` ou d’un job antérieur : interdit ; le job reconstruit l’entrée (§4).
 
 ## 6. Délégation
 
