@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.13.1 — Frontmatter de compétence LF et CRLF dans le CLI
+
+- `skillFrontmatter` dans `bin/lite.mjs` accepte les délimiteurs `---` et les fins de ligne LF ou CRLF (`core.autocrlf=true` sur un checkout Windows) ; `name` et `description` restent exigés sur une seule ligne, le frontmatter malformé est toujours refusé.
+- `create` et `adopt` relisent ainsi une skill canonique transformée en CRLF ; les copies applicatives restent les octets du checkout kit, sans fork ni normalisation globale.
+- Aucun changement des ressources distribuées du standard, du transport Cursor, du pool, de la planification, du runtime métier, du schéma, des migrations ni de la politique Git.
+
 ## 0.13.0 — Planification parallèle des missions, pool commun de comptes et distribution complète du standard
 
 - Contrat de planification v1 `PLANNING.md` (P1) : plan public (`docs/planning/plan.json`) et état privé hors dépôt, schémas JSON 2020-12 `planning-plan.schema.json` / `planning-state.schema.json`, exemples génériques ; dépendances par étape (`start`/`integrate`/`publish`), conditions d’acceptation sourcées distinctes de `delivered`, réservations de chemins par dépôt et de ressources sémantiques tenues jusqu’à l’intégration, statut `historical`, capacité par périmètre (`0` valide, `null` non fiable), invariants d’état refusant toute incertitude effacée.
