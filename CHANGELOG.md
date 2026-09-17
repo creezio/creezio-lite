@@ -1,5 +1,15 @@
 # Versions de Lite
 
+## 0.14.0 — Références secondaires explicites dans le transport Cursor
+
+- Reprend `0.13.2` déjà publié (`ec0f7d93`, boucle active et fermeture de cycle). Pas de modification fonctionnelle du transport par rapport à `4f01e642`.
+- `cursor-agents.mjs` : `--references-file` JSON strict `[{url,sha}]` (SHA 40 hex immuable, ≤19 sources, URL GitHub HTTPS sans userinfo/query/fragment). La cible unique reste `--repo`/`--ref` ou `--pr-url`. Doublons normalisés et source = cible refusés. Pas de branche/tag mouvant ni de `prUrl` source.
+- Avant POST, `GET /v1/repositories` paginé du compte sélectionné doit lister la cible et chaque source ; un manquant bloque sans POST. Le reçu sépare `demanded` / `visible` / `submitted` / `accepted` / `checkoutObserved` : 400 ⇒ `accepted` null ; 201 ⇒ repos exposés par la réponse sinon null, jamais un écho du payload. Un mismatch demandé/exposé conserve les deux preuves et bloque l’exploitation avant le pod. Lecture seule des sources : consigne d’orchestration, pas une ACL fournisseur.
+- Références immuables persistées (ordre canonique) et validées à l’idempotence ; entrée ancienne sans `references` inchangée. Input différent sur une mission existante ⇒ `input_changed`. `followup` conserve l’ensemble initial ; `successor` recopie les SHA et revalide le catalogue du compte cible. 404/timeout/409/uncertain inchangés. Tests sur mocks ; pas de sonde API réelle. Aucun changement du pool DPAPI, du runtime métier, du schéma ni de `docs/contracts/public-ingress*`.
+- Réception utile : deux dépôts, SHA source déjà intégré à la default d’une source catalogue. POST 201 : deux `repos` exposés identiques au payload ; les deux HEAD extraits observés concordent avec la requête puis la réponse (`9b3bf63b1ebf8e5b0e8f7f0c44bae60a048c18e5` cible kit, `354155e25c0a7948db73087f872d1ae3970c41b5` source). Pas de clone ni de repli. Une revue de contrat a relevé des défauts contractuels sans invalider cette extraction.
+- Limites : la cause de l’ancien `400 validation_error` (source SHA, catalogue visible, puis GET 404 `not_created`) **n’est pas établie**. Ce n’est pas une promesse que tout SHA est accessible. Pas de remplacement automatique SHA→branche, pas d’omission de source, pas de nouvelle référence autorisée par le kit. Contrôler les refs (catalogue, payload, réponse, HEAD) **avant chaque consommation**, à chaque mission. Échec visible ≠ crédits épuisés.
+- Version **candidate** jusqu’à la release GitHub `v0.14.0` au SHA de `main` ; cette note n’est pas une publication.
+
 ## 0.13.2 — Boucle active d’orchestration et fermeture de cycle
 
 - `SKILL.md` : section boucle active (rester dans le tour, outils existants, polling progressif borné ; `RUNNING`/CI pending n’est pas une fin). `status --follow` émet au changement et continue tant que non terminal. Frontières kit/app. Renvoi court `CONTRACT.md` §10. Pas de moteur ni de daemon.

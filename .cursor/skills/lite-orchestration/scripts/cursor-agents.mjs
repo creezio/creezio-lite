@@ -104,6 +104,199 @@ export function normalizeRepo(value) {
   if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash || !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(url.pathname)) throw new UsageError('Dépôt GitHub HTTPS attendu.');
   return `https://github.com${url.pathname.replace(/\/$/, '').replace(/\.git$/, '')}`;
 }
+// Références secondaires explicites : fichier JSON strict [{url,sha}], SHA 40 hex immuable, au plus 19 sources (20 dépôts au total). Pas de branche/tag mouvant, pas de prUrl source.
+export const maxAgentRepos = 20;
+export const maxSecondaryReferences = 19;
+export const repositoryCatalogLimits = Object.freeze({ maxPages: 32, maxItems: 8_000, timeoutMs: 60_000 });
+const sha40 = value => {
+  if (typeof value !== 'string' || !shaPattern.test(value)) throw new UsageError('SHA Git complet (40 hexadécimaux) attendu pour une référence secondaire.');
+  return value.toLowerCase();
+};
+export function parseSecondaryReferences(value, { targetUrl } = {}) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new UsageError('--references-file : tableau JSON [{url,sha}] attendu.');
+  if (value.length > maxSecondaryReferences) throw new UsageError(`--references-file : au plus ${maxSecondaryReferences} sources (${maxAgentRepos} dépôts au total avec la cible).`);
+  const target = targetUrl !== undefined ? normalizeRepo(targetUrl).toLowerCase() : null;
+  const seen = new Set();
+  const sources = [];
+  for (const [i, entry] of value.entries()) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new UsageError(`--references-file : entrée ${i} invalide.`);
+    const keys = Object.keys(entry);
+    if (keys.length !== 2 || !Object.hasOwn(entry, 'url') || !Object.hasOwn(entry, 'sha')) throw new UsageError(`--references-file : entrée ${i} : uniquement {url,sha}, sans prUrl ni branche.`);
+    const url = normalizeRepo(entry.url);
+    const sha = sha40(entry.sha);
+    const key = url.toLowerCase();
+    if (target && key === target) throw new UsageError('--references-file : une source ne peut pas être le dépôt cible.');
+    if (seen.has(key)) throw new UsageError(`--references-file : dépôt source dupliqué après normalisation : ${url}`);
+    seen.add(key);
+    sources.push({ url, sha });
+  }
+  sources.sort((a, b) => (a.url < b.url ? -1 : a.url > b.url ? 1 : 0));
+  return sources;
+}
+export async function loadReferencesFile(file, { targetUrl } = {}) {
+  if (!file) return [];
+  let raw;
+  try { raw = JSON.parse(await readFile(file, 'utf8')); }
+  catch { throw new UsageError('--references-file : JSON tableau [{url,sha}] illisible.'); }
+  return parseSecondaryReferences(raw, { targetUrl });
+}
+export function inputFingerprint({ repo, ref, prUrl, sources = [] }) {
+  return JSON.stringify({ repo: normalizeRepo(repo), ...(prUrl ? { prUrl } : { ref: ref ?? null }), sources: parseSecondaryReferences(sources) });
+}
+export function storedSources(entry) {
+  if (!entry) return [];
+  if (Array.isArray(entry.references)) return entry.references;
+  if (Array.isArray(entry.references?.sources)) return entry.references.sources;
+  return [];
+}
+function storedFingerprint(entry) {
+  return inputFingerprint({ repo: entry.repo, ref: entry.ref, prUrl: entry.prUrl, sources: storedSources(entry) });
+}
+export function sourceInstructionText(sources) {
+  if (!sources.length) return '';
+  return [
+    'Références secondaires — lecture seule (consigne d’orchestration, pas une ACL fournisseur : l’API publique n’expose pas de restriction d’écriture sur ces dépôts).',
+    'Dès le début, vérifier dans le pod que chaque source est extraite au SHA demandé (chemin et révision). Si une source est absente ou à une autre révision : bloquer la mission, ne pas continuer.',
+    'Aucun commit, push ni PR sur les sources. La cible unique reste le dépôt de travail.',
+    ...sources.map(s => `- ${s.url} @ ${s.sha}`),
+    '',
+  ].join('\n');
+}
+export function withSourceInstructions(promptText, sources) {
+  const prefix = sourceInstructionText(sources);
+  return prefix ? `${prefix}${promptText}` : promptText;
+}
+export function targetRepoEntry({ repo, ref, prUrl }) {
+  return prUrl ? { url: repo, prUrl } : { url: repo, startingRef: ref };
+}
+export function attachedRepos({ repo, ref, prUrl, sources = [] }) {
+  return [targetRepoEntry({ repo, ref, prUrl }), ...sources.map(s => ({ url: s.url, startingRef: s.sha }))];
+}
+const checkoutObservedNote = 'Un dépôt soumis ou annoncé n’est pas une preuve de checkout dans le pod (checkoutObserved).';
+export function parseExposedRepos(value) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length > maxAgentRepos) return null;
+  const repos = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    if (typeof item.url !== 'string') return null;
+    let url;
+    try { url = normalizeRepo(item.url); } catch { return null; }
+    const out = { url };
+    if (item.startingRef !== undefined) {
+      if (typeof item.startingRef !== 'string' || !item.startingRef || item.startingRef.length > 250 || /[\s~^:?*[\\\x00-\x1f\x7f]|\.\.|^[-/]|\/$|\.lock$|@\{/.test(item.startingRef)) return null;
+      out.startingRef = item.startingRef;
+    }
+    if (item.prUrl !== undefined) {
+      try {
+        const parsed = new URL(item.prUrl);
+        if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com' || !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+\/?$/.test(parsed.pathname) || parsed.search || parsed.hash || parsed.username) return null;
+        out.prUrl = `https://github.com${parsed.pathname.replace(/\/$/, '')}`;
+      } catch { return null; }
+    }
+    repos.push(out);
+  }
+  return repos;
+}
+export function repositoryMismatch(demanded, accepted) {
+  if (!accepted) return false;
+  const expected = [demanded.target, ...demanded.sources.map(s => ({ url: s.url, startingRef: s.sha }))];
+  if (accepted.length !== expected.length) return true;
+  const byUrl = new Map(accepted.map(r => [r.url.toLowerCase(), r]));
+  for (const item of expected) {
+    const got = byUrl.get(item.url.toLowerCase());
+    if (!got) return true;
+    if (item.prUrl) { if (got.prUrl !== item.prUrl) return true; }
+    else if ((item.startingRef ?? '').toLowerCase() !== (got.startingRef ?? '').toLowerCase()) return true;
+  }
+  return false;
+}
+export function repositoryReceipt({ repo, ref, prUrl, sources = [], catalog, submitted = null, accepted = null, accountId, mismatch = false }) {
+  const demanded = { target: targetRepoEntry({ repo, ref, prUrl }), sources };
+  const receipt = {
+    demanded,
+    submitted,
+    accepted: accepted ?? null,
+    checkoutObserved: null,
+    sourceAccess: { kind: 'instruction', providerAcl: null, note: 'Lecture seule des sources : consigne d’orchestration. L’API publique n’expose pas de restriction d’écriture.' },
+    note: checkoutObservedNote,
+  };
+  if (catalog) {
+    const demandedUrls = [repo, ...sources.map(s => s.url)];
+    const visible = (catalog.urls ?? []).filter(u => demandedUrls.some(d => d.toLowerCase() === u.toLowerCase()));
+    receipt.visible = { urls: visible, catalogCheckedAt: catalog.checkedAt ?? null, pages: catalog.pages ?? 0, complete: catalog.complete === true, ...(accountId ? { accountId } : {}) };
+  }
+  if (mismatch) receipt.mismatch = { demanded, accepted: accepted ?? null };
+  return receipt;
+}
+function validationErrorNextAction(sources) {
+  if (sources.some(s => typeof s.sha === 'string' && shaPattern.test(s.sha))) {
+    return '400 validation_error (providerCode seulement). Un SHA source a été soumis. Cause non prouvée (docs officielles autorisent un SHA ; une limite SHA hors branche default/PR n’est pas établie pour une source). Échec visible ≠ crédits épuisés. Aucun remplacement automatique SHA→branche, aucune omission de source, aucune sonde nouvelle. Obtenir un appel accepté utile et un checkout observé avant publication de la capacité.';
+  }
+  return '400 validation_error (providerCode seulement). Cause non prouvée. Échec visible ≠ crédits épuisés. Aucune sonde nouvelle sans mainteneur.';
+}
+function withRepositoryOutcome({ created, repo, ref, prUrl, sources, catalog, submitted, accountId }) {
+  const accepted = created.status === 'launched' || created.status === 'existing' ? (created.exposedRepos ?? null) : null;
+  const mismatch = repositoryMismatch({ target: targetRepoEntry({ repo, ref, prUrl }), sources }, accepted);
+  const { exposedRepos: _exposed, ...rest } = created;
+  const repositories = repositoryReceipt({ repo, ref, prUrl, sources, catalog, submitted, accepted, accountId, mismatch });
+  if (mismatch) {
+    return { ...rest, status: 'blocked', reason: 'repository_mismatch', repositories, nextAction: 'Les refs demandées et les repos exposés par le fournisseur diffèrent ; les deux preuves sont conservées. Ne pas recevoir ni exploiter avant checkout observé dans le pod. Aucun remplacement automatique SHA→branche, aucune omission de source.' };
+  }
+  if (rest.httpStatus === 400 && rest.providerCode === 'validation_error' && !rest.nextAction) {
+    return { ...rest, repositories, nextAction: validationErrorNextAction(sources) };
+  }
+  return { ...rest, repositories };
+}
+function parseRepositoryCatalogPage(data) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.items) || data.items.length > 1_000) return null;
+  const urls = [];
+  for (const item of data.items) {
+    if (!item || typeof item !== 'object' || typeof item.url !== 'string') return null;
+    try { urls.push(normalizeRepo(item.url)); } catch { /* URL hors GitHub HTTPS ignorée ; aucun champ permissions inventé. */ }
+  }
+  if (data.nextCursor !== undefined && data.nextCursor !== null && (typeof data.nextCursor !== 'string' || !data.nextCursor || data.nextCursor.length > 500 || /[\s?#&=]/.test(data.nextCursor))) return null;
+  return { urls, nextCursor: typeof data.nextCursor === 'string' && data.nextCursor ? data.nextCursor : null };
+}
+export function missingFromCatalog(catalog, demanded) {
+  const visible = new Set((catalog.urls ?? []).map(u => u.toLowerCase()));
+  return demanded.filter(u => !visible.has(normalizeRepo(u).toLowerCase()));
+}
+// Catalogue authentifié du compte sélectionné. nextCursor, s’il est présent, suit la convention des listes v1 ; son absence clôt la pagination. Aucun champ permissions lu.
+export async function listRepositoryCatalog({ key, fetchImpl, timeoutMs = repositoryCatalogLimits.timeoutMs, untilUrls = [] } = {}) {
+  const needed = untilUrls.map(u => normalizeRepo(u).toLowerCase());
+  const seen = new Set();
+  const urls = [];
+  let cursor, pages = 0;
+  const checkedAt = new Date().toISOString();
+  for (;;) {
+    pages += 1;
+    if (pages > repositoryCatalogLimits.maxPages) return { status: 'unavailable', reason: 'catalog_truncated', checkedAt, pages, urls };
+    const result = await call({ path: '/v1/repositories', query: cursor ? { cursor } : undefined, key, fetchImpl, timeoutMs });
+    if (result.outcome !== 'ok') return { status: result.outcome === 'rejected' ? 'blocked' : 'unavailable', reason: result.reason ?? result.outcome, ...(result.status ? { httpStatus: result.status } : {}), checkedAt, pages };
+    const page = parseRepositoryCatalogPage(result.data);
+    if (!page) return { status: 'unavailable', reason: 'invalid_response', ...(result.status ? { httpStatus: result.status } : {}), checkedAt, pages };
+    for (const url of page.urls) {
+      const k = url.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      urls.push(url);
+      if (urls.length > repositoryCatalogLimits.maxItems) return { status: 'unavailable', reason: 'catalog_truncated', checkedAt, pages, urls };
+    }
+    if (needed.every(u => seen.has(u))) return { status: 'ok', urls, pages, checkedAt, complete: !page.nextCursor };
+    if (!page.nextCursor) return { status: 'ok', urls, pages, checkedAt, complete: true };
+    cursor = page.nextCursor;
+  }
+}
+async function assertRepositoriesVisible({ key, fetchImpl, timeoutMs, repo, sources, accountId }) {
+  const demanded = [repo, ...sources.map(s => s.url)];
+  const catalog = await listRepositoryCatalog({ key, fetchImpl, timeoutMs: timeoutMs ?? repositoryCatalogLimits.timeoutMs, untilUrls: demanded });
+  if (catalog.status !== 'ok') return { failure: { status: catalog.status, reason: catalog.reason, ...(catalog.httpStatus ? { httpStatus: catalog.httpStatus } : {}), nextAction: 'catalogue des dépôts illisible sur le compte sélectionné ; aucun POST. Relancer plus tard, sans sonder un autre compte.' }, catalog };
+  const missing = missingFromCatalog(catalog, demanded);
+  if (missing.length) return { failure: { status: 'blocked', reason: 'repository_not_visible', missing, nextAction: 'Autoriser explicitement la lecture de ces dépôts sur le compte sélectionné (installation GitHub App). Le catalogue n’inclut rien automatiquement. Visibilité catalogue ≠ clonage dans le pod. Aucun POST.' }, catalog };
+  return { catalog };
+}
 function assertAgentId(value) { if (typeof value !== 'string' || !agentIdPattern.test(value)) throw new UsageError('Identifiant d’agent bc-<uuid> attendu.'); return value; }
 function assertRunId(value) { if (typeof value !== 'string' || !runIdPattern.test(value)) throw new UsageError('Identifiant de run run-<uuid> attendu.'); return value; }
 function refName(value) { if (typeof value !== 'string' || !value || value.length > 250 || /[\s~^:?*[\\\x00-\x1f\x7f]|\.\.|^[-/]|\/$|\.lock$|@\{/.test(value)) throw new UsageError('Nom de branche ou SHA invalide.'); return value; }
@@ -127,15 +320,26 @@ function providerMessage(data) {
 }
 const providerFields = data => ({ ...(providerCode(data) ? { providerCode: providerCode(data) } : {}), ...(providerMessage(data) ? { providerMessage: providerMessage(data) } : {}) });
 // Résultat fermé : ok | rejected | unavailable | invalid_response. Jamais de corps ni d’en-tête recopié.
-export async function call({ method = 'GET', path, body, key, fetchImpl = globalThis.fetch, timeoutMs = 20_000, maxBytes = 2_000_000 }) {
+export async function call({ method = 'GET', path, query, body, key, fetchImpl = globalThis.fetch, timeoutMs = 20_000, maxBytes = 2_000_000 }) {
   if (!key) return { outcome: 'unavailable', reason: 'credential_missing', delivery: 'not_sent' };
   if (typeof path !== 'string' || !path.startsWith('/v1/') || /[\s?#]/.test(path)) throw new UsageError('Chemin API non autorisé.');
+  let url = API + path;
+  if (query && typeof query === 'object') {
+    const params = new URLSearchParams();
+    for (const [name, value] of Object.entries(query)) {
+      if (value === undefined || value === null || value === '') continue;
+      if (name !== 'cursor' || typeof value !== 'string' || value.length > 500 || /[\s?#&=]/.test(value)) throw new UsageError('Paramètre de requête non autorisé.');
+      params.set(name, value);
+    }
+    const qs = params.toString();
+    if (qs) url += `?${qs}`;
+  }
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
   const delivery = method === 'GET' ? 'not_sent' : 'unknown';
   try {
     let response;
     try {
-      response = await fetchImpl(API + path, { method, redirect: 'manual', signal: controller.signal, headers: { authorization: `Bearer ${key}`, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      response = await fetchImpl(url, { method, redirect: 'manual', signal: controller.signal, headers: { authorization: `Bearer ${key}`, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     } catch { return { outcome: 'unavailable', reason: controller.signal.aborted ? 'timeout' : 'network', delivery }; }
     const status = response.status;
     if (status >= 300 && status < 400) { await response.body?.cancel(); return { outcome: 'unavailable', reason: 'redirect', status, delivery: 'unknown' }; }
@@ -248,13 +452,14 @@ async function createAgent({ command, mission, entry, registry, registryFile, bo
   if (result.outcome === 'ok') {
     const agent = agentSummary(result.data?.agent), run = runSummary(result.data?.run);
     if (!agent || !run || agent.agentId !== agentId || run.agentId !== agentId) {
-      // L’API a accepté quelque chose sous une identité inattendue : conserver ce qu’elle a réellement retourné ; aucun nouvel identifiant, aucun POST, décision humaine après reconcile.
+      // L’API a accepté quelque chose sous une identité inattendue : conserver ce qu’elle a réellement retourné ; aucun nouvel identifiant, aucun POST, décision humaine après reconcile. Ne pas adopter les repos d’une autre identité comme accepted.
       const returned = { agentId: agent?.agentId ?? run?.agentId ?? null, runId: run?.runId ?? null, ...(agent?.url ? { url: agent.url } : {}) };
       await finish('uncertain', { reason: 'identity_mismatch', returned });
       return { command, status: 'uncertain', mission, agentId, reason: 'identity_mismatch', returned, nextAction: 'reconcile --mission : lit l’identifiant attendu et l’identifiant retourné ; aucun POST, aucun successeur tant que non résolu', ...extra };
     }
+    const exposedRepos = parseExposedRepos(result.data?.agent?.repos);
     await finish('launched', { runId: run.runId, url: agent.url });
-    return { command, status: 'launched', mission, agentId, runId: run.runId, url: agent.url, selection: selectionReceipt(entry.selection, { createAccepted: true, entry }), ...extra };
+    return { command, status: 'launched', mission, agentId, runId: run.runId, url: agent.url, selection: selectionReceipt(entry.selection, { createAccepted: true, entry }), exposedRepos, ...extra };
   }
   if (result.outcome === 'rejected' && result.status === 409) {
     // Conflit : le fournisseur revendique l’existence ; un 404 juste après est contradictoire ⇒ conflict_unreadable, jamais « non créé ».
@@ -280,19 +485,26 @@ const conflictUnreadableAction = mission => `conflit 409 puis agent illisible (4
 const unknownDelivery = entry => entry?.delivery?.state === 'unknown' || (entry?.state === 'pending' && !entry?.delivery) || entry?.reason === 'not_found_after_unknown_delivery';
 const conflictDelivery = entry => entry?.delivery?.state === 'conflict' || entry?.reason === 'conflict_unreadable';
 // Lancement dédupliqué : registre → décision de compte (pool) → préflight → POST avec agentId déterministe → réconciliation des 409 et appels incertains.
-export async function launch({ mission, repo, ref, prUrl, promptText, name, autoCreatePR = false, workOnCurrentBranch = true, config, select, account, key, access, registryFile, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
+export async function launch({ mission, repo, ref, prUrl, promptText, name, autoCreatePR = false, workOnCurrentBranch = true, config, select, account, key, access, registryFile, fetchImpl, timeoutMs, references, now = () => new Date().toISOString() }) {
   if (typeof mission !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(mission)) throw new UsageError('--mission : clé courte [A-Za-z0-9._-] requise.');
   if (typeof promptText !== 'string' || !promptText.trim() || promptText.length > 200_000) throw new UsageError('Brief vide ou trop long.');
   const repoUrl = normalizeRepo(repo);
   if (prUrl !== undefined) { const url = new URL(prUrl); if (url.protocol !== 'https:' || url.hostname !== 'github.com' || !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+\/?$/.test(url.pathname) || url.search || url.hash || url.username) throw new UsageError('URL de PR GitHub attendue.'); }
   else refName(ref);
+  const sources = parseSecondaryReferences(references ?? [], { targetUrl: repoUrl });
+  const sentPrompt = withSourceInstructions(promptText, sources);
+  if (sentPrompt.length > 200_000) throw new UsageError('Brief trop long une fois les consignes de sources ajoutées.');
+  const fingerprint = inputFingerprint({ repo: repoUrl, ref, prUrl, sources });
   const chosen = resolveSelection(config, select);
   access = accessOf(access, key);
   if (account !== undefined) { assertAccountId(account); if (!access.pool) throw new UsageError('--account exige le pool de comptes (CURSOR_API_KEY désigne un seul compte implicite).'); }
   const registry = await loadRegistry(registryFile);
   const existing = registry.missions[mission];
   // pending = POST interrompu avant enregistrement du résultat : l'agent existe peut-être ; reconcile, jamais un nouveau lancement ni une reprise aveugle.
-  if (existing && activeStates.has(existing.state)) return { command: 'launch', status: 'deduplicated', mission, entry: existing, nextAction: ['uncertain', 'pending'].includes(existing.state) ? 'reconcile' : hasLineage(existing) ? 'followup --mission (même agent successeur) ; jamais launch sur une mission à chaîne' : 'followup ou nouvelle clé de mission' };
+  if (existing && activeStates.has(existing.state)) {
+    if (storedFingerprint(existing) !== fingerprint) return { command: 'launch', status: 'blocked', mission, reason: 'input_changed', agentId: existing.agentId, nextAction: ['uncertain', 'pending'].includes(existing.state) ? 'reconcile --mission : livraison encore incertaine ; un input différent n’autorise aucun POST. Nouvelle clé de mission pour un autre ensemble de dépôts, jamais un successeur ni un changement de modèle.' : hasLineage(existing) ? 'followup conserve l’ensemble initial ; jamais launch sur une mission à chaîne. Nouveau dépôt : nouvelle clé de mission, pas un successeur abusif.' : 'mission déjà lancée avec un autre dépôt ou d’autres références ; followup conserve l’ensemble initial. Nouvelle clé de mission pour un autre besoin, pas de successeur abusif ni de migration active.', entry: existing };
+    return { command: 'launch', status: 'deduplicated', mission, entry: existing, nextAction: ['uncertain', 'pending'].includes(existing.state) ? 'reconcile' : hasLineage(existing) ? 'followup --mission (même agent successeur) ; jamais launch sur une mission à chaîne' : 'followup ou nouvelle clé de mission' };
+  }
   // Mission à chaîne prédécesseur/successeur : launch écraserait la chaîne et le propriétaire et réutiliserait l’identifiant initial avec une autre clé. Refus ; la suite est successor ou followup.
   if (existing && hasLineage(existing)) return { command: 'launch', status: 'blocked', mission, reason: 'mission_has_lineage', agentId: existing.agentId, lineage: { successorOf: existing.successorOf ?? null, predecessors: (existing.predecessors ?? []).length, state: existing.state }, nextAction: ['failed', 'not_created'].includes(existing.state) ? 'successor --mission --checkpoint <SHA enregistré> : nouvelle tentative de successeur (relecture du prédécesseur), ou followup --mission si le propriétaire du prédécesseur est redevenu éligible (reprise réconciliée) ; jamais launch' : 'reconcile --mission puis followup --mission sur le successeur ; jamais launch (historique et propriétaire seraient perdus)' };
   // Décision de compte, déterministe et relue dans l’état partagé : même sélection sur le compte premium éligible ; exception seulement selon la politique du pool.
@@ -307,14 +519,24 @@ export async function launch({ mission, repo, ref, prUrl, promptText, name, auto
   let modelsResult;
   const check = await preflight({ selection: active, access, accountId, fetchImpl, timeoutMs, onResult: r => { modelsResult = r; } });
   if (check.status !== 'ok') { const evidence = await recordEvidence(access, accountId, { callKind: 'models', modelId: active.modelId, result: modelsResult }); return { command: 'launch', status: check.status, mission, preflight: check, ...accountFields(accountId, decision), ...(evidence ? { evidence: { classification: evidence.classification, recorded: evidence.recorded } } : {}), ...(evidenceHint(evidence) ? { nextAction: evidenceHint(evidence) } : {}) }; }
+  const ownerKey = await access.keyFor(accountId);
+  let catalog;
+  if (sources.length) {
+    const visibility = await assertRepositoriesVisible({ key: ownerKey, fetchImpl, repo: repoUrl, sources, accountId });
+    catalog = visibility.catalog;
+    if (visibility.failure) return { command: 'launch', mission, ...visibility.failure, ...accountFields(accountId, decision), repositories: repositoryReceipt({ repo: repoUrl, ref, prUrl, sources, catalog, submitted: null, accepted: null, accountId }) };
+  }
   const agentId = missionAgentId(repoUrl, mission);
   // La sélection est fixée ici, une fois, et conservée pour toute la mission (reprises comprises). En cas d’exception, initiale et courante restent distinctes.
-  const catalog = { checkedAt: check.catalog.checkedAt, displayName: check.catalog.displayName, variant: check.catalog.variant };
-  const selection = { key: chosen.key, modelId: chosen.modelId, params: chosen.params, catalog: exception ? { checkedAt: check.catalog.checkedAt, validated: false, note: 'sélection initiale non validée : exception au lancement' } : catalog };
-  const entry = { agentId, repo: repoUrl, ...(prUrl ? { prUrl } : { ref }), workOnCurrentBranch: workOnCurrentBranch !== false, selection, ...(exception ? { currentSelection: { key: active.key, modelId: active.modelId, params: active.params, catalog }, exception } : {}), ...(accountId ? { accountId } : {}), state: 'pending', updatedAt: now() };
+  const catalogSelection = { checkedAt: check.catalog.checkedAt, displayName: check.catalog.displayName, variant: check.catalog.variant };
+  const selection = { key: chosen.key, modelId: chosen.modelId, params: chosen.params, catalog: exception ? { checkedAt: check.catalog.checkedAt, validated: false, note: 'sélection initiale non validée : exception au lancement' } : catalogSelection };
+  const submitted = attachedRepos({ repo: repoUrl, ref, prUrl, sources });
+  const entry = { agentId, repo: repoUrl, ...(prUrl ? { prUrl } : { ref }), workOnCurrentBranch: workOnCurrentBranch !== false, selection, ...(exception ? { currentSelection: { key: active.key, modelId: active.modelId, params: active.params, catalog: catalogSelection }, exception } : {}), ...(accountId ? { accountId } : {}), ...(sources.length ? { references: sources } : {}), state: 'pending', updatedAt: now() };
   registry.missions[mission] = entry; await saveRegistry(registryFile, registry);
-  const body = { agentId, prompt: { text: promptText }, model: active.params.length ? { id: active.modelId, params: active.params } : { id: active.modelId }, repos: [prUrl ? { url: repoUrl, prUrl } : { url: repoUrl, startingRef: ref }], workOnCurrentBranch, autoCreatePR, ...(name ? { name: String(name).slice(0, 100) } : {}) };
-  return createAgent({ command: 'launch', mission, entry, registry, registryFile, body, key: await access.keyFor(accountId), access, accountId, decision, modelId: active.modelId, fetchImpl, timeoutMs, now });
+  const body = { agentId, prompt: { text: sentPrompt }, model: active.params.length ? { id: active.modelId, params: active.params } : { id: active.modelId }, repos: submitted, workOnCurrentBranch, autoCreatePR, ...(name ? { name: String(name).slice(0, 100) } : {}) };
+  const created = await createAgent({ command: 'launch', mission, entry, registry, registryFile, body, key: ownerKey, access, accountId, decision, modelId: active.modelId, fetchImpl, timeoutMs, now });
+  if (!sources.length) { const { exposedRepos: _drop, ...rest } = created; return rest; }
+  return withRepositoryOutcome({ created, repo: repoUrl, ref, prUrl, sources, catalog, submitted, accountId });
 }
 // Compte imposé (--account) : décision humaine explicite, par exemple une mission bornée grok destinée à produire la preuve d’accès standard, ou la validation
 // d’un compte en startBlock après relèvement manuel du plafond (l’acceptation lève le blocage). Composer reste interdit, un pool confirmé indisponible aussi.
@@ -463,7 +685,7 @@ async function resumePredecessor({ entry, registry, registryFile, mission, acces
 // puis un seul POST sans champ model (la sélection initiale s'applique telle quelle). Avec --mission, la tentative est persistée avant l'envoi et
 // une livraison inconnue impose reconcile avant toute réémission. Sans registre (--agent), garde minimale seulement : aucune idempotence.
 // Toujours la clé du compte propriétaire : jamais une reprise d’un ancien agent avec une autre clé (l’API répond 404 et le run serait perdu).
-export async function followup({ agentId, mission, account, registryFile, promptText, key, access, fetchImpl, timeoutMs, now = () => new Date().toISOString() }) {
+export async function followup({ agentId, mission, account, registryFile, promptText, key, access, fetchImpl, timeoutMs, references, now = () => new Date().toISOString() }) {
   access = accessOf(access, key);
   let registry, entry, accountId = account === undefined ? undefined : assertAccountId(account);
   // Mode pool sans registre de mission : le raccourci --agent contournerait le propriétaire, l’indisponibilité du pool, le startBlock et un prédécesseur remplacé. Refus ;
@@ -482,11 +704,20 @@ export async function followup({ agentId, mission, account, registryFile, prompt
     if (agentId !== entry.agentId) throw new UsageError('L’agent indiqué n’est pas celui de la mission.');
     if (accountId !== undefined && entry.accountId && accountId !== entry.accountId) throw new UsageError('Le compte indiqué n’est pas le propriétaire de la mission ; jamais de reprise avec une autre clé.');
     accountId = entry.accountId;
+    if (references !== undefined) {
+      const incoming = parseSecondaryReferences(references, { targetUrl: entry.repo });
+      if (inputFingerprint({ repo: entry.repo, ref: entry.ref, prUrl: entry.prUrl, sources: incoming }) !== storedFingerprint(entry)) {
+        return { command: 'followup', status: 'blocked', reason: 'input_changed', agentId: entry.agentId, ...accountFields(accountId), nextAction: 'followup conserve l’ensemble initial de dépôts (l’API ne change pas repos). Nouveau besoin de dépôt : replanifier une nouvelle mission ; pas de successeur abusif, pas de changement de modèle, pas de migration d’un run actif.' };
+      }
+    }
   }
   assertAgentId(agentId);
   if (typeof promptText !== 'string' || !promptText.trim() || promptText.length > 200_000) throw new UsageError('Brief de reprise vide ou trop long.');
+  const followupSources = storedSources(entry);
+  const sentPrompt = withSourceInstructions(promptText, followupSources);
+  if (sentPrompt.length > 200_000) throw new UsageError('Brief de reprise trop long une fois les consignes de sources ajoutées.');
   const receipt = entry
-    ? { selection: entry.selection ? selectionReceipt(entry.selection, { createAccepted: true, entry }) : undefined, modelSent: false, persistent: true, ...(entry.abandonedSuccessors?.length ? { resumedPredecessor: { abandonedSuccessors: entry.abandonedSuccessors.map(a => ({ agentId: a.agentId, accountId: a.accountId, attempt: a.attempt, state: a.state })), lineage: { successorOf: entry.successorOf ?? null, predecessors: (entry.predecessors ?? []).length } } } : {}) }
+    ? { selection: entry.selection ? selectionReceipt(entry.selection, { createAccepted: true, entry }) : undefined, modelSent: false, persistent: true, ...(followupSources.length ? { repositories: { demanded: { target: targetRepoEntry({ repo: entry.repo, ref: entry.ref, prUrl: entry.prUrl }), sources: followupSources }, submitted: 'unchanged', accepted: null, checkoutObserved: null, note: 'followup ne change pas repos ; checkoutObserved reste null.' } } : {}), ...(entry.abandonedSuccessors?.length ? { resumedPredecessor: { abandonedSuccessors: entry.abandonedSuccessors.map(a => ({ agentId: a.agentId, accountId: a.accountId, attempt: a.attempt, state: a.state })), lineage: { successorOf: entry.successorOf ?? null, predecessors: (entry.predecessors ?? []).length } } } : {}) }
     : { modelSent: false, persistent: false, note: 'Sans registre : aucune idempotence ; en cas de livraison inconnue, lire l’agent (latestRunId) soi-même ; aucune répétition automatique. Utiliser --mission/--registry pour une reprise réconciliable.' };
   const report = (fields) => ({ command: 'followup', agentId, ...accountFields(accountId), ...fields, ...receipt });
   const persist = async (fields) => { if (!entry) return; Object.assign(entry, fields, { updatedAt: now() }); await saveRegistry(registryFile, registry); };
@@ -512,7 +743,7 @@ export async function followup({ agentId, mission, account, registryFile, prompt
   }
   const priorRunId = run.runId;
   await persist({ followup: { state: 'pending', priorRunId, requestedAt: now() } });
-  const result = await call({ method: 'POST', path: `/v1/agents/${encodeURIComponent(agentId)}/runs`, body: { prompt: { text: promptText } }, key: ownerKey, fetchImpl, timeoutMs });
+  const result = await call({ method: 'POST', path: `/v1/agents/${encodeURIComponent(agentId)}/runs`, body: { prompt: { text: sentPrompt } }, key: ownerKey, fetchImpl, timeoutMs });
   const evidence = await recordEvidence(access, accountId, { callKind: 'run', modelId, result, agentId });
   const evidenceFields = evidence ? { evidence: { classification: evidence.classification, recorded: evidence.recorded } } : {};
   const hint = evidenceHint(evidence);
@@ -629,19 +860,31 @@ export async function successor({ mission, registryFile, promptText, checkpoint,
   let modelsResult;
   const check = await preflight({ selection: active, access, accountId: decision.accountId, fetchImpl, timeoutMs, onResult: r => { modelsResult = r; } });
   if (check.status !== 'ok') { const evidence = await recordEvidence(access, decision.accountId, { callKind: 'models', modelId: active.modelId, result: modelsResult }); return report({ status: check.status, preflight: check, ...accountFields(decision.accountId, decision), ...(evidence ? { evidence: { classification: evidence.classification, recorded: evidence.recorded } } : {}), ...(evidenceHint(evidence) ? { nextAction: evidenceHint(evidence) } : {}) }); }
+  const sources = storedSources(entry);
+  const successorPrompt = withSourceInstructions(promptText, sources);
+  if (successorPrompt.length > 200_000) throw new UsageError('Brief de successeur trop long une fois les consignes de sources ajoutées.');
+  let repoCatalog;
+  if (sources.length) {
+    const visibility = await assertRepositoriesVisible({ key: await access.keyFor(decision.accountId), fetchImpl, repo: entry.repo, sources, accountId: decision.accountId });
+    repoCatalog = visibility.catalog;
+    if (visibility.failure) return report({ ...visibility.failure, ...accountFields(decision.accountId, decision), repositories: repositoryReceipt({ repo: entry.repo, ref: working.branch, prUrl: pred.prUrl, sources, catalog: repoCatalog, submitted: null, accepted: null, accountId: decision.accountId }), ...stale });
+  }
   // Identifiant dérivé de la mission et du numéro de tentative : jamais l’identifiant du prédécesseur (refus possible entre comptes), idempotence persistée avant le POST.
   const attempt = (entry.successorAttempts ?? 0) + 1;
   const agentId = missionAgentId(entry.repo, `${mission}~s${attempt}`);
   const catalog = { checkedAt: check.catalog.checkedAt, displayName: check.catalog.displayName, variant: check.catalog.variant };
-  // L’entrée de mission bascule sur le successeur ; la chaîne des prédécesseurs (avec leur sélection réelle), la sélection initiale et le lien explicite sont conservés.
+  // L’entrée de mission bascule sur le successeur ; la chaîne des prédécesseurs (avec leur sélection réelle), la sélection initiale, les références immuables et le lien explicite sont conservés.
   for (const field of ['runId', 'url', 'followup', 'followups', 'reason', 'httpStatus', 'providerCode', 'returned']) delete entry[field];
   if (decision.status === 'exception') Object.assign(entry, { currentSelection: { key: active.key, modelId: active.modelId, params: active.params, catalog }, exception: { reason: decision.reason, at: now(), confirmed: decision.confirmed, proof: decision.proof, initialModelId: initial.modelId } });
   else { delete entry.currentSelection; delete entry.exception; }
   const predecessors = retrying ? [...entry.predecessors.slice(0, -1), predecessor] : [...(entry.predecessors ?? []), predecessor];
-  await persist({ agentId, accountId: decision.accountId, successorAttempts: attempt, successorOf: predecessor.agentId, predecessors, state: 'pending', workOnCurrentBranch: true, ...(pred.prUrl ? { prUrl: pred.prUrl } : { ref: working.branch }) });
-  const body = { agentId, prompt: { text: promptText }, model: active.params.length ? { id: active.modelId, params: active.params } : { id: active.modelId }, repos: [pred.prUrl ? { url: entry.repo, prUrl: pred.prUrl } : { url: entry.repo, startingRef: working.branch }], workOnCurrentBranch: true, autoCreatePR: false, ...(name ? { name: String(name).slice(0, 100) } : {}) };
+  await persist({ agentId, accountId: decision.accountId, successorAttempts: attempt, successorOf: predecessor.agentId, predecessors, state: 'pending', workOnCurrentBranch: true, ...(pred.prUrl ? { prUrl: pred.prUrl } : { ref: working.branch }), ...(sources.length ? { references: sources } : {}) });
+  const submitted = attachedRepos({ repo: entry.repo, ref: working.branch, prUrl: pred.prUrl, sources });
+  const body = { agentId, prompt: { text: successorPrompt }, model: active.params.length ? { id: active.modelId, params: active.params } : { id: active.modelId }, repos: submitted, workOnCurrentBranch: true, autoCreatePR: false, ...(name ? { name: String(name).slice(0, 100) } : {}) };
   const created = await createAgent({ command: 'successor', mission, entry, registry, registryFile, body, key: await access.keyFor(decision.accountId), access, accountId: decision.accountId, decision, modelId: active.modelId, fetchImpl, timeoutMs, now });
-  return report({ ...created, attempt, predecessorRun: { runId: run.runId, runStatus: run.status }, branch: { name: working.branch, source: working.source }, checkpoint: { sha, attestation: checkpointAttestation }, ...stale });
+  const outcome = sources.length ? withRepositoryOutcome({ created, repo: entry.repo, ref: working.branch, prUrl: pred.prUrl, sources, catalog: repoCatalog, submitted, accountId: decision.accountId }) : created;
+  const { exposedRepos: _ignored, ...createdView } = outcome;
+  return report({ ...createdView, attempt, predecessorRun: { runId: run.runId, runStatus: run.status }, branch: { name: working.branch, source: working.source }, checkpoint: { sha, attestation: checkpointAttestation }, ...stale });
 }
 
 // Vue du pool et décision déterministe à blanc (aucun appel API, aucune écriture hors création initiale de l’état).
@@ -666,19 +909,21 @@ function parseArgs(args) {
     if (!arg.startsWith('--')) throw new UsageError(`Argument inconnu : ${arg}`);
     const name = arg.slice(2);
     if (['follow', 'full', 'auto-pr', 'new-branch', 'confirm-absent'].includes(name)) options.flags.add(name);
-    else if (['model-file', 'select', 'mission', 'repo', 'ref', 'pr-url', 'prompt-file', 'registry', 'name', 'agent', 'run', 'state', 'account', 'checkpoint', 'exclude', 'branch'].includes(name) && i + 1 < args.length) options[name] = args[++i];
+    else if (['model-file', 'select', 'mission', 'repo', 'ref', 'pr-url', 'prompt-file', 'registry', 'name', 'agent', 'run', 'state', 'account', 'checkpoint', 'exclude', 'branch', 'references-file'].includes(name) && i + 1 < args.length) options[name] = args[++i];
     else throw new UsageError(`Option inconnue ou incomplète : ${arg}`);
   }
   return options;
 }
 const help = `cursor-agents — orchestration Creezio Lite (accès : CURSOR_API_KEY en environnement, sinon pool commun de comptes via CURSOR_CREDENTIALS_FILE)
   preflight [--select fable|opus|grok] [--model-file f] [--account id]
-  launch --mission K --repo URL (--ref BRANCHE | --pr-url URL) --prompt-file f --registry f [--select clé] [--account id] [--name n] [--auto-pr] [--new-branch]
+  launch --mission K --repo URL (--ref BRANCHE | --pr-url URL) --prompt-file f --registry f [--references-file f] [--select clé] [--account id] [--name n] [--auto-pr] [--new-branch]
+    --references-file : JSON strict [{url,sha}] (SHA 40 hex immuable, ≤19 sources). Autorisation de lecture fournie par le pilote, pas une inclusion automatique du catalogue.
+    Cible unique : --repo/--ref ou --pr-url. Sources lecture seule (consigne, pas ACL fournisseur). Catalogue GET /v1/repositories du compte sélectionné avant POST. Reçu : demanded / visible / submitted / accepted / checkoutObserved (null). 400 ⇒ accepted null ; 201 ⇒ repos exposés sinon null, jamais un écho du payload. Visibilité ≠ checkout pod.
   reconcile --mission K --registry f [--confirm-absent]   (tranche une reprise pending/uncertain ; livraison inconnue : 404 ≠ absence, seule l’attestation humaine --confirm-absent conclut non créé — déclaration non vérifiée, pas une signature ; 409 puis 404 = conflict_unreadable, jamais not_created)
   status (--mission K --registry f | --agent bc-… --run run-… [--account id]) [--state f] [--follow] [--full]
-  followup --mission K --registry f --prompt-file f   (reprise persistée et réconciliable, même agent, même compte propriétaire)
+  followup --mission K --registry f --prompt-file f [--references-file f]   (reprise persistée, même agent, même compte, même ensemble de dépôts ; --references-file différent ⇒ conflit, pas de POST)
   followup --agent bc-… --prompt-file f                (CURSOR_API_KEY seulement : garde minimale, aucune idempotence ; refusé en mode pool, où le registre de mission est requis)
-  successor --mission K --registry f --prompt-file f --checkpoint SHA [--branch b] [--name n]   (pool : propriétaire confirmé indisponible, prédécesseur relu terminal, branche de travail observée, checkpoint attesté, compte premium suivant, même sélection)
+  successor --mission K --registry f --prompt-file f --checkpoint SHA [--branch b] [--name n]   (pool : propriétaire confirmé indisponible, prédécesseur relu terminal, branche de travail observée, checkpoint attesté, compte premium suivant, mêmes références/SHA revalidées sur le compte cible, même sélection)
   accounts [--select clé] [--exclude id]         (pool : état des comptes et décision à blanc, aucun appel API)
 Reprise : lecture de l’agent réel (latestRunId) puis du run actuel ; terminal exigé ; un seul POST sans champ model ; livraison inconnue ⇒ reconcile avant réémission.
 La sélection (--select, défaut : fable) est choisie une fois au lancement puis conservée pour toute la mission et ses successeurs ; exception Grok 4.6 seulement selon la
@@ -702,7 +947,8 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
       const config = await loadSelections(options['model-file']);
       if (!options['prompt-file']) throw new UsageError('--prompt-file requis.');
       const promptText = await readFile(options['prompt-file'], 'utf8');
-      return emit(await launch({ mission: options.mission, repo: options.repo, ref: options.ref, prUrl: options['pr-url'], promptText, name: options.name, autoCreatePR: options.flags.has('auto-pr'), workOnCurrentBranch: !options.flags.has('new-branch'), config, select: options.select, account: options.account, access, registryFile: options.registry, fetchImpl }));
+      const references = options['references-file'] ? await loadReferencesFile(options['references-file'], { targetUrl: options.repo }) : undefined;
+      return emit(await launch({ mission: options.mission, repo: options.repo, ref: options.ref, prUrl: options['pr-url'], promptText, name: options.name, autoCreatePR: options.flags.has('auto-pr'), workOnCurrentBranch: !options.flags.has('new-branch'), config, select: options.select, account: options.account, access, registryFile: options.registry, fetchImpl, references }));
     }
     if (command === 'reconcile') return emit(await reconcile({ mission: options.mission, confirmAbsent: options.flags.has('confirm-absent'), access, registryFile: options.registry, fetchImpl }));
     if (command === 'status') {
@@ -715,7 +961,7 @@ export async function main(argv = process.argv.slice(2), { env = process.env, fe
         interval = nextInterval(interval); await sleep(interval);
       }
     }
-    if (command === 'followup') { if (!options['prompt-file']) throw new UsageError('--prompt-file requis.'); return emit(await followup({ agentId: options.agent, mission: options.mission, account: options.account, registryFile: options.registry, promptText: await readFile(options['prompt-file'], 'utf8'), access, fetchImpl })); }
+    if (command === 'followup') { if (!options['prompt-file']) throw new UsageError('--prompt-file requis.'); return emit(await followup({ agentId: options.agent, mission: options.mission, account: options.account, registryFile: options.registry, promptText: await readFile(options['prompt-file'], 'utf8'), access, fetchImpl, references: options['references-file'] ? await loadReferencesFile(options['references-file'], { targetUrl: undefined }) : undefined })); }
     if (command === 'successor') { if (!options['prompt-file']) throw new UsageError('--prompt-file requis.'); const config = await loadSelections(options['model-file']); return emit(await successor({ mission: options.mission, registryFile: options.registry, promptText: await readFile(options['prompt-file'], 'utf8'), checkpoint: options.checkpoint, branch: options.branch, name: options.name, config, access, fetchImpl })); }
     if (command === 'accounts') { const config = await loadSelections(options['model-file']); return emit(await accounts({ config, select: options.select, exclude: options.exclude ? [assertAccountId(options.exclude)] : [], access })); }
     throw new UsageError(`Commande inconnue : ${command}`);
