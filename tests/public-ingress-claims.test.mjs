@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createApp, upgrade } from '../bin/lite.mjs';
-import { root, localDb, migrationSql } from './helpers.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { root, migrationSql } from './helpers.mjs';
 import { createD1ClaimStore, sanitizeClaimSnapshot } from '../runtime/core/public-ingress-claims.ts';
 
 const TENANT_A = 'ws_' + 'a'.repeat(32);
@@ -38,6 +39,46 @@ function key(over = {}) {
 async function seedOrg(db, id) {
   await db.prepare('INSERT INTO lite_orgs(id,name,created_at) VALUES(?,?,?)').bind(id, id, '2026-09-17T00:00:00.000Z').run();
 }
+async function claimSqlite() {
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys=ON');
+  db.exec('CREATE TABLE lite_orgs(id text PRIMARY KEY NOT NULL, name text NOT NULL, created_at text NOT NULL);');
+  db.exec(await readFile(join(root, 'template/drizzle/0011_public_ingress_claims.sql'), 'utf8'));
+  function prepared(sql, values = []) {
+    return {
+      bind(...args) { return prepared(sql, args); },
+      async first(column) {
+        const row = db.prepare(sql).get(...values);
+        return row ? (column ? row[column] : row) : null;
+      },
+      async all() { return { results: db.prepare(sql).all(...values), success: true }; },
+      runSync() {
+        const statement = db.prepare(sql);
+        if (/^\s*SELECT\b/i.test(sql)) return { success: true, results: statement.all(...values), meta: { changes: 0 } };
+        const result = statement.run(...values);
+        return { success: true, results: [], meta: { changes: Number(result.changes) } };
+      },
+      async run() { return this.runSync(); },
+    };
+  }
+  return {
+    prepare: sql => prepared(sql),
+    async batch(statements) {
+      db.exec('BEGIN');
+      try {
+        const out = [];
+        for (const s of statements) out.push(s.runSync());
+        db.exec('COMMIT');
+        return out;
+      } catch (e) {
+        db.exec('ROLLBACK');
+        throw e;
+      }
+    },
+    close: () => db.close(),
+    raw: db,
+  };
+}
 function clockStore(db, over = {}) {
   let now = 1_700_000_000_000;
   const store = createD1ClaimStore(db, {
@@ -66,7 +107,7 @@ test('0000-0010 SQL remains byte-identical; 0011 is additive claims-only', async
 });
 
 test('node:sqlite : acquire, busy, complete, replay snapshot stable, no secrets', async () => {
-  const db = await localDb();
+  const db = await claimSqlite();
   try {
     await seedOrg(db, TENANT_A);
     const { store } = clockStore(db);
@@ -94,7 +135,7 @@ test('node:sqlite : acquire, busy, complete, replay snapshot stable, no secrets'
 });
 
 test('node:sqlite : digest collision, tenant isolation, retry, permanent, exhausted', async () => {
-  const db = await localDb();
+  const db = await claimSqlite();
   try {
     await seedOrg(db, TENANT_A);
     await seedOrg(db, TENANT_B);
@@ -135,7 +176,7 @@ test('node:sqlite : digest collision, tenant isolation, retry, permanent, exhaus
 });
 
 test('node:sqlite : stale takeover generation+1 ; ancien fence refuse complete/retry/fail/renew', async () => {
-  const db = await localDb();
+  const db = await claimSqlite();
   try {
     await seedOrg(db, TENANT_A);
     const { store, setNow, now } = clockStore(db, { leaseTtlMs: 1_000, maxAttempts: 8 });
