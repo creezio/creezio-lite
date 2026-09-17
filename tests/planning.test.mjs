@@ -338,6 +338,90 @@ test('legacySelection (model omitted) documents a delivered lot without inventin
   assert.ok(legacyReview.report.errors.some(e => e.code === 'state_inconsistent' && e.field === 'status'), 'selon kind : integrated sur review reste incohérent avec une provenance legacy');
 });
 
+test('a review or investigation delivers on a real branch and head without a PR and is resumed on the same agent; a dev delivered without a PR is inconsistent', () => {
+  const p = plan([mission('A', { priority: 1, reserves: { paths: ['a/'] } }), mission('RV', { kind: 'review', priority: 2, reserves: { paths: ['review/A.md'] }, dependencies: { start: [{ mission: 'A', step: 'delivered' }] } }), mission('INV', { kind: 'investigation', priority: 3 }), mission('N', { priority: 4, reserves: { paths: ['review/A.md'] } })]);
+  const withoutPr = (id, status, extra = {}) => { const entry = engaged(id, status, extra); delete entry.prUrl; return entry; };
+  // Revue livrée sans PR propre : branche + headSha réels suffisent ; réservations tenues, aucune place, backlog dev non compté.
+  const reviewDelivered = ready(p, state({ A: engaged('A', 'delivered'), RV: withoutPr('RV', 'delivered', { branch: 'agents/A', headSha: SHA('2') }) }, { capacity: { ...state().capacity, maxActiveRuns: 9 } }));
+  assert.equal(reviewDelivered.code, exitCodes.ok); assert.deepEqual(reviewDelivered.report.errors, []);
+  assert.deepEqual(reviewDelivered.report.missions.RV, { status: 'delivered', outcome: 'done', step: null, reasons: [] });
+  assert.deepEqual(reviewDelivered.report.missions.N.reasons, [{ code: 'reservation_conflict', with: 'RV', path: 'review/A.md', holderStatus: 'delivered' }]);
+  assert.equal(reviewDelivered.report.capacity.active, 0); assert.deepEqual(reviewDelivered.report.capacity.reviewBacklog, { count: 1, max: 3 }, 'seul le dev livré compte dans le backlog');
+  const investigationDelivered = validate(p, state({ INV: withoutPr('INV', 'delivered') }));
+  assert.equal(investigationDelivered.code, exitCodes.ok);
+  // Nouveau head de l’auteur : correction demandée sur la revue ⇒ resume sur le MÊME agent et la même sélection, jamais un agent créé.
+  const correction = { requested: true, reason: 'Nouveau head de A à revoir', at: T };
+  const resumed = ready(p, state({ A: engaged('A', 'delivered', { headSha: SHA('4') }), RV: withoutPr('RV', 'delivered', { correction, followups: 0 }) }, { capacity: { ...state().capacity, maxActiveRuns: 9 } })).report;
+  assert.deepEqual(resumed.missions.RV, { status: 'delivered', outcome: 'proposed', step: 'resume', reasons: [{ code: 'correction_pending', step: 'integrate' }] });
+  const proposal = resumed.proposals.find(x => x.mission === 'RV');
+  assert.deepEqual(proposal, { order: proposal.order, mission: 'RV', step: 'resume', repo: 'kit', priority: 2, agentId: 'bc-test-rv', selection: SELECTION, reason: correction.reason, consumesCapacity: true, holds: { paths: ['review/A.md'], resources: [] } });
+  assert.equal(resumed.proposals.filter(x => x.mission === 'RV').length, 1, 'une seule proposition pour la revue : resume, jamais start (aucun agent créé)');
+  assert.equal(JSON.stringify(resumed.proposals).includes('bc-test-new'), false);
+  assert.equal(resumed.missions.A.outcome, 'proposed'); assert.equal(resumed.missions.A.step, 'integrate', 'la PR de A reste intégrable ; c’est l’orchestrateur qui attend le verdict');
+  assertEveryNonProposalExplained(resumed);
+  const running = ready(p, state({ A: engaged('A', 'delivered'), RV: withoutPr('RV', 'delivered', { correction, runStatus: 'FINISHED' }) })).report;
+  assert.equal(running.missions.RV.outcome, 'proposed');
+  const reviewActive = ready(p, state({ A: engaged('A', 'delivered'), RV: withoutPr('RV', 'active') })).report;
+  assert.deepEqual(reviewActive.missions.RV.reasons, [{ code: 'run_active', runStatus: 'RUNNING' }]); assert.equal(reviewActive.capacity.active, 1, 'une revue en cours occupe une place');
+  // Un développement livré sans PR est incohérent (validateur croisé, le schéma ne connaît pas kind) ; sans headSha il est invalide par schéma.
+  const devWithoutPr = ready(p, state({ A: withoutPr('A', 'delivered') }));
+  assert.equal(devWithoutPr.code, exitCodes.invalid); assert.deepEqual(devWithoutPr.report.proposals, []);
+  assert.deepEqual(devWithoutPr.report.errors.map(e => [e.code, e.field, e.path]), [['state_inconsistent', 'prUrl', '/missions/A/prUrl']]);
+  const devWithoutHead = engaged('A', 'delivered'); delete devWithoutHead.headSha;
+  const noHead = validate(p, state({ A: devWithoutHead })); assert.equal(noHead.code, exitCodes.invalid); assert.equal(noHead.report.errors[0].code, 'schema_invalid'); assert.match(noHead.report.errors[0].message, /headSha/);
+  const reviewWithoutHead = withoutPr('RV', 'delivered'); delete reviewWithoutHead.headSha;
+  assert.equal(validate(p, state({ RV: reviewWithoutHead })).code, exitCodes.invalid, 'une revue livrée porte au moins le head réellement revu');
+  for (const status of ['integrated', 'published']) { const r = validate(p, state({ A: withoutPr('A', status) })); assert.equal(r.code, exitCodes.invalid, status); assert.equal(r.report.errors[0].code, 'schema_invalid'); }
+  // Une validation faite par le pilotage est une condition sourcée du plan, pas une mission : aucune sélection, aucun agent, aucune place, aucun backlog.
+  const piloted = plan([mission('D', { dependencies: { start: [{ condition: 'contract-accepted' }, { condition: 'ci-green' }] } })]);
+  const proven = ready(piloted, state({}, { conditions: { 'contract-accepted': { satisfied: true, evidence: 'adoption locale de la compétence vérifiée : lite adopt --app ./x, catalogue lu', at: T, by: 'pilot' }, 'ci-green': { satisfied: true, evidence: 'https://github.com/example/kit/actions/runs/1', at: T } } })).report;
+  assert.deepEqual(proposedSteps(proven), ['D:start']); assert.equal(proven.capacity.active, 0); assert.deepEqual(proven.capacity.reviewBacklog, { count: 0, max: 3 }); assert.deepEqual(proven.summary, { missions: 1, byKind: { dev: 1 }, byStatus: { pending: 1 } });
+  assert.deepEqual(ready(piloted, state()).report.missions.D.reasons, [{ code: 'condition_unverified', condition: 'contract-accepted' }, { code: 'condition_unverified', condition: 'ci-green' }]);
+});
+
+test('a closed review is reopened explicitly to delivered with its terminal proof kept and a traced event, then resumed on the same agent; nothing else reopens', () => {
+  const p = plan([mission('A', { priority: 1 }), mission('RV', { kind: 'review', priority: 2, reserves: { paths: ['review/'] } }), mission('N', { priority: 3, reserves: { paths: ['review/notes.md'] } })]);
+  const LEGACY = { reason: 'model_omitted', requestedAt: '2026-09-14T09:00:00Z', evidence: 'https://github.com/example/kit/pull/12#reception : création sans champ model' };
+  const closedReview = engaged('RV', 'closed', { headSha: SHA('5') }); delete closedReview.prUrl;
+  const reopened = { from: 'closed', closedAt: closedReview.closedAt, at: '2026-09-16T19:00:00Z', reason: 'Nouveau head de A après correction : verdict à confirmer', by: 'orchestrator' };
+  const reopen = (entry, extra = {}) => { const out = { ...entry, status: 'delivered', reopened, ...extra }; delete out.closedAt; return out; };
+  // closed : libéré, done, aucune réservation ; N démarre.
+  const closed = ready(p, state({ RV: closedReview })).report;
+  assert.equal(closed.missions.RV.outcome, 'done'); assert.equal(closed.missions.N.outcome, 'proposed');
+  // Réouverture explicite vers delivered : preuve terminale conservée, closedAt déplacé dans l’événement ; réservations reprises, aucune place, pas de nouveau statut.
+  const delivered = ready(p, state({ RV: reopen(closedReview) }));
+  assert.equal(delivered.code, exitCodes.ok); assert.deepEqual(delivered.report.errors, []);
+  assert.deepEqual(delivered.report.missions.RV, { status: 'delivered', outcome: 'done', step: null, reasons: [] });
+  assert.deepEqual(delivered.report.missions.N.reasons, [{ code: 'reservation_conflict', with: 'RV', path: 'review/', holderStatus: 'delivered' }]);
+  assert.equal(delivered.report.capacity.active, 0); assert.deepEqual(delivered.report.summary.byStatus, { delivered: 1, pending: 2 });
+  // Puis correction demandée ⇒ resume sur le même agent, même sélection ; aucun agent inventé.
+  const correction = { requested: true, reason: 'Revoir le head corrigé de A', at: '2026-09-16T19:05:00Z' };
+  const resumed = ready(p, state({ RV: reopen(closedReview, { correction }) })).report;
+  assert.deepEqual(resumed.missions.RV, { status: 'delivered', outcome: 'proposed', step: 'resume', reasons: [{ code: 'correction_pending', step: 'integrate' }] });
+  assert.deepEqual(proposedSteps(resumed), ['A:start', 'RV:resume'], 'priorité puis id ; N attend la réservation review/ tenue par la revue rouverte');
+  assert.deepEqual(resumed.proposals[1], { order: 2, mission: 'RV', step: 'resume', repo: 'kit', priority: 2, agentId: closedReview.agentId, selection: closedReview.selection, reason: correction.reason, consumesCapacity: true, holds: { paths: ['review/'], resources: [] } });
+  assert.equal(resumed.proposals[1].agentId, 'bc-test-rv'); assert.equal(resumed.capacity.proposed, 2); assert.equal(resumed.missions.N.outcome, 'blocked');
+  assertEveryNonProposalExplained(resumed);
+  // Reprise refusée si le run conservé n’est pas terminal ou si la provenance est legacy (selection_unknown, pas de modèle inventé).
+  const legacyClosed = reopen(closedReview, { legacySelection: LEGACY, correction }); delete legacyClosed.selection;
+  const legacy = ready(p, state({ RV: legacyClosed }));
+  assert.equal(legacy.code, exitCodes.ok); assert.deepEqual(legacy.report.missions.RV.reasons.map(r => r.code), ['correction_pending', 'selection_unknown']); assert.ok(!legacy.report.proposals.some(x => x.mission === 'RV'));
+  // Contre-exemples : événement sur closed, closedAt conservé sur delivered, preuve terminale perdue, événement incomplet, réouverture d’un dev, autre origine.
+  const invalid = (entry, label, code = 'schema_invalid', id = 'RV') => { const r = validate(p, state({ [id]: entry })); assert.equal(r.code, exitCodes.invalid, label); assert.equal(r.report.errors[0].code, code, `${label} : ${JSON.stringify(r.report.errors)}`); return r.report.errors[0]; };
+  invalid({ ...closedReview, reopened }, 'reopened sur closed');
+  invalid({ ...closedReview, status: 'delivered', reopened }, 'closedAt conservé sur delivered');
+  const lostRun = reopen(closedReview); delete lostRun.runStatus; invalid(lostRun, 'preuve terminale perdue : runStatus');
+  const lostHead = reopen(closedReview); delete lostHead.headSha; invalid(lostHead, 'preuve terminale perdue : headSha');
+  invalid(reopen(closedReview, { launch: 'uncertain' }), 'réouverture avec lancement incertain');
+  invalid(reopen(closedReview, { runStatus: 'RUNNING' }), 'réouverture avec run non terminal');
+  invalid(reopen(closedReview, { reopened: { from: 'closed', at: reopened.at, reason: reopened.reason } }), 'closedAt de l’événement requis');
+  invalid(reopen(closedReview, { reopened: { ...reopened, from: 'integrated' } }), 'seule une clôture se rouvre');
+  invalid(reopen(closedReview, { reopened: { ...reopened, agentId: 'bc-test-new' } }), 'aucun agent dans l’événement');
+  invalid({ status: 'pending', reopened }, 'reopened sur pending');
+  invalid(engaged('RV', 'active', { reopened }), 'reopened sur active');
+  const dev = invalid(engaged('A', 'delivered', { reopened }), 'réouverture d’un dev', 'state_inconsistent', 'A'); assert.equal(dev.field, 'reopened'); assert.equal(dev.mission, 'A');
+});
+
 test('an active mission whose last run is already terminal stays counted and held but is labelled run_terminal_unreconciled, never run_active', () => {
   const p = plan([mission('A', { reserves: { paths: ['a/'] } }), mission('B', { reserves: { paths: ['a/b.ts'] } })]);
   for (const runStatus of ['FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED']) {

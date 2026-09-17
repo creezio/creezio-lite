@@ -43,7 +43,7 @@
     },
     "conditions": {
       "type": "object",
-      "description": "Conditions vérifiables, déclarées une fois puis référencées par dépendance {condition}. L’état privé porte la preuve (planning-state conditions).",
+      "description": "Conditions vérifiables, déclarées une fois puis référencées par dépendance {condition}. L’état privé porte la preuve (planning-state conditions). Les validations faites par le pilotage lui-même (adoption locale d’une compétence, transition observée, CI verte, contrat accepté) sont des conditions sourcées : jamais des missions review/investigation fictives, qui exigeraient sélection, agent et livrable.",
       "maxProperties": 200,
       "propertyNames": { "$ref": "#/$defs/conditionId" },
       "additionalProperties": {
@@ -128,7 +128,7 @@
         "lot": { "$ref": "#/$defs/key", "description": "Lot ou thème de regroupement (cible possible d’une pause)." },
         "kind": {
           "enum": ["dev", "review", "investigation"],
-          "description": "dev : cycle start → delivered → integrated → published. review / investigation : start → delivered → closed ; aucune étape integrate/publish."
+          "description": "dev : cycle start → delivered → integrated → published ; livrable = PR (prUrl + headSha). review / investigation : start → delivered → closed ; aucune étape integrate/publish ; livrable = verdict ou constat sur branche + headSha réels, PR facultative ; closed rouvrable explicitement vers delivered. Seuls les vrais travaux attribués à Cursor sont des missions ; une validation faite par le pilotage est une condition."
         },
         "repo": { "$ref": "#/$defs/key" },
         "title": { "$ref": "#/$defs/text200" },

@@ -159,6 +159,9 @@ export function validateStateContract(plan, state, missions, errors, warnings) {
     }
     if (status === 'active' && ['not_created', 'failed'].includes(entry.launch)) errors.push(inconsistent(id, 'launch', `active avec launch ${entry.launch} : aucun run n’existe, repasser pending (launch conservé) ou relancer par attribution`));
     if (status === 'delivered' && entry.runStatus !== undefined && !TERMINAL_RUN.has(entry.runStatus)) errors.push(inconsistent(id, 'runStatus', `delivered avec run ${entry.runStatus} non terminal : la mission est encore active`));
+    // Le livrable d’un développement est une PR (prUrl + headSha) ; une review/investigation peut livrer un verdict sur branche + headSha réels sans PR propre.
+    if (status === 'delivered' && mission.kind === 'dev' && entry.prUrl === undefined) errors.push(inconsistent(id, 'prUrl', 'delivered sur une mission dev sans prUrl : le livrable d’un développement est une PR (prUrl et headSha) ; seule une review/investigation livre sans PR'));
+    if (entry.reopened !== undefined && mission.kind === 'dev') errors.push(inconsistent(id, 'reopened', 'réouverture depuis closed sur une mission dev : seule une review/investigation se clôt et se rouvre ; un dev se corrige par correction.requested ou par mission corrective distincte'));
     if (['integrated', 'published'].includes(status) && mission.kind !== 'dev') errors.push(inconsistent(id, 'status', `${status} sur une mission ${mission.kind} : seul closed s’applique`));
     if (status === 'closed' && mission.kind === 'dev') errors.push(inconsistent(id, 'status', 'closed sur une mission dev : integrated ou published attendus'));
     if (status === 'historical' && entry.historical) {

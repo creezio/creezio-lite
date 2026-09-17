@@ -162,6 +162,19 @@
         "evidence": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Preuve publique de la provenance : réception, PR, entrée de registre datée ; jamais un secret ni un nom de modèle supposé." }
       }
     },
+    "reopened": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "closedAt", "at", "reason"],
+      "description": "Événement privé tracé : une review/investigation closed a été rouverte explicitement vers delivered par l’orchestrateur (nouveau head de l’auteur à revoir, verdict à compléter). La preuve terminale (selection ou legacySelection, branch, base, agentId, run terminal, launch réconcilié, headSha, deliveredAt) est conservée ; closedAt est déplacé ici. Admis seulement sur delivered (kind review/investigation, vérifié par le contrat). Une reprise passe ensuite par correction.requested ⇒ resume sur le MÊME agent et la même sélection ; aucun agent n’est créé.",
+      "properties": {
+        "from": { "const": "closed" },
+        "closedAt": { "$ref": "#/$defs/dateTime", "description": "Instant de la clôture rouverte (ancien closedAt)." },
+        "at": { "$ref": "#/$defs/dateTime", "description": "Instant de la réouverture." },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 300, "description": "Motif public : nouveau head de l’auteur, écart à re-vérifier ; jamais un secret." },
+        "by": { "type": "string", "minLength": 1, "maxLength": 100, "description": "Rôle qui a décidé la réouverture." }
+      }
+    },
     "missionState": {
       "type": "object",
       "additionalProperties": false,
@@ -169,7 +182,7 @@
       "properties": {
         "status": {
           "enum": ["pending", "active", "delivered", "integrated", "published", "closed", "cancelled", "historical", "unknown"],
-          "description": "pending : rien n’a été lancé ; avant tout POST l’orchestrateur écrit active + launch pending, donc une entrée pending portant launch pending/uncertain ou un run CREATING/RUNNING/UNKNOWN est incohérente et rejetée (elle sous-compterait la capacité et doublerait la création) ; on ne la normalise jamais en effaçant l’incertitude, on la corrige en active. active : run en cours ou incertain (CREATING, RUNNING, POST incertain), compte dans la capacité et tient ses réservations. delivered : run terminal (aucun POST incertain), PR et réception disponibles ; réservations toujours tenues ; l’artefact existe mais n’est pas accepté pour autant. integrated/published/closed/cancelled/historical : réservations libérées, aucune place consommée, agent historique non compté ; jamais de launch pending/uncertain ni de run CREATING/RUNNING/UNKNOWN non réconcilié. historical : lot réellement reçu avant cet état, sélection/agent/run inconnus, jalon prouvé dans historical ; aucun resume/start proposé, toute reprise est une mission corrective distincte. unknown : l’orchestrateur ne sait pas ; ready répond code 3."
+          "description": "pending : rien n’a été lancé ; avant tout POST l’orchestrateur écrit active + launch pending, donc une entrée pending portant launch pending/uncertain ou un run CREATING/RUNNING/UNKNOWN est incohérente et rejetée (elle sous-compterait la capacité et doublerait la création) ; on ne la normalise jamais en effaçant l’incertitude, on la corrige en active. active : run en cours ou incertain (CREATING, RUNNING, POST incertain), compte dans la capacité et tient ses réservations. delivered : run terminal (aucun POST incertain), head réel et réception disponibles (PR exigée pour un dev ; une review/investigation peut livrer sur branche + headSha sans PR) ; réservations toujours tenues, aucune place active ; l’artefact existe mais n’est pas accepté pour autant. closed : review/investigation terminée ; rouvrable explicitement vers delivered (événement reopened, preuve terminale conservée), puis resume sur le même agent via correction.requested. integrated/published/closed/cancelled/historical : réservations libérées, aucune place consommée, agent historique non compté ; jamais de launch pending/uncertain ni de run CREATING/RUNNING/UNKNOWN non réconcilié. historical : lot réellement reçu avant cet état, sélection/agent/run inconnus, jalon prouvé dans historical ; aucun resume/start proposé, toute reprise est une mission corrective distincte. unknown : l’orchestrateur ne sait pas ; ready répond code 3."
         },
         "historical": { "$ref": "#/$defs/historical" },
         "selection": { "$ref": "#/$defs/selection" },
@@ -187,8 +200,9 @@
           "enum": ["pending", "launched", "reconciled", "uncertain", "not_created", "failed"],
           "description": "Copie de l’état du registre cursor-agents. uncertain/pending : la mission est réservée (comptée active, aucune relance) jusqu’à reconcile ; ces deux valeurs n’existent que sur une mission active, jamais sur pending ni sur un statut libéré."
         },
-        "prUrl": { "$ref": "#/$defs/url" },
-        "headSha": { "$ref": "#/$defs/sha" },
+        "prUrl": { "$ref": "#/$defs/url", "description": "PR du livrable. Requise par le contrat pour un dev delivered/integrated/published (prUrl + headSha) ; une review/investigation delivered peut porter seulement branch + headSha (verdict sur la PR de l’auteur ou sur une branche, sans PR propre)." },
+        "headSha": { "$ref": "#/$defs/sha", "description": "Head réel du livrable (dev) ou head réellement revu/inspecté (review/investigation). Requis sur delivered." },
+        "reopened": { "$ref": "#/$defs/reopened" },
         "followups": { "type": "integer", "minimum": 0, "maximum": 1000, "description": "Reprises déjà envoyées sur le même agent, sans champ model." },
         "correction": {
           "type": "object",
@@ -239,12 +253,14 @@
         {
           "if": { "properties": { "status": { "const": "delivered" } } },
           "then": {
-            "required": ["branch", "base", "agentId", "launch", "runStatus", "prUrl", "headSha", "assignedAt", "deliveredAt"],
+            "required": ["branch", "base", "agentId", "launch", "runStatus", "headSha", "assignedAt", "deliveredAt"],
             "properties": {
               "launch": { "enum": ["launched", "reconciled"] },
-              "runStatus": { "$ref": "#/$defs/terminalRunStatus" }
+              "runStatus": { "$ref": "#/$defs/terminalRunStatus" },
+              "closedAt": false
             }
-          }
+          },
+          "else": { "properties": { "reopened": false } }
         },
         { "if": { "properties": { "status": { "const": "integrated" } } }, "then": { "required": ["prUrl", "headSha", "deliveredAt", "integratedAt"] } },
         { "if": { "properties": { "status": { "const": "published" } } }, "then": { "required": ["prUrl", "headSha", "integratedAt", "publishedAt"] } },
