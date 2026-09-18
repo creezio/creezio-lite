@@ -90,10 +90,10 @@ function searchScope(app:AppDefinition,org:Workspace,options:SearchOptions):SqlF
         JOIN lite_files f ON f.org_id=a.org_id AND f.id=a.resource_id
         JOIN search_visible_files vf ON vf.id=f.id WHERE a.org_id=? AND ${audit.files.sql}),
     search_visible_documents AS MATERIALIZED (
-      SELECT d.id FROM lite_search_documents d WHERE d.org_id=? AND d.module_id='files' AND ${files.sql}
+      SELECT d.id FROM lite_search_documents d JOIN search_visible_files vf ON vf.id=d.record_id WHERE d.org_id=? AND d.module_id='files'
       UNION ALL SELECT d.id FROM lite_search_documents d WHERE d.org_id=? AND d.module_id='audit' AND d.record_id IN (SELECT id FROM search_visible_audit)
       UNION ALL SELECT d.id FROM lite_search_documents d WHERE d.org_id=? AND d.module_id NOT IN ('files','audit') AND ${records.sql})`;
-  return {ctes,sql:'d.id IN (SELECT id FROM search_visible_documents)',bindings:[org.id,...auditRecords.bindings,org.id,...auditFiles.bindings,org.id,...audit.recovery.bindings,org.id,...audit.records.bindings,org.id,...audit.files.bindings,org.id,...files.bindings,org.id,org.id,...records.bindings]};
+  return {ctes,sql:'d.id IN (SELECT id FROM search_visible_documents)',bindings:[org.id,...auditRecords.bindings,org.id,...auditFiles.bindings,org.id,...audit.recovery.bindings,org.id,...audit.records.bindings,org.id,...audit.files.bindings,org.id,org.id,org.id,...records.bindings]};
 }
 
 export async function searchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:SearchOptions={}) {

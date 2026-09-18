@@ -72,7 +72,7 @@ export function auditVisibility(app:AppDefinition,org:Workspace,access:RequestAc
   const recordTest=readable.length?'r.module_id IN ('+readable.map(()=>'?').join(',')+')':'0=1';
   const recovery=['workspace.create','workspace.rename','member.join','member.role','member.remove','invite.create','invite.revoke','access.adopt','access.rebind','access.bind','access.unbind','access.group.create','access.group.update','access.group.delete','access.policy.update','mcp.policy.update','mcp.tool.create','mcp.tool.delete','mcp.client.revoke','mcp.oauth.revoke'];
   return {
-    recovery:{sql:'(a.action IN ('+recovery.map(()=>'?').join(',')+') AND NOT EXISTS(SELECT 1 FROM lite_records r WHERE r.org_id=a.org_id AND r.id=a.resource_id) AND NOT EXISTS(SELECT 1 FROM lite_files f WHERE f.org_id=a.org_id AND f.id=a.resource_id))',bindings:recovery},
+    recovery:{sql:'(a.action IN (SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM lite_records r WHERE r.org_id=a.org_id AND r.id=a.resource_id) AND NOT EXISTS(SELECT 1 FROM lite_files f WHERE f.org_id=a.org_id AND f.id=a.resource_id))',bindings:[JSON.stringify(recovery)]},
     records:{sql:recordTest,bindings:readable},
     files:{sql:canReadModule(org,'files',access)?'1=1':'0=1',bindings:[]},
   };
