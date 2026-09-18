@@ -3,7 +3,6 @@ import { DataTable, Badge } from '@lite/shell-ui/ui';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import { Plus, Search, Pencil, Archive, ChevronLeft, ChevronRight, FolderOpen } from 'lucide-react';
 import { Button } from '@lite/shell-ui/ui/kit';
 import { Input } from '@lite/shell-ui/ui/kit';
@@ -27,7 +26,9 @@ export function RecordForm({module,record,api,onSaved,onCancel}:{module:Module;r
   async function submit(event:React.FormEvent){event.preventDefault();setBusy(true);setError('');try{const data=Object.fromEntries(module.fields.map(f=>[f.key,f.type==='number'&&values[f.key]!==''&&values[f.key]!==null?Number(values[f.key]):values[f.key]]));await api(`modules/${module.id}/records${record?'/'+record.id:''}`,{method:record?'PATCH':'POST',body:JSON.stringify({data,...(record?{version:record.version}:{})})});toast.success(record?'Modifications enregistrées':'Document créé');onSaved();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   return <form onSubmit={submit} className="record-form"><div className="form-fields">{module.fields.map(field=><div className={field.type==='textarea'?'field field-wide':'field'} key={field.key}><Label htmlFor={`field-${field.key}`}>{field.label}{field.required?' *':''}</Label>{field.type==='select'?<Select value={String(values[field.key]??'')} onValueChange={v=>setValues({...values,[field.key]:v})}><SelectTrigger id={`field-${field.key}`} aria-required={field.required}><SelectValue placeholder="Choisir…"/></SelectTrigger><SelectContent>{field.options?.map(option=><SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select>:field.type==='boolean'?<Checkbox id={`field-${field.key}`} checked={values[field.key]===true} onCheckedChange={v=>setValues({...values,[field.key]:v===true})}/>:field.type==='textarea'?<Textarea id={`field-${field.key}`} value={String(values[field.key]??'')} onChange={e=>setValues({...values,[field.key]:e.target.value})} required={field.required} maxLength={field.maxLength??5000} rows={4}/>:<Input id={`field-${field.key}`} type={['number','email','date'].includes(field.type)?field.type:'text'} value={String(values[field.key]??'')} onChange={e=>setValues({...values,[field.key]:e.target.value})} required={field.required} min={field.min} max={field.max} maxLength={field.maxLength??300} step={field.type==='number'?'any':undefined}/>}</div>)}</div><State error={error}/><div className="form-actions"><Button type="button" variant="outline" onClick={onCancel} disabled={busy}>Annuler</Button><Button type="submit" disabled={busy}>{busy?'Enregistrement…':'Enregistrer'}</Button></div></form>;
 }
-/** The declared title remains a native keyboard-accessible link, even beyond the first five fields. */
+/** Titles use document navigation: query-only SPA transitions can leave a cold
+ * keep-alive pane unresolved in the Sites adapter. The workspace opt-out also
+ * preserves native keyboard and modifier-click behavior. */
 export function moduleRecordColumns(module:Module):ColumnDef<RecordData>[] {
   const title=module.fields.find(field=>field.key===module.titleField);
   const visible=module.fields.filter(field=>field.type!=='textarea').slice(0,5);
@@ -35,7 +36,7 @@ export function moduleRecordColumns(module:Module):ColumnDef<RecordData>[] {
   return visible.map(field=>({id:field.key,accessorFn:row=>format(row.data[field.key],field),header:field.label,cell:({row})=>{
     const value=format(row.original.data[field.key],field);
     const content=field.type==='select'?<Badge variant="secondary">{value}</Badge>:<span>{value}</span>;
-    return field.key===module.titleField?<Link href={'/'+module.id+'?record='+encodeURIComponent(row.original.id)} className="font-medium underline-offset-4 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{content}</Link>:content;
+    return field.key===module.titleField?<a data-workspace-nav="ignore" href={'/'+module.id+'?record='+encodeURIComponent(row.original.id)} className="font-medium underline-offset-4 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{content}</a>:content;
   }}));
 }
 export function ModuleView({module,api,role,revision,onMutation}:{module:Module;api:Api;role:Role;revision:number;onMutation:()=>void}) {
