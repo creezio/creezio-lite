@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.15.6 — Erreurs de connexion navigateur explicites
+
+- Les erreurs non JSON de la session affichent un message de connexion adapté tout en conservant le statut HTTP ; les réponses invalides ne sont plus interprétées comme un conflit de fenêtre.
+- Après une erreur, la reconnexion manuelle ne force pas la prise de contrôle d'une autre fenêtre. Les règles de bail et de reprise explicite restent inchangées ; aucune écriture métier n'est rejouée.
+- Aucune migration ni modification de secret. Utiliser `lite upgrade`, puis compiler. Ce correctif ne résout pas une panne réseau sous-jacente de workerd.
+
 ## 0.15.5 — Diagnostic Resend à accès limité
 
 - Le diagnostic reconnaît une clé Resend limitée à l’envoi lorsque la lecture des domaines répond avec l’erreur structurée `restricted_api_key`. Les autres refus restent signalés.
