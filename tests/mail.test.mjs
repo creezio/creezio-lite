@@ -88,3 +88,12 @@ test('IMAP sync uses encrypted credentials and preserves cursor and messages acr
     assert.equal(JSON.stringify((await a('admin/request-logs')).body).includes(secret),false);
   }finally{globalThis.fetch=oldFetch;db.close();}
 });
+
+test('Resend restricted-key diagnostic cannot turn a rejected send into a successful mail',async()=>{
+  const {db,a}=await setup(),oldFetch=globalThis.fetch;try{
+    const connection=await integration(a,'resend');let calls=0;
+    globalThis.fetch=async(url,init)=>{calls++;assert.equal(url,'https://api.resend.com/emails');assert.equal(init.method,'POST');return Response.json({statusCode:401,name:'restricted_api_key',message:'This API key is restricted to only send emails'},{status:401});};
+    const result=await a('email/send',{method:'POST',body:outgoing({integrationId:connection.id})});
+    assert.equal(result.status,502);assert.equal(result.body.mail.status,'failed_permanent');assert.equal(calls,1);assert.doesNotMatch(JSON.stringify(result.body),/fixture-mail-password/);
+  }finally{globalThis.fetch=oldFetch;db.close();}
+});

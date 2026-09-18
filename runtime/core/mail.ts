@@ -23,9 +23,14 @@ async function activeConnections(c:ApiContext,org:string){const result:Integrati
 async function readySender(c:ApiContext,row:IntegrationRow){const m=JSON.parse(row.meta_json);if(!m.from)return false;if(row.provider==='smtp')return Boolean(m.host&&m.user&&m.gatewayUrl&&(await resolveMailCredentials(c,row)).gatewayToken);return row.provider==='resend'||row.provider==='cloudflare'&&Boolean(m.accountId);}
 async function sender(c:ApiContext,org:string,id?:string){const rows=await activeConnections(c,org);const selected=id?rows.find(r=>r.id===id):undefined;if(id&&!selected)fail(409,'mail_connection','La connexion mail choisie est indisponible.');if(selected&&await readySender(c,selected))return selected;for(const row of rows)if(!id&&await readySender(c,row))return row;fail(409,'mail_unconfigured','Configurez une adresse d’expédition et une connexion Cloudflare, Resend ou SMTP dans Intégrations.');}
 
-async function remote(url:string,key:string,body?:unknown,extra:Record<string,string>={}){
+async function remote(url:string,key:string,body?:unknown,extra:Record<string,string>={},diagnostic?:'resend-domains'){
   let response:Response;try{response=await fetch(url,{method:body===undefined?'GET':'POST',redirect:'manual',signal:AbortSignal.timeout(25000),headers:{Authorization:`Bearer ${key}`,...(body===undefined?{}:{'content-type':'application/json'}),...extra},...(body===undefined?{}:{body:JSON.stringify(body)})});}catch{fail(502,'mail_delivery_unknown','Le service n’a pas confirmé le résultat. Vérifiez chez le fournisseur avant de renvoyer le message.');}
   if(response.status>=300&&response.status<400){await response.body?.cancel();fail(502,'mail_rejected','La connexion mail redirige la demande. Vérifiez son adresse HTTPS finale.');}
+  // A send-only Resend key is valid, but deliberately cannot list domains.
+  // This exception is limited to the read-only diagnostic; send errors stay errors.
+  if(diagnostic==='resend-domains'&&url==='https://api.resend.com/domains'&&body===undefined&&response.status===401){
+    try{const error=JSON.parse(new TextDecoder().decode(await readBytes(response as unknown as Request,16384)));if(error?.name==='restricted_api_key')return {restrictedSendingAccess:true};}catch{/* Unknown, malformed or oversized error remains a rejected diagnostic. */}
+  }
   if(!response.ok){await response.body?.cancel();if([400,401,403,404,413,422,429].includes(response.status))fail(502,'mail_rejected',response.status===429?'Le fournisseur refuse temporairement l’envoi (quota ou débit).':'Le fournisseur a refusé la demande. Vérifiez les identifiants, les destinataires, les droits et le domaine d’expédition.');fail(502,'mail_delivery_unknown','Résultat non confirmé par le fournisseur. Vérifiez avant de renvoyer.');}
   try{const data=JSON.parse(new TextDecoder().decode(await readBytes(response as unknown as Request,5*1024*1024)));if(!data||typeof data!=='object'||Array.isArray(data))throw Error();return data;}catch{fail(502,'mail_delivery_unknown','La réponse du service mail est invalide ou trop volumineuse.');}
 }
@@ -38,7 +43,9 @@ export async function testMailConnection(c:ApiContext,row:IntegrationRow){
   if(['smtp','imap'].includes(row.provider)){const data=await mailGateway(c,row,'verify');if(data.ok!==true)fail(502,'mail_rejected','La passerelle a refusé la connexion.');return {ok:true,message:`Connexion ${row.provider.toUpperCase()} acceptée.`};}
   const m=JSON.parse(row.meta_json),key=await resolveIntegration(c,row);
   if(row.provider==='cloudflare'){const data=await remote('https://api.cloudflare.com/client/v4/user/tokens/verify',key);if(data.success!==true||data.result?.status!=='active')fail(502,'mail_rejected','Cloudflare a refusé le jeton.');return {ok:true,message:'Jeton Cloudflare actif. Les droits Email Sending et le domaine seront vérifiés lors de l’envoi.'};}
-  await remote('https://api.resend.com/domains',key);return {ok:true,message:'Accès Resend accepté. Aucun e-mail de test envoyé.'};
+  const data=await remote('https://api.resend.com/domains',key,undefined,{},'resend-domains');
+  if(data.restrictedSendingAccess===true)return {ok:true,access:'sending_only',domainVerified:false,sendingVerified:false,message:'Clé Resend reconnue avec accès limité à l’envoi. Le domaine et la capacité effective d’envoi ne sont pas vérifiés. Aucun e-mail de test envoyé.'};
+  return {ok:true,access:'domains_read',domainVerified:false,sendingVerified:false,message:'Accès Resend accepté. Aucun e-mail de test envoyé.'};
 }
 async function putParts(c:ApiContext,org:string,id:string,input:unknown){
   if(input===undefined)return [] as Part[];if(!Array.isArray(input)||input.length>20)fail(400,'invalid_attachments','Maximum 20 pièces jointes.');
