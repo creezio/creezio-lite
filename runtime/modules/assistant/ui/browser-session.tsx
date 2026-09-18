@@ -1,6 +1,8 @@
 "use client";
 import {createContext,useContext,useEffect,useRef,useState,type ReactNode} from 'react';
 
+import {readBrowserSessionResponse} from './browser-session-response';
+
 export type BrowserState={active:boolean;kind:'desktop'|'controller'|null;desktopConnected:boolean;desktopPath?:string|null;workspaceId?:string;actions?:unknown[]};
 type Session={windowId:string;mobile:boolean;ready:boolean;state:BrowserState;error:string;takeover:()=>void;report:(event:string,fields?:Record<string,unknown>)=>Promise<void>};
 const Context=createContext<Session|null>(null);
@@ -21,7 +23,7 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
     let connected=false,lastState=0,polling=false,wsLast=0;const controller=new AbortController();
     const post=async(path:string,body:Record<string,unknown>)=>{
       const res=await fetch('/api/v1/assistant/browser/'+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({windowId,...body}),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(6000)])});
-      const data=await res.json();if(!res.ok)throw Object.assign(new Error(data.error?.message??'Connexion indisponible.'),{status:res.status});return data;
+      return readBrowserSessionResponse(res);
     };
     const receive=(next:BrowserState)=>{
       if(stopped)return;
@@ -60,7 +62,7 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
     void start();
     return()=>{stopped=true;controller.abort();if(pollTimer)clearTimeout(pollTimer);if(wsTimer)clearInterval(wsTimer);if(watch)clearInterval(watch);ws?.close();release();window.removeEventListener('error',onError);window.removeEventListener('unhandledrejection',onRejection);window.removeEventListener('pagehide',release);};
   },[attempt]);
-  return <Context.Provider value={{windowId:id,mobile,ready,state,error,takeover:()=>{takeover.current=true;workspace.current=undefined;setReady(false);setAttempt(n=>n+1);},report}}>{children}</Context.Provider>;
+  return <Context.Provider value={{windowId:id,mobile,ready,state,error,takeover:()=>{takeover.current=!error;workspace.current=undefined;setReady(false);setAttempt(n=>n+1);},report}}>{children}</Context.Provider>;
 }
 export function BrowserWindowGate({children}:{children:ReactNode}) {
   const session=useBrowserSession();if(!session)return <>{children}</>;
@@ -68,7 +70,7 @@ export function BrowserWindowGate({children}:{children:ReactNode}) {
     {!session.mobile&&<div hidden={!session.state.active} inert={!session.state.active}>{children}</div>}
     {(!session.ready||!session.state.active)&&<div data-lite-assistant-ui className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-50 p-6"><div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm" role="status">
       <h1 className="text-xl font-semibold text-slate-900">{!session.ready?'Connexion à votre espace…':session.error?'Connexion interrompue':'Une autre fenêtre est active'}</h1>
-      {session.ready&&<><p className="mt-3 text-base text-slate-600">{session.error||'Vous pouvez continuer ici. L’autre fenêtre sera mise en pause.'}</p><button className="mt-5 rounded-lg bg-slate-900 px-4 py-3 text-base text-white" onClick={session.takeover}>Continuer dans cette fenêtre</button></>}
+      {session.ready&&<><p className="mt-3 text-base text-slate-600">{session.error||'Vous pouvez continuer ici. L’autre fenêtre sera mise en pause.'}</p><button className="mt-5 rounded-lg bg-slate-900 px-4 py-3 text-base text-white" onClick={session.takeover}>{session.error?'Réessayer la connexion':'Continuer dans cette fenêtre'}</button></>}
     </div></div>}
   </>;
 }
