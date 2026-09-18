@@ -1,7 +1,6 @@
 import { dispatchRequest } from '@lite/sites-adapter/dispatch';
 import { env } from 'cloudflare:workers';
 import { after } from 'next/server';
-import { handleApi } from '@/runtime/core/index';
 import type { LiteEnvironment } from '@/runtime/core/index';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { appDefinition } from '@/app/app-definition';

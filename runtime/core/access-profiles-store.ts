@@ -197,3 +197,34 @@ export function accessModuleReadable(context:RequestAccessContext,moduleId:strin
  const operationId=ids.find(id=>lease.input.catalog.some(op=>op.id===id));
  return !!operationId&&context.evaluateAccess({kind:'operation',operationId}).allowed;
 }
+
+/** A native SQL assertion, to include in the SAME D1 batch as every business effect.
+ * A stale epoch/credential/receipt aborts the transaction (including earlier statements).
+ * This does not grant an operation; callers must first authorize their operation/capabilities.
+ */
+export function requestAccessCommitGuard(context:RequestAccessContext):{sql:string;bindings:(string|number|null)[]}{
+ const lease=leases.get(context);if(!lease?.active||lease.input.snapshot.state!=='adopted')fail(403,'operation_forbidden','Invalid access context.');
+ const until=lease.input.receipt?.validUntil??null;
+ let predicate=`EXISTS(SELECT 1 FROM lite_access_epochs WHERE org_id=? AND revision=?) AND EXISTS(SELECT 1 FROM lite_members WHERE org_id=? AND user_id=? AND role=?) AND (? IS NULL OR julianday(?)>julianday('now'))`;
+ const bindings:(string|number|null)[]=[lease.workspaceId,lease.state.epoch,lease.workspaceId,lease.actorUserId,lease.input.principal.role,until,until];
+ const credential=lease.input.credential;
+ if(credential.kind==='token'){
+  predicate+=` AND EXISTS(SELECT 1 FROM lite_access_tokens WHERE id=? AND org_id=? AND user_id=? AND mode=? AND revoked_at IS NULL AND julianday(expires_at)>julianday('now'))`;
+  bindings.push(credential.tokenId,lease.workspaceId,lease.actorUserId,credential.mode);
+ }else if(credential.kind==='oauth'){
+  predicate+=` AND EXISTS(SELECT 1 FROM lite_oauth_tokens t JOIN lite_oauth_grants g ON g.id=t.grant_id JOIN lite_oauth_clients c ON c.id=g.client_id WHERE t.id=? AND g.id=? AND c.id=? AND g.org_id=? AND g.user_id=? AND t.rotated_to IS NULL AND g.revoked_at IS NULL AND c.revoked_at IS NULL AND julianday(t.access_expires_at)>julianday('now') AND julianday(g.expires_at)>julianday('now'))`;
+  bindings.push(credential.tokenId,credential.grantId,credential.clientId,lease.workspaceId,lease.actorUserId);
+ }
+ // Deliberately malformed JSON is a SQLite statement error, not a zero-row write.
+ return {sql:`SELECT CASE WHEN (${predicate}) THEN 1 ELSE json('lite_access_revoked') END AS authorized`,bindings};
+}
+export async function commitRequestAccessBatch(db:D1Database,context:RequestAccessContext|undefined,statements:D1PreparedStatement[]){
+ if(!context)return db.batch(statements);
+ const lease=leases.get(context);if(!lease?.active||lease.db!==db)fail(403,'operation_forbidden','Invalid access database.');
+ const guard=requestAccessCommitGuard(context);
+ try{return (await db.batch([db.prepare(guard.sql).bind(...guard.bindings),...statements])).slice(1);}
+ catch(error){if(String(error).includes('malformed JSON'))fail(409,'version_conflict','Access or resource state changed.');throw error;}
+}
+export async function assertRequestAccessCurrent(db:D1Database,context:RequestAccessContext|undefined):Promise<void>{
+ if(context)await commitRequestAccessBatch(db,context,[]);
+}

@@ -353,7 +353,7 @@ export function TabWorkspaceProvider({ children }: { children: ReactNode }) {
 
     const saved = loadPersisted();
     if (saved) {
-      let normalized = saved.tabs.map((t) => ensureTabHistory(t));
+      const normalized = saved.tabs.map((t) => ensureTabHistory(t));
       let pinned = withPinnedDashboard(normalized);
       // L'URL demandée (lien direct, F5, clic avant hydratation) prime TOUJOURS
       // sur l'onglet actif sauvegardé — plus de router.replace vers une vieille page.

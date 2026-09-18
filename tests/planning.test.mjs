@@ -50,7 +50,7 @@ test('the two contract examples validate and ready reproduces the business oracl
   const p = JSON.parse(await readFile(examplePlan, 'utf8')), s = JSON.parse(await readFile(exampleState, 'utf8'));
   const v = validate(p, s); assert.equal(v.code, exitCodes.ok); assert.deepEqual(v.report.errors, []); assert.deepEqual(v.report.warnings, []);
   assert.deepEqual(v.report.summary, { missions: 15, byKind: { dev: 14, review: 1 }, byStatus: { active: 1, closed: 1, delivered: 2, historical: 1, integrated: 1, pending: 9 } });
-  const oracle = JSON.parse((await readFile(join(skillDir, 'PLANNING.md'), 'utf8')).match(/```json\n([\s\S]*?)\n```/)[1]);
+  const oracle = JSON.parse((await readFile(join(skillDir, 'PLANNING.md'), 'utf8')).replaceAll('\r\n','\n').match(/```json\n([\s\S]*?)\n```/)[1]);
   const { code, report } = ready(p, s); assert.equal(code, exitCodes.ok);
   // L’oracle du contrat est le rapport complet attendu sur les fichiers d’exemple : aucune retouche, aucune abréviation tolérée.
   assert.deepEqual(report, oracle);

@@ -1,5 +1,5 @@
 import { accessRoute } from './access.ts';
-import { createRequestAccessContext, assertRequestAccessContext, disposeRequestAccessContext, commitAccessMutation, type RequestAccessContext } from './access-profiles-store.ts';
+import { createRequestAccessContext, assertRequestAccessContext, disposeRequestAccessContext, commitAccessMutation, commitRequestAccessBatch, type RequestAccessContext } from './access-profiles-store.ts';
 import type { D1Database } from "@cloudflare/workers-types";
 import type { ApiContext, AppExtensions, Identity, Principal, Role, ScopeAction, ScopeProvider, Workspace } from './types.ts';
 import { ApiError, boundedInteger, errorBody, fail, moduleNavigable, moduleWritable, requireModuleRole, requireRole, roles, validateData } from './validation.ts';
@@ -54,7 +54,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     if (path === 'health' && request.method === 'GET') {
       if (!context.env.DB) fail(503,'database_unavailable','Base de données indisponible.');
       await context.env.DB.prepare('SELECT id FROM lite_orgs LIMIT 1').first();
-      return json({ok:true,kit:'lite',version:'0.15.1',database:'ready'});
+      return json({ok:true,kit:'lite',version:'0.15.2',database:'ready'});
     }
     const user = context.identity;
     if (!user?.userId || !user.email) fail(401,'authentication_required','Connectez-vous pour continuer.');
@@ -218,7 +218,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         const body=await readJson(request),data=validateData(mod,body.data);
         await options.beforeWrite?.({module:mod,data,previous:null,workspace:org,identity:user,...(access?{access}:{})});
         const recordId=uuid(),now=timestamp();
-        await db.batch([
+        await commitRequestAccessBatch(db,access,[
           db.prepare('INSERT INTO lite_records(id,org_id,module_id,data,search_text,version,created_by,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?,?)').bind(recordId,org.id,mod.id,JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),user.userId,now,now),
           audit(db,org.id,user.userId,`${mod.id}.create`,recordId),
         ]);return json({record:await getRecord(db,org.id,mod.id,recordId,scoped)},201);
@@ -230,7 +230,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         const data=validateData(mod,body.data);
         await options.beforeWrite?.({module:mod,data,previous:previous.data,workspace:org,identity:user,...(access?{access}:{})});
         const writeFilter=recordScope(scoped.scope,scoped.principal,recordRef,'write',scoped.access);
-        const result=await db.batch([
+        const result=await commitRequestAccessBatch(db,access,[
           db.prepare(`UPDATE lite_records SET data=?,search_text=?,version=version+1,updated_at=? WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM lite_records r WHERE r.id=lite_records.id AND ${writeFilter.sql})`).bind(JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),timestamp(),id,org.id,mod.id,expected,...writeFilter.bindings),
           audit(db,org.id,user.userId,`${mod.id}.update`,id,{},'WHERE changes()=1'),
         ]);
@@ -241,7 +241,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         const body=await readJson(request),expected=version(body.version);
         await getRecord(db,org.id,mod.id,id,scoped,'write');
         const writeFilter=recordScope(scoped.scope,scoped.principal,recordRef,'write',scoped.access);
-        const result=await db.batch([
+        const result=await commitRequestAccessBatch(db,access,[
           db.prepare(`UPDATE lite_records SET deleted_at=?,version=version+1 WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM lite_records r WHERE r.id=lite_records.id AND ${writeFilter.sql})`).bind(timestamp(),id,org.id,mod.id,expected,...writeFilter.bindings),
           audit(db,org.id,user.userId,`${mod.id}.archive`,id,{},'WHERE changes()=1'),
         ]);if(!result[0].meta.changes) fail(409,'version_conflict','Ce document a été modifié. Rechargez-le.');
@@ -264,7 +264,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       const bytes=await readBytes(request,10*1024*1024);if(!bytes.length) fail(400,'empty_file','Le fichier est vide.');
       const id=uuid(),key=`${org.id}/${id}`,type=(request.headers.get('content-type')??'application/octet-stream').split(';')[0].slice(0,100);
       await bucket.put(key,bytes,{httpMetadata:{contentType:'application/octet-stream'}});
-      try{await db.batch([db.prepare('INSERT INTO lite_files(id,org_id,name,object_key,size,content_type,created_by,created_at) VALUES(?,?,?,?,?,?,?,?)').bind(id,org.id,name,key,bytes.length,type,user.userId,timestamp()),audit(db,org.id,user.userId,'file.upload',id)]);}catch(error){await bucket.delete(key).catch(()=>{});throw error;}
+      try{await commitRequestAccessBatch(db,access,[db.prepare('INSERT INTO lite_files(id,org_id,name,object_key,size,content_type,created_by,created_at) VALUES(?,?,?,?,?,?,?,?)').bind(id,org.id,name,key,bytes.length,type,user.userId,timestamp()),audit(db,org.id,user.userId,'file.upload',id)]);}catch(error){await bucket.delete(key).catch(()=>{});throw error;}
       return json({id,name,size:bytes.length},201);
     }
     const metadataMatch=path.match(/^files\/([^/]+)\/metadata$/);
@@ -292,11 +292,15 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       }
       const bucket=context.env.BUCKET;if(!bucket)fail(503,'files_unavailable','Le stockage de fichiers est indisponible.');
       if(request.method==='DELETE'){
-        await db.batch([db.prepare('UPDATE lite_files SET deleted_at=? WHERE id=? AND org_id=? AND deleted_at IS NULL').bind(timestamp(),file.id,org.id),audit(db,org.id,user.userId,'file.delete',file.id,{},'WHERE changes()=1')]);
+        await commitRequestAccessBatch(db,access,[db.prepare('UPDATE lite_files SET deleted_at=? WHERE id=? AND org_id=? AND deleted_at IS NULL').bind(timestamp(),file.id,org.id),audit(db,org.id,user.userId,'file.delete',file.id,{},'WHERE changes()=1')]);
         // D1/R2 do not share a transaction. Metadata is revoked first; an orphan is never downloadable.
         await bucket.delete(file.object_key);return json({ok:true,cleanup:'complete'});
       }
-      const object=await bucket.get(file.object_key);if(!object)fail(404,'file_not_found','Le contenu du fichier est indisponible.');
+      const object=await bucket.get(file.object_key);
+
+      const visible=await commitRequestAccessBatch(db,access,[db.prepare(`SELECT f.id FROM lite_files f WHERE f.id=? AND f.org_id=? AND f.deleted_at IS NULL AND ${filter.sql}`).bind(file.id,org.id,...filter.bindings)]);
+      if(!visible[0].results.length)fail(404,'file_not_found','Fichier introuvable.');
+      if(!object)fail(404,'file_not_found','Le contenu du fichier est indisponible.');
       return new Response(object.body as BodyInit,{headers:{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(file.name).replace(/['()*]/g,c=>'%'+c.charCodeAt(0).toString(16))}`,'Content-Length':String(file.size),'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox"}});
     }
     fail(404,'not_found','Route introuvable.');

@@ -15,10 +15,21 @@ Les composants du socle sont livrés en source dans `runtime/`. Ils évoluent da
 ## Commencer
 
 ```bash
-pnpm --dir template install --frozen-lockfile
+corepack pnpm --dir template install --frozen-lockfile
 node bin/lite.mjs create --spec examples/services.json --out /chemin/mon-app
 node bin/lite.mjs doctor --app /chemin/mon-app
 ```
+
+Le kit requiert Node.js 24 ou une version plus récente. Avant les tests, le dépôt vérifie
+automatiquement la version de Node.js et la présence des dépendances du template :
+
+```bash
+npm run check:environment
+npm test
+```
+
+Sous Windows, exécutez ces commandes depuis la racine du dépôt. Si pnpm n’est pas installé,
+utilisez `corepack pnpm --dir template install --frozen-lockfile`.
 
 Ouvrir ensuite le projet avec Sites et suivre son `AGENTS.md`. Ne pas publier le template lui-même comme nouvelle application.
 

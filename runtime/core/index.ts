@@ -5,3 +5,6 @@ export { openScope, sessionCredential } from './scope.ts';
 export { publicDetails } from './validation.ts';
 export type { AppDefinition, Field, Module, ModuleKind, ModuleExtension, Role, Identity, RecordData, Workspace, LiteEnvironment, ApiContext, BeforeWrite, CredentialKind, CredentialMode, CredentialContext, Principal, ScopeAction, SqlFragment, ScopeProvider, FileDeletionContext, FileDeletionResult, AppOperationContext, AppOperationResult, AppOperationDefinition, AppExtensions } from './types.ts';
 export type { PublicDetail, PublicDetails } from './validation.ts';
+export { requestAccessCommitGuard, commitRequestAccessBatch, assertRequestAccessCurrent } from './access-profiles-store.ts';
+export { createGeneratedFilePublicationPort } from './generated-files.ts';
+export type { GeneratedFileStatement, GeneratedFileIntent, StagedGeneratedFile, GeneratedFilePublicationPort } from './generated-files.ts';

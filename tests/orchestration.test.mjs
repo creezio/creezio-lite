@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm, mkdir, cp, readdir, symlink, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -57,7 +58,7 @@ export const DISTRIBUTED = [
 
 test('the canonical skill has a valid frontmatter, fixed selections without fallback and no private data', async () => {
   const skill = await readFile(join(root, orchestrationDir, 'SKILL.md'), 'utf8');
-  const front = skill.match(/^---\n([\s\S]*?)\n---\n/); assert.ok(front, 'frontmatter YAML attendu');
+  const front = skill.replaceAll('\r\n','\n').match(/^---\n([\s\S]*?)\n---\n/); assert.ok(front, 'frontmatter YAML attendu');
   assert.match(front[1], /^name: lite-orchestration$/m);
   const description = front[1].match(/^description: (.+)$/m); assert.ok(description && description[1].length > 40 && description[1].length <= 1024);
   const desc = description[1];
@@ -434,7 +435,7 @@ test('the generator installs the standard as an exact managed copy usable withou
     await createApp({ out, spec: join(root, 'examples/services.json') });
     const manifest = JSON.parse(await readFile(join(out, orchestrationManifest), 'utf8'));
     const sources = await orchestrationSources();
-    assert.equal(manifest.formatVersion, 1); assert.equal(manifest.owner, 'creezio-lite'); assert.equal(manifest.kitVersion, '0.15.1');
+    assert.equal(manifest.formatVersion, 1); assert.equal(manifest.owner, 'creezio-lite'); assert.equal(manifest.kitVersion, '0.15.2');
     assert.deepEqual(Object.keys(manifest.files).sort(), Object.keys(sources).sort());
     for (const [path, source] of Object.entries(sources)) {
       const copy = await readFile(join(out, path)), original = await readFile(source);
@@ -442,7 +443,7 @@ test('the generator installs the standard as an exact managed copy usable withou
       assert.equal(manifest.files[path], createHash('sha256').update(copy).digest('hex'));
     }
     const report = await doctor(out);
-    assert.equal(report.ok, true); assert.deepEqual(report.orchestration, { status: 'current', installedVersion: '0.15.1', targetVersion: '0.15.1', conflicts: [] });
+    assert.equal(report.ok, true); assert.deepEqual(report.orchestration, { status: 'current', installedVersion: '0.15.2', targetVersion: '0.15.2', conflicts: [] });
     const lock = JSON.parse(await readFile(join(out, 'lite.lock.json'), 'utf8'));
     assert.ok(!Object.keys(lock.runtimeFiles).some(f => f.includes('.cursor')), 'le verrou runtime ne couvre pas le standard');
     const standalone = join(temp, 'standalone');
@@ -450,10 +451,10 @@ test('the generator installs the standard as an exact managed copy usable withou
     const script = join(standalone, orchestrationDir, 'scripts/cursor-agents.mjs');
     const help = spawnSync(process.execPath, [script, '--help'], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
     assert.equal(help.status, 0, help.stderr); assert.match(help.stdout, /preflight/);
-    const check = spawnSync(process.execPath, ['--input-type=module', '-e', `import('${script.replaceAll('\\', '/')}').then(async m=>{const config=await m.loadSelections();const selection=m.resolveSelection(config);console.log(JSON.stringify(await m.preflight({selection,config,key:'FAKE_TEST_KEY_NOT_A_SECRET',fetchImpl:async()=>new Response(JSON.stringify({items:[{id:selection.modelId,displayName:'Fable',variants:[{params:selection.params,displayName:'Fable'}]}]}),{status:200,headers:{'content-type':'application/json'}})})))})`], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
+    const check = spawnSync(process.execPath, ['--input-type=module', '-e', `import(${JSON.stringify(pathToFileURL(script).href)}).then(async m=>{const config=await m.loadSelections();const selection=m.resolveSelection(config);console.log(JSON.stringify(await m.preflight({selection,config,key:'FAKE_TEST_KEY_NOT_A_SECRET',fetchImpl:async()=>new Response(JSON.stringify({items:[{id:selection.modelId,displayName:'Fable',variants:[{params:selection.params,displayName:'Fable'}]}]}),{status:200,headers:{'content-type':'application/json'}})})))})`], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
     assert.equal(check.status, 0, check.stderr); assert.equal(JSON.parse(check.stdout).status, 'ok');
     const skill = await readFile(join(standalone, orchestrationDir, 'SKILL.md'), 'utf8');
-    assert.match(skill, /^---\nname: lite-orchestration\n/);
+    assert.match(skill.replaceAll('\r\n','\n'), /^---\nname: lite-orchestration\n/);
     assert.match(await readFile(join(standalone, orchestrationRule), 'utf8'), /alwaysApply: true/);
     assert.match(await readFile(join(out, 'AGENTS.md'), 'utf8'), /lite-orchestration/);
   });
@@ -503,7 +504,7 @@ test('adopt inspects, applies once, preserves local rules and unmanaged files, a
     assert.equal(outdated.status, 'outdated'); assert.equal(outdated.files[`${orchestrationDir}/SKILL.md`], 'outdated'); assert.equal(outdated.installedVersion, '0.11.9');
     const upgraded = await adopt(app, true);
     assert.deepEqual(upgraded.written, [`${orchestrationDir}/SKILL.md`]); assert.equal(await readFile(skillPath, 'utf8'), previous);
-    assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.15.1');
+    assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.15.2');
     assert.equal(await readFile(join(app, orchestrationDir, 'notes-locales.md'), 'utf8'), 'préservé\n');
 
     await writeFile(manifestPath, JSON.stringify({ formatVersion: 9 }) + '\n');
@@ -516,7 +517,7 @@ test('adopt inspects, applies once, preserves local rules and unmanaged files, a
 });
 
 // Un lien symbolique (ou une jonction) sur un chemin géré ou un de ses parents ferait écrire adopt hors de l’application : refus avant toute écriture.
-test('adopt refuses symlinked managed paths and parents before any write, and reports a corrupt manifest without touching anything', async () => {
+test('adopt refuses symlinked managed paths and parents before any write, and reports a corrupt manifest without touching anything', async (t) => {
   await withTemp('lite-orch-symlink-', async (temp) => {
     const app = join(temp, 'app'), outside = join(temp, 'outside');
     await createApp({ out: app, spec: join(root, 'examples/catalogue.json') });
@@ -532,24 +533,33 @@ test('adopt refuses symlinked managed paths and parents before any write, and re
 
     // 1. .cursor/rules → dossier externe.
     await mkdir(join(outside, 'rules'), { recursive: true });
-    await symlink(join(outside, 'rules'), join(app, '.cursor/rules'), 'dir');
+    await symlink(join(outside, 'rules'), join(app, '.cursor/rules'), process.platform === 'win32' ? 'junction' : 'dir');
     await refused(/Lien symbolique .*\.cursor[\\/]rules.*Aucune modification effectuée/);
     assert.deepEqual(await readdir(join(outside, 'rules')), []);
     await rm(join(app, '.cursor/rules'));
 
     // 2. .cursor/skills/lite-orchestration → dossier externe (parent déjà existant).
     await mkdir(join(app, '.cursor/skills'), { recursive: true }); await mkdir(join(outside, 'skill'), { recursive: true });
-    await symlink(join(outside, 'skill'), join(app, '.cursor/skills/lite-orchestration'), 'dir');
+    await symlink(join(outside, 'skill'), join(app, '.cursor/skills/lite-orchestration'), process.platform === 'win32' ? 'junction' : 'dir');
     await refused(/Lien symbolique .*lite-orchestration.*Aucune modification effectuée/);
     assert.deepEqual(await readdir(join(outside, 'skill')), []);
     await rm(join(app, '.cursor/skills/lite-orchestration'));
 
     // 3. Fichier géré symlinké vers une cible externe, avec manifeste le déclarant outdated.
     const normal = await adopt(app, true); assert.equal(normal.applied, true); assert.deepEqual([...normal.written].sort(), DISTRIBUTED);
+    const manifestPath = join(app, orchestrationManifest);
+    await t.test('managed file symlink refuses writes', async subtest => {
     const skillPath = join(app, orchestrationDir, 'SKILL.md'), target = join(outside, 'target.md');
     const stale = 'ancienne copie externe\n'; await writeFile(target, stale);
-    await rm(skillPath); await symlink(target, skillPath, 'file');
-    const manifestPath = join(app, orchestrationManifest), manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    const previousSkill = await readFile(skillPath);
+    await rm(skillPath);
+    try { await symlink(target, skillPath, 'file'); }
+    catch(error) {
+      await writeFile(skillPath, previousSkill);
+      if(process.platform === 'win32' && error.code === 'EPERM') return subtest.skip('File symlink privilege unavailable; directory junction checks still ran');
+      throw error;
+    }
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     manifest.files[`${orchestrationDir}/SKILL.md`] = createHash('sha256').update(stale).digest('hex'); manifest.kitVersion = '0.11.9';
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
     await refused(/Lien symbolique .*SKILL\.md.*Aucune modification effectuée/);
@@ -558,6 +568,8 @@ test('adopt refuses symlinked managed paths and parents before any write, and re
     await rm(skillPath); await writeFile(skillPath, stale);
     const repaired = await adopt(app, true); assert.deepEqual(repaired.written, [`${orchestrationDir}/SKILL.md`]);
     assert.equal((await adopt(app, true)).changed, false, 'adoption normale et idempotence toujours vertes');
+
+    });
 
     // Manifeste JSON corrompu : erreur claire, aucune écriture.
     await writeFile(manifestPath, '{ "formatVersion": 1, "files": {');

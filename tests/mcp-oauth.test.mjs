@@ -40,7 +40,7 @@ test('OAuth discovery, issuer identification, PKCE and MCP share the existing mo
     const metadata=await(await h.oauth('/.well-known/oauth-protected-resource/api/mcp')).json();assert.equal(metadata.resource,resource);assert.deepEqual(metadata.authorization_servers,[base]);
     const discovery=await(await h.oauth('/.well-known/oauth-authorization-server')).json();assert.deepEqual(discovery.code_challenge_methods_supported,['S256']);assert.equal(discovery.authorization_response_iss_parameter_supported,true);
     const {tokens,registered}=await h.connect();
-    const init=await(await h.rpc(tokens.access_token,'initialize',{protocolVersion:'2025-11-25'})).json();assert.equal(init.result.serverInfo.version,'0.15.1');
+    const init=await(await h.rpc(tokens.access_token,'initialize',{protocolVersion:'2025-11-25'})).json();assert.equal(init.result.serverInfo.version,'0.15.2');
     const list=await(await h.rpc(tokens.access_token)).json();assert.ok(list.result.tools.some(t=>t.name==='lite_clients_list'));assert.ok(list.result.tools.some(t=>t.name==='lite_tasks_create'));
     assert.equal(list.result.tools.some(t=>t.name.includes('integrations')),false);
     const created=await(await h.rpc(tokens.access_token,'tools/call',{name:'lite_clients_create',arguments:{data:clientData}})).json();assert.equal(created.result.structuredContent.record.data.name,clientData.name);

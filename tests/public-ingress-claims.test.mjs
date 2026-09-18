@@ -30,6 +30,9 @@ const PRIOR_SQL = Object.freeze({
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
+function migrationBytes(bytes) {
+  return Buffer.from(bytes.toString('utf8').replaceAll('\r\n', '\n'));
+}
 function digest(text) {
   return new Uint8Array(createHash('sha256').update(text).digest());
 }
@@ -93,7 +96,7 @@ function clockStore(db, over = {}) {
 
 test('0000-0010 SQL remains byte-identical; 0011 is additive claims-only', async () => {
   for (const [name, want] of Object.entries(PRIOR_SQL)) {
-    const got = sha256(await readFile(join(root, 'template/drizzle', name)));
+    const got = sha256(migrationBytes(await readFile(join(root, 'template/drizzle', name))));
     assert.equal(got, want, name);
   }
   const sql = await readFile(join(root, 'template/drizzle/0011_public_ingress_claims.sql'), 'utf8');
@@ -103,7 +106,7 @@ test('0000-0010 SQL remains byte-identical; 0011 is additive claims-only', async
   const journal = JSON.parse(await readFile(join(root, 'template/drizzle/meta/_journal.json'), 'utf8'));
   assert.equal(journal.entries[10].tag, '0010_browser_relay');
   assert.equal(journal.entries[11].tag, '0011_public_ingress_claims');
-  assert.equal(journal.entries.length, 13);
+  assert.equal(journal.entries.length, 14);
 });
 
 test('node:sqlite : acquire, busy, complete, replay snapshot stable, no secrets', async () => {

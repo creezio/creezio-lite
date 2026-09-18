@@ -21,7 +21,7 @@ function run(cwd,args,timeout){
   return {status:result.status,signal:result.signal,output:`${result.stdout??''}\n${result.stderr??''}`};
 }
 
-test('a generated app builds with the public @lite/sites-adapter/catalog import wired into its API route',async()=>{
+test('a generated app builds with the public @lite/sites-adapter/catalog import wired into its API route',async(t)=>{
   assert.ok(existsSync(join(templateModules,'vinext')),'template dependencies are required: pnpm --dir template install --frozen-lockfile');
   const temp=await mkdtemp(join(tmpdir(),'lite-catalog-alias-'));
   try{
@@ -48,7 +48,8 @@ export const DELETE=route;
 export const PUT=route;
 `);
     // Dependencies are borrowed from the installed template checkout; nothing from the kit is copied into the fixture.
-    await symlink(templateModules,join(app,'node_modules'),'dir');
+    try { await symlink(templateModules,join(app,'node_modules'),'junction'); }
+    catch(error) { if (process.platform === 'win32' && error.code === 'EPERM') return t.skip('Windows symlink permissions are unavailable'); throw error; }
     // Same steps as the application's `pnpm build`: prebuild then the vinext build, without requiring pnpm here.
     const prepare=run(app,['scripts/prepare-lite.mjs'],60_000);
     assert.equal(prepare.status,0,prepare.output);
