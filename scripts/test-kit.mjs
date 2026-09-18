@@ -7,7 +7,8 @@ const environment=spawnSync(process.execPath,[join(root,'scripts','check-environ
 if(environment.error)throw environment.error;
 if(environment.status!==0)process.exitCode=environment.status??1;
 if(process.exitCode)process.exit();
-await import('./sync-template.mjs');
+const {syncTemplate}=await import('./sync-template.mjs');
+await syncTemplate();
 const tests=(await readdir(join(root,'tests'))).filter(p=>p.endsWith('.test.mjs')).sort().map(p=>join(root,'tests',p));
 const result=spawnSync(process.execPath,['--test',...tests],{cwd:root,stdio:'inherit'});
 if(result.error)throw result.error;process.exitCode=result.status??1;

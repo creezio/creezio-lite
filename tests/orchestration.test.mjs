@@ -518,7 +518,6 @@ test('adopt inspects, applies once, preserves local rules and unmanaged files, a
 
 // Un lien symbolique (ou une jonction) sur un chemin géré ou un de ses parents ferait écrire adopt hors de l’application : refus avant toute écriture.
 test('adopt refuses symlinked managed paths and parents before any write, and reports a corrupt manifest without touching anything', async (t) => {
-  if (process.platform === 'win32') return t.skip('Windows symlink permissions are unavailable');
   await withTemp('lite-orch-symlink-', async (temp) => {
     const app = join(temp, 'app'), outside = join(temp, 'outside');
     await createApp({ out: app, spec: join(root, 'examples/catalogue.json') });
@@ -534,24 +533,33 @@ test('adopt refuses symlinked managed paths and parents before any write, and re
 
     // 1. .cursor/rules → dossier externe.
     await mkdir(join(outside, 'rules'), { recursive: true });
-    await symlink(join(outside, 'rules'), join(app, '.cursor/rules'), 'dir');
+    await symlink(join(outside, 'rules'), join(app, '.cursor/rules'), process.platform === 'win32' ? 'junction' : 'dir');
     await refused(/Lien symbolique .*\.cursor[\\/]rules.*Aucune modification effectuée/);
     assert.deepEqual(await readdir(join(outside, 'rules')), []);
     await rm(join(app, '.cursor/rules'));
 
     // 2. .cursor/skills/lite-orchestration → dossier externe (parent déjà existant).
     await mkdir(join(app, '.cursor/skills'), { recursive: true }); await mkdir(join(outside, 'skill'), { recursive: true });
-    await symlink(join(outside, 'skill'), join(app, '.cursor/skills/lite-orchestration'), 'dir');
+    await symlink(join(outside, 'skill'), join(app, '.cursor/skills/lite-orchestration'), process.platform === 'win32' ? 'junction' : 'dir');
     await refused(/Lien symbolique .*lite-orchestration.*Aucune modification effectuée/);
     assert.deepEqual(await readdir(join(outside, 'skill')), []);
     await rm(join(app, '.cursor/skills/lite-orchestration'));
 
     // 3. Fichier géré symlinké vers une cible externe, avec manifeste le déclarant outdated.
     const normal = await adopt(app, true); assert.equal(normal.applied, true); assert.deepEqual([...normal.written].sort(), DISTRIBUTED);
+    const manifestPath = join(app, orchestrationManifest);
+    await t.test('managed file symlink refuses writes', async subtest => {
     const skillPath = join(app, orchestrationDir, 'SKILL.md'), target = join(outside, 'target.md');
     const stale = 'ancienne copie externe\n'; await writeFile(target, stale);
-    await rm(skillPath); await symlink(target, skillPath, 'file');
-    const manifestPath = join(app, orchestrationManifest), manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    const previousSkill = await readFile(skillPath);
+    await rm(skillPath);
+    try { await symlink(target, skillPath, 'file'); }
+    catch(error) {
+      await writeFile(skillPath, previousSkill);
+      if(process.platform === 'win32' && error.code === 'EPERM') return subtest.skip('File symlink privilege unavailable; directory junction checks still ran');
+      throw error;
+    }
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     manifest.files[`${orchestrationDir}/SKILL.md`] = createHash('sha256').update(stale).digest('hex'); manifest.kitVersion = '0.11.9';
     await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
     await refused(/Lien symbolique .*SKILL\.md.*Aucune modification effectuée/);
@@ -560,6 +568,8 @@ test('adopt refuses symlinked managed paths and parents before any write, and re
     await rm(skillPath); await writeFile(skillPath, stale);
     const repaired = await adopt(app, true); assert.deepEqual(repaired.written, [`${orchestrationDir}/SKILL.md`]);
     assert.equal((await adopt(app, true)).changed, false, 'adoption normale et idempotence toujours vertes');
+
+    });
 
     // Manifeste JSON corrompu : erreur claire, aucune écriture.
     await writeFile(manifestPath, '{ "formatVersion": 1, "files": {');
