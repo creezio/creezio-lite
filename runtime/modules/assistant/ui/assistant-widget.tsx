@@ -57,9 +57,10 @@ import {
   type AssistantToolStep,
 } from "./assistant-tool-steps";
 import {
-  ASSISTANT_PANEL_WIDTH_PX,
   useAssistantUi,
 } from "./assistant-provider";
+import { Close as AssistantPanelClose } from "@radix-ui/react-dialog";
+import { AssistantPanel } from "./assistant-panel";
 import { useVoiceInput } from "./use-voice-input";
 import { assistantIdentity } from "../src/brand/registry.js";
 import {
@@ -378,6 +379,7 @@ export function AssistantWidget() {
     activeConversationId,
     setActiveConversationId,
     hydrated,
+    presentation,
   } = useAssistantUi();
   const open=storedOpen||chatOnly;
   const pathname = usePathname() || "/";
@@ -1382,7 +1384,8 @@ export function AssistantWidget() {
       <button
         type="button"
         data-lite-assistant-ui
-                onClick={() => setOpen(true)}
+        data-lite-assistant-fab
+        onClick={() => setOpen(true)}
         className={cn(
           "fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-full",
           "bg-sky-600 text-white shadow-lg shadow-sky-900/25",
@@ -1400,30 +1403,7 @@ export function AssistantWidget() {
   }
 
   return (
-    <>
-      {/* Mobile : fond sombre (overlay plein écran) */}
-      <button
-        type="button"
-        data-lite-assistant-ui
-                className={chatOnly?"hidden":"fixed inset-0 z-40 bg-slate-900/40 md:hidden"}
-        aria-label="Fermer l'assistant"
-        onClick={() => setOpen(false)}
-      />
-
-      <aside
-        data-lite-assistant-ui
-                className={cn(
-          "fixed inset-y-0 right-0 z-50 flex h-[100dvh] flex-col border-l border-slate-200 bg-white shadow-xl shadow-slate-900/10",
-          chatOnly?"w-full":"w-full md:w-[var(--assistant-panel-width)]",
-        )}
-        style={
-          {
-            "--assistant-panel-width": `${ASSISTANT_PANEL_WIDTH_PX}px`,
-          } as React.CSSProperties
-        }
-        role="complementary"
-        aria-label={`Assistant ${productNameLabel()}`}
-      >
+    <AssistantPanel presentation={presentation} chatOnly={chatOnly} label={`Assistant ${productNameLabel()}`} onClose={() => setOpen(false)}>
         <div className="flex shrink-0 items-center gap-1 border-b border-slate-100 px-2 py-2">
           <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenuTrigger asChild>
@@ -1556,6 +1536,7 @@ export function AssistantWidget() {
           >
             <Plus className="h-4 w-4" />
           </Button>
+          <AssistantPanelClose asChild>
           <Button
             type="button"
             size="icon"
@@ -1563,10 +1544,10 @@ export function AssistantWidget() {
             className="h-8 w-8 shrink-0"
             title="Fermer"
             hidden={chatOnly}
-            onClick={() => setOpen(false)}
           >
             <X className="h-4 w-4" />
           </Button>
+          </AssistantPanelClose>
         </div>
 
         <BrowserConnectionStatus/>
@@ -2149,7 +2130,6 @@ export function AssistantWidget() {
             </form>
           </div>
         </div>
-      </aside>
-    </>
+    </AssistantPanel>
   );
 }

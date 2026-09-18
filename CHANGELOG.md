@@ -1,5 +1,10 @@
 # Versions de Lite
 
+## 0.15.7 — Assistant adapté à la largeur disponible
+
+- Le shell et le widget partagent les modes docké, superposé et plein écran. Un panneau docké conserve au moins 640px de contenu après la sidebar ; sinon il se superpose sans padding droit.
+- Superposition modale avec focus et fermeture natifs Radix ; conversation et saisie conservées au redimensionnement. Aucun changement de transport, de secret ou de schéma. Voir docs/ASSISTANT-PANEL.md.
+
 ## 0.15.6 — Erreurs de connexion navigateur explicites
 
 - Les erreurs non JSON de la session affichent un message de connexion adapté tout en conservant le statut HTTP ; les réponses invalides ne sont plus interprétées comme un conflit de fenêtre.
