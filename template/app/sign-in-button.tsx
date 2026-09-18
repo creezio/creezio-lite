@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { Button } from '@lite/shell-ui/ui/kit';
 export function SignInButton() {
   const [href,setHref]=useState('/signin-with-chatgpt?return_to=%2F');
+  // The invite hash is only available after hydration.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(()=>{if(/^#invite=[a-f0-9]{64}$/.test(location.hash))setHref('/signin-with-chatgpt?return_to='+encodeURIComponent('/'+location.hash));},[]);
   return <Button asChild size="lg"><a href={href} target="_top">Se connecter avec ChatGPT</a></Button>;
 }

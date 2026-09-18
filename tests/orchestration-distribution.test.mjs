@@ -183,7 +183,8 @@ test('adopt adds the discovery file to an application installed by an earlier ki
   });
 });
 
-test('adopt refuses a symlinked discovery path or parent before any write, including when other copies are pending', async () => {
+test('adopt refuses a symlinked discovery path or parent before any write, including when other copies are pending', async (t) => {
+  if (process.platform === 'win32') return t.skip('Windows symlink permissions are unavailable');
   await withTemp('lite-dist-symlink-', async (temp) => {
     const app = join(temp, 'app'), outside = join(temp, 'outside');
     await createApp({ out: app, spec: join(root, 'examples/catalogue.json') });
@@ -301,7 +302,7 @@ test('the real distributed plan-missions runs from a generated application on it
     const ready = tool('ready', '--plan', planFile, '--state', stateFile);
     assert.equal(ready.status, 0, ready.stderr); assert.equal(ready.stdout.trim().split('\n').length, 1);
     const report = JSON.parse(ready.stdout);
-    const oracle = JSON.parse((await readFile(join(standalone, orchestrationDir, 'PLANNING.md'), 'utf8')).match(/```json\n([\s\S]*?)\n```/)[1]);
+    const oracle = JSON.parse((await readFile(join(standalone, orchestrationDir, 'PLANNING.md'), 'utf8')).replaceAll('\r\n','\n').match(/```json\n([\s\S]*?)\n```/)[1]);
     assert.deepEqual(report, oracle, 'le rapport du script distribué est exactement l’oracle §5 du contrat distribué');
     assert.equal(report.reliable, true); assert.equal(report.proposals.length, 6); assert.deepEqual(report.proposals.map(p => `${p.mission}:${p.step}`), ['J01:integrate', 'Z00:publish', 'A01:resume', 'C01:start', 'D01:start', 'G01:start']);
     const { maxActiveRuns, active, proposed, free, providerQuotaVerified, reviewBacklog } = report.capacity;
@@ -369,7 +370,8 @@ test('CLI create and adopt accept LF and CRLF skill sources with the same discov
     };
 
     const lfKit = await kitCopy(join(temp, 'kit-lf'));
-    const lfSkill = await readFile(join(lfKit, orchestrationDir, 'SKILL.md'));
+    const lfSkill = Buffer.from((await readFile(join(lfKit, orchestrationDir, 'SKILL.md'), 'utf8')).replaceAll('\r\n','\n'));
+    await writeFile(join(lfKit, orchestrationDir, 'SKILL.md'), lfSkill);
     assert.equal(lfSkill.includes(0x0d), false);
     await expectCreated(lfKit, join(temp, 'app-lf'), lfSkill);
 

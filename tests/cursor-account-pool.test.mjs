@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as pool from '../.cursor/skills/lite-orchestration/scripts/cursor-account-pool.mjs';
 import * as agents from '../.cursor/skills/lite-orchestration/scripts/cursor-agents.mjs';
 
@@ -232,7 +232,7 @@ test('two real processes update the shared state under the lock without losing a
   await withTemp('lite-pool-concurrent-', async (temp) => {
     const paths = pool.poolPaths(join(temp, 'credentials.json'));
     await pool.withPoolState(paths, state => { state.counter = 0; return { changed: true }; }, { accountIds: ['acct-a'], now });
-    const modulePath = poolModulePath;
+    const modulePath = pathToFileURL(poolModulePath).href;
     const script = `import { withPoolState } from ${JSON.stringify(modulePath)}; const paths = ${JSON.stringify(paths)}; for (let i = 0; i < 25; i++) { await withPoolState(paths, state => { state.counter += 1; return { changed: true }; }, { waitMs: 20000 }); } console.log('done');`;
     const runChild = () => new Promise((resolvePromise, reject) => { const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'pipe'] }); let out = '', err = ''; child.stdout.on('data', c => { out += c; }); child.stderr.on('data', c => { err += c; }); child.on('close', code => (code === 0 ? resolvePromise(out) : reject(new Error(`code ${code}: ${err}`)))); });
     const results = await Promise.all([runChild(), runChild()]);
@@ -1030,13 +1030,13 @@ test('distributed copy: the adapter sits beside cursor-agents.mjs inside the ski
     const run = (args, extraEnv = {}) => new Promise(resolvePromise => { const child = spawn(process.execPath, [script, ...args], { env: { PATH: process.env.PATH, ...env, ...extraEnv } }); let out = '', err = ''; child.stdout.on('data', d => { out += d; }); child.stderr.on('data', d => { err += d; }); child.on('close', code => resolvePromise({ code, out, err })); });
     const view = await run(['accounts']);
     assert.equal(view.code, 0, view.err); const report = JSON.parse(view.out.trim().split('\n').at(-1)); assert.equal(report.mode, 'pool'); assert.deepEqual(report.order, ['acct-a', 'acct-b']); assert.equal(report.decision.accountId, 'acct-a'); assertNoSecret(view.out);
-    const standalone = await import(join(app, '.cursor/skills/lite-orchestration/scripts/cursor-agents.mjs'));
+    const standalone = await import(pathToFileURL(join(app, '.cursor/skills/lite-orchestration/scripts/cursor-agents.mjs')).href);
     assert.equal(standalone.accountPoolModule.href.endsWith('/.cursor/skills/lite-orchestration/scripts/cursor-account-pool.mjs'), true); assert.notEqual(standalone.accountPoolModule.href, agents.accountPoolModule.href);
     const adapter = await standalone.loadAccountAdapter({}); assert.equal(typeof adapter.openAccountPool, 'function'); assert.notEqual(adapter, pool, 'copie distribuée chargée, pas celle du kit');
     // Copie sans adaptateur (application non encore mise à jour) : mode env intact, pool refusé explicitement, aucun appel.
     const app2 = join(temp, 'app2'); await cp(skillDir, join(app2, '.cursor/skills/lite-orchestration'), { recursive: true });
     await rm(join(app2, '.cursor/skills/lite-orchestration/scripts/cursor-account-pool.mjs'));
-    const bare = await import(join(app2, '.cursor/skills/lite-orchestration/scripts/cursor-agents.mjs'));
+    const bare = await import(pathToFileURL(join(app2, '.cursor/skills/lite-orchestration/scripts/cursor-agents.mjs')).href);
     assert.equal(await bare.loadAccountAdapter({}), null);
     await assert.rejects(bare.resolveAccess({ env }), /aucun coffre de comptes lisible/);
     assert.equal((await bare.resolveAccess({ env: { CURSOR_API_KEY: KEY_ENV } })).mode, 'env');

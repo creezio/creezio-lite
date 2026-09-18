@@ -7,7 +7,15 @@ import { createApp, doctor } from '../bin/lite.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const staging=await mkdtemp(join(tmpdir(),'lite-build-'));
-function run(cwd,args){const r=spawnSync('pnpm',args,{cwd,stdio:'inherit'});if(r.error)throw r.error;if(r.status!==0)throw new Error(`pnpm ${args.join(' ')}: ${r.status}`);}
+function run(cwd,args){
+  const direct=spawnSync('pnpm',args,{cwd,stdio:'inherit'});
+  if(!direct.error&&direct.status===0)return;
+  const fallback=process.platform==='win32'
+    ? spawnSync(process.env.ComSpec??'cmd.exe',['/d','/s','/c',['corepack','pnpm',...args].join(' ')],{cwd,stdio:'inherit'})
+    : spawnSync('corepack',['pnpm',...args],{cwd,stdio:'inherit'});
+  if(fallback.error)throw fallback.error;
+  if(fallback.status!==0)throw new Error(`pnpm ${args.join(' ')}: ${fallback.status}`);
+}
 try {
   for(const name of ['services','catalogue']){
     const specPath=join(root,'examples',`${name}.json`);

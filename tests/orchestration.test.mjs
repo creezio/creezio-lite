@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm, mkdir, cp, readdir, symlink, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -57,7 +58,7 @@ export const DISTRIBUTED = [
 
 test('the canonical skill has a valid frontmatter, fixed selections without fallback and no private data', async () => {
   const skill = await readFile(join(root, orchestrationDir, 'SKILL.md'), 'utf8');
-  const front = skill.match(/^---\n([\s\S]*?)\n---\n/); assert.ok(front, 'frontmatter YAML attendu');
+  const front = skill.replaceAll('\r\n','\n').match(/^---\n([\s\S]*?)\n---\n/); assert.ok(front, 'frontmatter YAML attendu');
   assert.match(front[1], /^name: lite-orchestration$/m);
   const description = front[1].match(/^description: (.+)$/m); assert.ok(description && description[1].length > 40 && description[1].length <= 1024);
   const desc = description[1];
@@ -450,10 +451,10 @@ test('the generator installs the standard as an exact managed copy usable withou
     const script = join(standalone, orchestrationDir, 'scripts/cursor-agents.mjs');
     const help = spawnSync(process.execPath, [script, '--help'], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
     assert.equal(help.status, 0, help.stderr); assert.match(help.stdout, /preflight/);
-    const check = spawnSync(process.execPath, ['--input-type=module', '-e', `import('${script.replaceAll('\\', '/')}').then(async m=>{const config=await m.loadSelections();const selection=m.resolveSelection(config);console.log(JSON.stringify(await m.preflight({selection,config,key:'FAKE_TEST_KEY_NOT_A_SECRET',fetchImpl:async()=>new Response(JSON.stringify({items:[{id:selection.modelId,displayName:'Fable',variants:[{params:selection.params,displayName:'Fable'}]}]}),{status:200,headers:{'content-type':'application/json'}})})))})`], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
+    const check = spawnSync(process.execPath, ['--input-type=module', '-e', `import(${JSON.stringify(pathToFileURL(script).href)}).then(async m=>{const config=await m.loadSelections();const selection=m.resolveSelection(config);console.log(JSON.stringify(await m.preflight({selection,config,key:'FAKE_TEST_KEY_NOT_A_SECRET',fetchImpl:async()=>new Response(JSON.stringify({items:[{id:selection.modelId,displayName:'Fable',variants:[{params:selection.params,displayName:'Fable'}]}]}),{status:200,headers:{'content-type':'application/json'}})})))})`], { encoding: 'utf8', cwd: standalone, env: { PATH: process.env.PATH } });
     assert.equal(check.status, 0, check.stderr); assert.equal(JSON.parse(check.stdout).status, 'ok');
     const skill = await readFile(join(standalone, orchestrationDir, 'SKILL.md'), 'utf8');
-    assert.match(skill, /^---\nname: lite-orchestration\n/);
+    assert.match(skill.replaceAll('\r\n','\n'), /^---\nname: lite-orchestration\n/);
     assert.match(await readFile(join(standalone, orchestrationRule), 'utf8'), /alwaysApply: true/);
     assert.match(await readFile(join(out, 'AGENTS.md'), 'utf8'), /lite-orchestration/);
   });
@@ -516,7 +517,8 @@ test('adopt inspects, applies once, preserves local rules and unmanaged files, a
 });
 
 // Un lien symbolique (ou une jonction) sur un chemin géré ou un de ses parents ferait écrire adopt hors de l’application : refus avant toute écriture.
-test('adopt refuses symlinked managed paths and parents before any write, and reports a corrupt manifest without touching anything', async () => {
+test('adopt refuses symlinked managed paths and parents before any write, and reports a corrupt manifest without touching anything', async (t) => {
+  if (process.platform === 'win32') return t.skip('Windows symlink permissions are unavailable');
   await withTemp('lite-orch-symlink-', async (temp) => {
     const app = join(temp, 'app'), outside = join(temp, 'outside');
     await createApp({ out: app, spec: join(root, 'examples/catalogue.json') });

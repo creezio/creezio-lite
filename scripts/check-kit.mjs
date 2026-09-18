@@ -8,10 +8,11 @@ const exists=async path=>{try{await readFile(path);return true;}catch(e){if(e.co
 const privateData=/bc-[0-9a-f]{8}-[0-9a-f]{4}-|run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-|\/home\/|\/Users\/|[A-Z]:\\/;
 // Standard d'orchestration : une seule source, frontmatter de compétence valide, aucune donnée privée.
 const orchestration=await orchestrationSources();
-if(!/^---\nname: lite-orchestration\ndescription: .{40,1024}\n---\n/.test(await readFile(join(root,orchestrationDir,'SKILL.md'),'utf8')))throw new Error('SKILL.md : frontmatter name/description attendu.');
+const normalizeNewlines=value=>value.replaceAll('\r\n','\n');
+if(!/^---\nname: lite-orchestration\ndescription: .{40,1024}\n---\n/.test(normalizeNewlines(await readFile(join(root,orchestrationDir,'SKILL.md'),'utf8'))))throw new Error('SKILL.md : frontmatter name/description attendu.');
 for(const [path,source] of Object.entries(orchestration)){if(!path.startsWith('.cursor/'))throw new Error(`Source d’orchestration hors de .cursor : ${path}`);const content=await readFile(source,'utf8');if(!content.trim())throw new Error(`Fichier d’orchestration vide : ${path}`);if(privateData.test(content))throw new Error(`Donnée privée ou identifiant de tâche dans ${path}`);}
 if(await exists(join(root,orchestrationManifest)))throw new Error(`${orchestrationManifest} appartient aux copies générées, pas à la source canonique du kit.`);
-if(!/^---\n(?:.*\n)*?alwaysApply: true\n(?:.*\n)*?---\n/.test(await readFile(orchestration[orchestrationRule],'utf8')))throw new Error('La règle Cursor distribuée doit porter alwaysApply: true.');
+if(!/^---\n(?:.*\n)*?alwaysApply: true\n(?:.*\n)*?---\n/.test(normalizeNewlines(await readFile(orchestration[orchestrationRule],'utf8'))))throw new Error('La règle Cursor distribuée doit porter alwaysApply: true.');
 // Découverte Codex/Cursor : fichier .agents/skills généré depuis la source canonique (même nom et description), référençant chaque ressource distribuée ; jamais une copie manuelle divergente dans le kit.
 const generated=await orchestrationGenerated(orchestration);
 const canonical=skillFrontmatter(await readFile(orchestration[orchestrationDir+'/SKILL.md'],'utf8'));
@@ -26,7 +27,7 @@ const examplePlan=JSON.parse(await readFile(join(planningDir,'examples/planning-
 const validation=planning.evaluate('validate',{plan:examplePlan,state:exampleState,schemas:planningSchemas});
 if(validation.code!==planning.exitCodes.ok||!validation.report.valid||validation.report.warnings.length)throw new Error(`Exemples du contrat de planification invalides : ${JSON.stringify(validation.report.errors.concat(validation.report.warnings))}`);
 const decision=planning.evaluate('ready',{plan:examplePlan,state:exampleState,schemas:planningSchemas});
-const oracle=(await readFile(join(planningDir,'PLANNING.md'),'utf8')).match(/```json\n([\s\S]*?)\n```/);
+const oracle=normalizeNewlines(await readFile(join(planningDir,'PLANNING.md'),'utf8')).match(/```json\n([\s\S]*?)\n```/);
 if(!oracle)throw new Error('PLANNING.md doit porter le rapport attendu de ready (§5) dans un bloc json.');
 if(decision.code!==planning.exitCodes.ok||!decision.report.reliable||JSON.stringify(sortKeys(decision.report))!==JSON.stringify(sortKeys(JSON.parse(oracle[1]))))throw new Error('PLANNING.md §5 : le rapport attendu diffère de la sortie réelle de plan-missions ready sur les exemples.');
 function sortKeys(value){return Array.isArray(value)?value.map(sortKeys):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,sortKeys(value[k])])):value;}
