@@ -23,3 +23,14 @@ test('modal/fullscreen and complementary docking share a surface contract and ke
  await act(()=>tree.update(h(Widget,{mode:'overlay'})));tree.root.findByType('dialog-root').props.onOpenChange(false);await new Promise(r=>setTimeout(r,5));assert.equal(closed,2);assert.equal(focused,2);
  await act(()=>tree.update(h(Widget,{mode:'overlay',chatOnly:true})));assert.equal(tree.root.findByType('aside').props.style.width,'100%');assert.equal(tree.root.findAllByType('modal-content').length,0);tree.root.findByType('dialog-root').props.onOpenChange(false);assert.equal(closed,2);
 });
+
+test('mode transition restores focused composer and selection but leaves outside focus alone',async t=>{
+ const oldDocument=globalThis.document;globalThis.document={activeElement:null};const panels=[];let tree;
+ const props={presentation:'docked',label:'Assistant exemple',onClose(){}};
+ const render=mode=>h(AssistantPanel,{...props,presentation:mode},h('input',{'aria-label':'Composer'}));
+ const nodeMock=node=>{if(node.type!=='aside')return null;const input={tagName:'INPUT',selectionStart:2,selectionEnd:4,selectionDirection:'backward',getAttribute:name=>name==='aria-label'?'Composer':null,focus(){document.activeElement=this;},setSelectionRange(start,end,direction){this.selectionStart=start;this.selectionEnd=end;this.selectionDirection=direction;}};const panel={input,contains:node=>node===input,querySelectorAll:()=>[input]};panels.push(panel);return panel;};
+ t.after(async()=>{await act(()=>tree.unmount());globalThis.document=oldDocument;});
+ await act(()=>{tree=create(render('docked'),{createNodeMock:nodeMock});});document.activeElement=panels.at(-1).input;
+ for(const mode of ['overlay','docked']){const previous=document.activeElement;await act(()=>tree.update(render(mode)));assert.notEqual(panels.at(-1).input,previous);assert.equal(document.activeElement,panels.at(-1).input);assert.equal(document.activeElement.selectionStart,2);assert.equal(document.activeElement.selectionEnd,4);assert.equal(document.activeElement.selectionDirection,'backward');}
+ const outside={tagName:'INPUT'};document.activeElement=outside;await act(()=>tree.update(render('overlay')));assert.equal(document.activeElement,outside);
+});

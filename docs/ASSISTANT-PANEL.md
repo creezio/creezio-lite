@@ -15,3 +15,5 @@ Les modes superposé/plein écran utilisent Dialog Radix existant : fond, focus 
 La présentation n'est pas persistée. L'état conversation/modèle/messages/saisie reste dans AssistantWidget ; changer la présentation ne change ni le transport ni la session. Aucun contenu applicatif privé n'est requis pour les tests.
 
 Validation automatisée : tests/assistant-panel.test.mjs couvre seuils, sidebar, scrollbar, conteneur étroit, configuration, resize, conversation et saisie persistantes. La recette navigateur doit aussi contrôler Tab/Shift+Tab, Escape, menus imbriqués, retour au FAB, clavier mobile, zoom et modes 320/390/768/1024/1440 sur le SHA intégré.
+
+Au changement entre docké et modal, Radix reconstruit sa surface. Un snapshot avant mutation restaure le champ actif et sa sélection, seulement si le focus était dans une saisie de l'assistant. L'autofocus modal ne remplace pas ce focus restauré. Les sous-composants visuels et leur position de scroll peuvent encore être remontés ; la conversation et les saisies contrôlées du widget sont conservées.
