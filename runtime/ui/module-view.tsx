@@ -3,6 +3,7 @@ import { DataTable, Badge } from '@lite/shell-ui/ui';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { Plus, Search, Pencil, Archive, ChevronLeft, ChevronRight, FolderOpen } from 'lucide-react';
 import { Button } from '@lite/shell-ui/ui/kit';
 import { Input } from '@lite/shell-ui/ui/kit';
@@ -26,6 +27,17 @@ export function RecordForm({module,record,api,onSaved,onCancel}:{module:Module;r
   async function submit(event:React.FormEvent){event.preventDefault();setBusy(true);setError('');try{const data=Object.fromEntries(module.fields.map(f=>[f.key,f.type==='number'&&values[f.key]!==''&&values[f.key]!==null?Number(values[f.key]):values[f.key]]));await api(`modules/${module.id}/records${record?'/'+record.id:''}`,{method:record?'PATCH':'POST',body:JSON.stringify({data,...(record?{version:record.version}:{})})});toast.success(record?'Modifications enregistrées':'Document créé');onSaved();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   return <form onSubmit={submit} className="record-form"><div className="form-fields">{module.fields.map(field=><div className={field.type==='textarea'?'field field-wide':'field'} key={field.key}><Label htmlFor={`field-${field.key}`}>{field.label}{field.required?' *':''}</Label>{field.type==='select'?<Select value={String(values[field.key]??'')} onValueChange={v=>setValues({...values,[field.key]:v})}><SelectTrigger id={`field-${field.key}`} aria-required={field.required}><SelectValue placeholder="Choisir…"/></SelectTrigger><SelectContent>{field.options?.map(option=><SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select>:field.type==='boolean'?<Checkbox id={`field-${field.key}`} checked={values[field.key]===true} onCheckedChange={v=>setValues({...values,[field.key]:v===true})}/>:field.type==='textarea'?<Textarea id={`field-${field.key}`} value={String(values[field.key]??'')} onChange={e=>setValues({...values,[field.key]:e.target.value})} required={field.required} maxLength={field.maxLength??5000} rows={4}/>:<Input id={`field-${field.key}`} type={['number','email','date'].includes(field.type)?field.type:'text'} value={String(values[field.key]??'')} onChange={e=>setValues({...values,[field.key]:e.target.value})} required={field.required} min={field.min} max={field.max} maxLength={field.maxLength??300} step={field.type==='number'?'any':undefined}/>}</div>)}</div><State error={error}/><div className="form-actions"><Button type="button" variant="outline" onClick={onCancel} disabled={busy}>Annuler</Button><Button type="submit" disabled={busy}>{busy?'Enregistrement…':'Enregistrer'}</Button></div></form>;
 }
+/** The declared title remains a native keyboard-accessible link, even beyond the first five fields. */
+export function moduleRecordColumns(module:Module):ColumnDef<RecordData>[] {
+  const title=module.fields.find(field=>field.key===module.titleField);
+  const visible=module.fields.filter(field=>field.type!=='textarea').slice(0,5);
+  if(title&&!visible.some(field=>field.key===title.key))visible.unshift(title);
+  return visible.map(field=>({id:field.key,accessorFn:row=>format(row.data[field.key],field),header:field.label,cell:({row})=>{
+    const value=format(row.original.data[field.key],field);
+    const content=field.type==='select'?<Badge variant="secondary">{value}</Badge>:<span>{value}</span>;
+    return field.key===module.titleField?<Link href={'/'+module.id+'?record='+encodeURIComponent(row.original.id)} className="font-medium underline-offset-4 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{content}</Link>:content;
+  }}));
+}
 export function ModuleView({module,api,role,revision,onMutation}:{module:Module;api:Api;role:Role;revision:number;onMutation:()=>void}) {
   const router=useRouter(),selectedId=useSearchParams().get('record');
   const [query,setQuery]=useState(''),[search,setSearch]=useState(''),[offset,setOffset]=useState(0),[filter,setFilter]=useState('all');
@@ -35,7 +47,7 @@ export function ModuleView({module,api,role,revision,onMutation}:{module:Module;
   useEffect(()=>{const t=setTimeout(()=>{setSearch(query);setOffset(0);},250);return()=>clearTimeout(t);},[query]);
   const params=new URLSearchParams({q:search,offset:String(offset),limit:'30'});if(filter!=='all'&&statusField){params.set('field',statusField.key);params.set('value',filter);}
   const {data,error,loading}=useLoad<{items:RecordData[];total:number}>(()=>api(`modules/${module.id}/records?${params}`),[api,module.id,search,offset,filter,revision]);
-  const columns:ColumnDef<RecordData>[] = module.fields.filter(f=>f.type!=='textarea').slice(0,5).map(f=>({id:f.key,accessorFn:row=>format(row.data[f.key],f),header:f.label,cell:({row})=>f.type==='select'?<Badge variant="secondary">{format(row.original.data[f.key],f)}</Badge>:<span className={f.key===module.titleField?'font-medium':''}>{format(row.original.data[f.key],f)}</span>}));
+  const columns=moduleRecordColumns(module);
   if(canWrite)columns.push({id:'actions',header:'Actions',enableSorting:false,cell:({row})=><div className="flex gap-1"><Button variant="ghost" size="icon" aria-label={`Modifier ${row.original.data[module.titleField]}`} onClick={()=>setEditing(row.original)}><Pencil size={15}/></Button><Button variant="ghost" size="icon" aria-label={`Archiver ${row.original.data[module.titleField]}`} onClick={()=>setArchiving(row.original)}><Archive size={15}/></Button></div>});
   async function archive(){if(!archiving)return;setBusy(true);try{await api(`modules/${module.id}/records/${archiving.id}`,{method:'DELETE',body:JSON.stringify({version:archiving.version})});setArchiving(null);onMutation();toast.success('Document archivé');}catch(e){toast.error((e as Error).message);}finally{setBusy(false);}}
   return <section className="workspace-section space-y-5"><EntityHeader title={module.name} description={module.description} actions={canWrite?<Button onClick={()=>setEditing(null)}><Plus size={16}/>Nouveau {module.singular.toLowerCase()}</Button>:undefined}/>

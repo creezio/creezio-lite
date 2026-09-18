@@ -1,5 +1,12 @@
 # Versions de Lite
 
+## 0.15.3 — Ouverture des fiches depuis les listes
+
+- Les titres des lignes ouvrent leur fiche native, avec lien accessible au clavier et identifiants encodés.
+- Recherche, filtres, actions et contrôles serveur inchangés. Aucun changement de données ni migration.
+- Mise à jour applicative : utiliser `lite upgrade`, puis compiler le runtime distribué.
+
+
 ## 0.15.2 — Accès natifs, recherche D1 et validation Windows
 
 - Gardes transactionnelles natives et publication durable des documents générés.
