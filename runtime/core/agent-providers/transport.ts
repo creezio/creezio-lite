@@ -166,7 +166,6 @@ export function createTransport(provider: AgentProviderId, options: ProviderClie
     try {
       // Résolution vivante : un credential révoqué ou désactivé arrête l'appel avant tout réseau.
       // Une résolution bloquée est abandonnée à l'expiration ou à l'annulation ; sa valeur tardive est ignorée.
-      let credential: unknown;
       const abandoned = Symbol('abandoned');
       const interruption = new Promise<typeof abandoned>(resolve => { controller.signal.addEventListener('abort', () => resolve(abandoned), { once: true }); });
       let resolution: Promise<unknown>;
@@ -180,7 +179,7 @@ export function createTransport(provider: AgentProviderId, options: ProviderClie
           : new ProviderFailure({ provider, code: 'provider_timeout', delivery: 'not_sent', reason: 'caller_abort' });
       }
       if ('failed' in outcome) throw new ProviderFailure({ provider, code: 'credential_unavailable', delivery: 'not_sent', reason: 'credential_missing' });
-      credential = outcome.value;
+      const credential = outcome.value;
       if (!isValidCredential(provider, credential)) {
         throw new ProviderFailure({ provider, code: 'credential_unavailable', delivery: 'not_sent', reason: credentialReason(provider, credential) });
       }

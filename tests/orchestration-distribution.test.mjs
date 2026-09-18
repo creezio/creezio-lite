@@ -183,7 +183,7 @@ test('adopt adds the discovery file to an application installed by an earlier ki
   });
 });
 
-test('adopt refuses a symlinked discovery path or parent before any write, including when other copies are pending', async () => {
+test('adopt refuses a symlinked discovery path or parent before any write, including when other copies are pending', async (t) => {
   await withTemp('lite-dist-symlink-', async (temp) => {
     const app = join(temp, 'app'), outside = join(temp, 'outside');
     await createApp({ out: app, spec: join(root, 'examples/catalogue.json') });
@@ -196,20 +196,28 @@ test('adopt refuses a symlinked discovery path or parent before any write, inclu
     };
     // 1. .agents → dossier externe alors que toutes les copies .cursor sont manquantes : rien n'est écrit, ni dehors ni dans .cursor.
     await mkdir(join(outside, 'agents'), { recursive: true });
-    await symlink(join(outside, 'agents'), join(app, '.agents'), 'dir');
+    await symlink(join(outside, 'agents'), join(app, '.agents'), process.platform === 'win32' ? 'junction' : 'dir');
     await refused(/Lien symbolique ou jonction refusé : \.agents.*Aucune modification effectuée/);
     assert.deepEqual(await readdir(join(outside, 'agents')), []);
     await rm(join(app, '.agents'));
     // 2. .agents/skills/lite-orchestration → dossier externe, parents réels.
     await mkdir(join(app, '.agents/skills'), { recursive: true }); await mkdir(join(outside, 'skill'), { recursive: true });
-    await symlink(join(outside, 'skill'), join(app, discoveryDir), 'dir');
+    await symlink(join(outside, 'skill'), join(app, discoveryDir), process.platform === 'win32' ? 'junction' : 'dir');
     await refused(/Lien symbolique .*lite-orchestration.*Aucune modification effectuée/);
     assert.deepEqual(await readdir(join(outside, 'skill')), []);
     await rm(join(app, discoveryDir));
     // 3. Fichier généré symlinké vers une cible externe, manifeste le déclarant périmé.
     const normal = await adopt(app, true); assert.equal(normal.applied, true); assert.deepEqual(normal.writtenGenerated, [orchestrationDiscovery]); assert.equal(normal.written.length, Object.keys(await orchestrationSources()).length);
+    await t.test('discovery file symlink refuses writes', async subtest => {
     const target = join(outside, 'target.md'), stale = 'ancienne découverte externe\n'; await writeFile(target, stale);
-    await rm(join(app, orchestrationDiscovery)); await symlink(target, join(app, orchestrationDiscovery), 'file');
+    const discoveryPath=join(app, orchestrationDiscovery), previous=await readFile(discoveryPath);
+    await rm(discoveryPath);
+    try { await symlink(target, discoveryPath, 'file'); }
+    catch(error) {
+      await writeFile(discoveryPath, previous);
+      if(process.platform === 'win32' && error.code === 'EPERM') return subtest.skip('File symlink privilege unavailable; directory junction checks still ran');
+      throw error;
+    }
     const manifestPath = join(app, orchestrationManifest), manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     manifest.generated[orchestrationDiscovery] = sha(stale); manifest.kitVersion = '0.11.9'; await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
     await refused(/Lien symbolique .*\.agents.*SKILL\.md.*Aucune modification effectuée/);
@@ -218,6 +226,7 @@ test('adopt refuses a symlinked discovery path or parent before any write, inclu
     const repaired = await adopt(app, true); assert.deepEqual(repaired.written, []); assert.deepEqual(repaired.writtenGenerated, [orchestrationDiscovery]);
     assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.15.1');
     assert.equal((await adopt(app, true)).changed, false);
+    });
   });
 });
 
@@ -301,7 +310,7 @@ test('the real distributed plan-missions runs from a generated application on it
     const ready = tool('ready', '--plan', planFile, '--state', stateFile);
     assert.equal(ready.status, 0, ready.stderr); assert.equal(ready.stdout.trim().split('\n').length, 1);
     const report = JSON.parse(ready.stdout);
-    const oracle = JSON.parse((await readFile(join(standalone, orchestrationDir, 'PLANNING.md'), 'utf8')).match(/```json\n([\s\S]*?)\n```/)[1]);
+    const oracle = JSON.parse((await readFile(join(standalone, orchestrationDir, 'PLANNING.md'), 'utf8')).replaceAll('\r\n','\n').match(/```json\n([\s\S]*?)\n```/)[1]);
     assert.deepEqual(report, oracle, 'le rapport du script distribué est exactement l’oracle §5 du contrat distribué');
     assert.equal(report.reliable, true); assert.equal(report.proposals.length, 6); assert.deepEqual(report.proposals.map(p => `${p.mission}:${p.step}`), ['J01:integrate', 'Z00:publish', 'A01:resume', 'C01:start', 'D01:start', 'G01:start']);
     const { maxActiveRuns, active, proposed, free, providerQuotaVerified, reviewBacklog } = report.capacity;
@@ -369,7 +378,8 @@ test('CLI create and adopt accept LF and CRLF skill sources with the same discov
     };
 
     const lfKit = await kitCopy(join(temp, 'kit-lf'));
-    const lfSkill = await readFile(join(lfKit, orchestrationDir, 'SKILL.md'));
+    const lfSkill = Buffer.from((await readFile(join(lfKit, orchestrationDir, 'SKILL.md'), 'utf8')).replaceAll('\r\n','\n'));
+    await writeFile(join(lfKit, orchestrationDir, 'SKILL.md'), lfSkill);
     assert.equal(lfSkill.includes(0x0d), false);
     await expectCreated(lfKit, join(temp, 'app-lf'), lfSkill);
 

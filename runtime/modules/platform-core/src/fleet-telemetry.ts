@@ -111,7 +111,7 @@ export function applyFleetTelemetryPatch(
   current: FleetTelemetryConfig,
   patch: FleetTelemetryPatch,
 ): FleetTelemetryConfig {
-  let next = { ...current, scopes: { ...current.scopes } };
+  const next = { ...current, scopes: { ...current.scopes } };
 
   if (patch.preset === "off") {
     next.enabled = false;

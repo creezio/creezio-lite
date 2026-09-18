@@ -59,7 +59,7 @@ function toolSchema(op:Operation):JsonSchema {
   if(legacyRead(op))return op.id.endsWith('.list')?objectSchema({query:{type:'string',maxLength:120},offset:{type:'integer',minimum:0,maximum:100000}}):objectSchema({recordId:idSchema},['recordId']);
   if(op.id==='search.query')return objectSchema({query:{type:'string',maxLength:120},moduleId:idSchema,offset:{type:'integer',minimum:0,maximum:100000}},['query']);
   if(op.kind==='business'){
-    const action=op.id.split('.').at(-1),fields:JsonSchema={};let required:string[]=[];
+    const action=op.id.split('.').at(-1),fields:JsonSchema={};const required:string[]=[];
     if(action==='list')Object.assign(fields,{query:{type:'string',maxLength:120},offset:{type:'integer',minimum:0,maximum:100000}});
     if(['get','update','archive'].includes(action!)){fields.recordId=idSchema;required.push('recordId');}
     if(op.bodySchema){Object.assign(fields,op.bodySchema.properties);required.push(...(op.bodySchema.required??[]));}

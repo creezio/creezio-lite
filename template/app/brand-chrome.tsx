@@ -13,13 +13,14 @@ import { LiteUiBoot } from "@lite/os-ui/boot";
 import { InteractiveDemoRoot } from "@lite/interactive-demo/ui";
 import {
   configureSidebar, configureDefaultNewTabHref, configureSidebarCollapsedKey,
-  configureGlobalSearch, defaultOsAdminNavItems, getSidebarHost,
+  configureGlobalSearch, defaultOsAdminNavItems,
   NavCatalogLoader, WorkspaceRoot, Toaster,
 } from "@lite/shell-ui/ui";
 import brand from "@/brand.json";
 import { WorkspacePaneRouterContext } from "../runtime/modules/shell-ui/ui/workspace/keep-alive";
 import { SitesPaneRouter } from "./sites-pane-router";
 import { moduleRegistry } from "@/runtime/core/registry";
+import type { GlobalSearchHit } from "@/runtime/modules/shell-ui/ui/search/global-search-config";
 
 const registeredModules=moduleRegistry(appDefinition);
 const available = new Set(["/dashboard", "/parametres", "/admin/nav", "/admin/activity", "/admin/analytics", "/admin/integrations", "/admin/api", "/admin/mcp", "/admin/access", "/admin/search", "/admin/connections", "/search", ...registeredModules.map(m => m.href)]);
@@ -46,7 +47,10 @@ configureGlobalSearch({
       if(!result.indexing)return [
         ...result.items,...(result.pages??[]),
         ...(result.total>100?[{index:'results',id:'all',title:`Voir les ${result.total} résultats`,description:'Parcourir tous les résultats',href:`/search?q=${encodeURIComponent(query)}`}]:[]),
-      ].map((hit:any)=>({...hit,subtitle:hit.description}));
+      ].map((hit) => {
+        const result = hit as GlobalSearchHit & {description?: string};
+        return {...result,subtitle:result.description??result.subtitle};
+      });
     }
     throw new Error('L’indexation des données existantes se poursuit. Relancez la recherche dans un instant.');
   },
