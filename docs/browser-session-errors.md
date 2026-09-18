@@ -10,11 +10,11 @@ This does not fix the underlying workerd network-connection loss observed in a l
 
 ## Adoption
 
-This is an unversioned candidate based on 0.15.5, not a published release. The maintainer selects the next available patch release (0.15.6 if still available) after review; do not repoint an existing tag. For an authorized local evaluation pinned to this commit:
+This is the 0.15.6 candidate based on 0.15.5, not a published release. The maintainer releases it only after review and CI of the exact commit; do not repoint an existing tag. For an authorized local evaluation pinned to this commit:
 
 1. `node <kit>/bin/lite.mjs doctor --app <app>`
 2. `node <kit>/bin/lite.mjs upgrade --app <app>`
 3. Review the report, then `node <kit>/bin/lite.mjs upgrade --app <app> --apply`.
 4. Run application checks and rebuild before serving it.
 
-`adopt` distributes orchestration files only; it does not upgrade runtime. A local upgrade before release still reports 0.15.5; record the exact kit commit separately and do not treat that version string as proof of publication.
+`adopt` distributes orchestration files only; it does not upgrade runtime. A local upgrade reports 0.15.6; record the exact kit commit separately and do not treat that version string as proof of publication.
