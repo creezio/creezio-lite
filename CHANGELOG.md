@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.15.5 — Diagnostic Resend à accès limité
+
+- Le diagnostic reconnaît une clé Resend limitée à l’envoi lorsque la lecture des domaines répond avec l’erreur structurée `restricted_api_key`. Les autres refus restent signalés.
+- Le résultat précise que le domaine et l’envoi effectif ne sont pas vérifiés ; aucun message de test n’est envoyé. Aucun changement de données ni migration.
+- Mise à jour applicative : utiliser `lite upgrade`, puis compiler le runtime distribué.
+
 ## 0.15.4 — Navigation fiable vers les fiches
 
 - Les liens de titre utilisent une navigation navigateur complète, exclue de l’intercepteur d’onglets. Cela évite un chargement permanent lors d’une transition ne changeant que la query sous Vinext.
