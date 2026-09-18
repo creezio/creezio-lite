@@ -5,6 +5,7 @@ import {
   isValidElement,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -103,16 +104,27 @@ export function WorkspaceShell({
   const inWorkspace = isWorkspacePath(pathname);
 
   const { navigate, ready, activeTab } = useTabWorkspace();
-  const { open, hydrated } = useAssistantUi();
+  const { open, hydrated, presentation, setWorkspaceGeometry } = useAssistantUi();
   const brand = getShellUiBrand();
-  // Panel ouvert : push layout historique (pr-[400px]).
+  // Only dock when the shared policy leaves enough room for the main content.
   // Panel fermé : PAS de gutter — FAB en overlay (React web / Electron topmost).
-  const rightChromePx = hydrated && open ? ASSISTANT_PANEL_WIDTH_PX : 0;
+  const rightChromePx = hydrated && open && presentation === "docked" ? ASSISTANT_PANEL_WIDTH_PX : 0;
   const activeHref = activeTab ? normalizeHref(activeTab.href) : cacheKey;
 
   const [navOpen, setNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const shellRef=useRef<HTMLDivElement>(null), mainChromeRef=useRef<HTMLDivElement>(null);
+  useLayoutEffect(()=>{
+    if(!inWorkspace)return;
+    const measure=()=>{if(shellRef.current&&mainChromeRef.current)setWorkspaceGeometry({width:shellRef.current.clientWidth,sidebarWidth:parseFloat(getComputedStyle(mainChromeRef.current).marginLeft)||0});};
+    measure();window.addEventListener('resize',measure);
+    const observer=typeof ResizeObserver==='undefined'?null:new ResizeObserver(measure);
+    if(shellRef.current)observer?.observe(shellRef.current);
+    if(mainChromeRef.current)observer?.observe(mainChromeRef.current);
+    return()=>{window.removeEventListener('resize',measure);observer?.disconnect();setWorkspaceGeometry(null);};
+  },[inWorkspace,sidebarCollapsed,setWorkspaceGeometry]);
+  useEffect(()=>{if(hydrated&&open)setNavOpen(false);},[hydrated,open]);
   const wasOpenRef = useRef(false);
   /** Clics interceptés avant hydratation workspace — rejoués dès ready. */
   const pendingNavRef = useRef<{
@@ -148,11 +160,11 @@ export function WorkspaceShell({
   }, []);
 
   useEffect(() => {
-    if (wasOpenRef.current && !navOpen) {
+    if (wasOpenRef.current && !navOpen && !open) {
       menuButtonRef.current?.focus();
     }
     wasOpenRef.current = navOpen;
-  }, [navOpen]);
+  }, [navOpen, open]);
 
   // Rejouer la navigation en file dès que le workspace est prêt.
   useEffect(() => {
@@ -227,6 +239,7 @@ export function WorkspaceShell({
     <GlobalSearchProvider>
       <PageToolbarProvider>
       <div
+        ref={shellRef}
         className={cn(
           // h-dvh : hauteur viewport stable (PWA standalone incluse)
           "flex h-dvh max-h-dvh overflow-hidden bg-gradient-to-br from-slate-50 via-white to-sky-50/40",
@@ -240,7 +253,7 @@ export function WorkspaceShell({
             "--assistant-chrome-right": `${rightChromePx}px`,
           } as CSSProperties
         }
-        data-lite-assistant-chrome={hydrated && open ? "panel" : "fab-overlay"}
+        data-lite-assistant-chrome={hydrated && open ? presentation : "fab-overlay"}
       >
         {renderSidebarSlot(sidebar, {
           collapsed: sidebarCollapsed,
@@ -249,6 +262,7 @@ export function WorkspaceShell({
           onMobileClose: closeNav,
         })}
         <div
+          ref={mainChromeRef}
           className={cn(
             "flex min-h-0 min-w-0 flex-1 flex-col transition-[margin] duration-200 ease-out",
             sidebarCollapsed ? "md:ml-16" : "md:ml-64",

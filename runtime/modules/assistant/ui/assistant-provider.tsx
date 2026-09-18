@@ -13,7 +13,8 @@ import { ASSISTANT_FAB_SAFE_PX } from "../src/runtime/active-surface.js";
 import { assistantIdentity } from "../src/brand/registry.js";
 
 /** Largeur du panneau docké (desktop) — utilisée pour décaler le shell CRM. */
-export const ASSISTANT_PANEL_WIDTH_PX = 400;
+export { ASSISTANT_PANEL_WIDTH_PX } from './panel-policy';
+import { assistantPresentation, ASSISTANT_MIN_MAIN_WIDTH_PX, type AssistantPresentation, type WorkspaceGeometry } from './panel-policy';
 
 /**
  * Empreinte approximative du FAB (tests géométrie / hit-box).
@@ -33,6 +34,8 @@ type AssistantUiContextValue = {
   activeConversationId: string | null;
   setActiveConversationId: (id: string | null) => void;
   hydrated: boolean;
+  presentation: AssistantPresentation;
+  setWorkspaceGeometry: (geometry: WorkspaceGeometry | null) => void;
 };
 
 const AssistantUiContext = createContext<AssistantUiContextValue | null>(null);
@@ -69,7 +72,17 @@ function writeStored(partial: StoredUi) {
   }
 }
 
-export function AssistantProvider({ children }: { children: ReactNode }) {
+export function AssistantProvider({ children, minMainWidth = ASSISTANT_MIN_MAIN_WIDTH_PX }: { children: ReactNode; minMainWidth?: number }) {
+  const [viewport,setViewport]=useState({width:0,documentWidth:0});
+  const [geometry,updateGeometry]=useState<WorkspaceGeometry|null>(null);
+  const setWorkspaceGeometry=useCallback((next:WorkspaceGeometry|null)=>updateGeometry(previous=>previous?.width===next?.width&&previous?.sidebarWidth===next?.sidebarWidth?previous:next),[]);
+  useEffect(()=>{
+    const measure=()=>setViewport({width:window.innerWidth,documentWidth:document.documentElement.clientWidth});
+    measure();window.addEventListener('resize',measure);
+    const observer=typeof ResizeObserver==='undefined'?null:new ResizeObserver(measure);observer?.observe(document.documentElement);
+    return()=>{window.removeEventListener('resize',measure);observer?.disconnect();};
+  },[]);
+  const presentation=assistantPresentation({viewportWidth:viewport.width,workspaceWidth:geometry?.width??viewport.documentWidth,sidebarWidth:geometry?.sidebarWidth??0,minMainWidth});
   const [open, setOpenState] = useState(false);
   const [activeConversationId, setActiveIdState] = useState<string | null>(
     null,
@@ -109,6 +122,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       activeConversationId,
       setActiveConversationId,
       hydrated,
+      presentation,
+      setWorkspaceGeometry,
     }),
     [
       open,
@@ -117,6 +132,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       activeConversationId,
       setActiveConversationId,
       hydrated,
+      presentation,
+      setWorkspaceGeometry,
     ],
   );
 
