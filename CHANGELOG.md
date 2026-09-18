@@ -1,5 +1,13 @@
 # Versions de Lite
 
+## 0.15.2 — Accès natifs, recherche D1 et validation Windows
+
+- Gardes transactionnelles natives et publication durable des documents générés.
+- Recherche avec scopes complexes : jointures audit bornées et paramètres D1 sous la limite, sans élargir les droits.
+- Validation Windows : URLs ESM, jonctions et fins de ligne ; erreurs de commande préservées.
+- Synchronisation du template sérialisée, avec sauvegarde et restauration en cas d’échec. Les compilations et lectures doivent rester séquentielles avec la synchronisation.
+
+
 ## 0.15.1 — Recherche D1 avec scopes complexes
 
 - Corrige l'erreur D1 de profondeur d'expression en recherche avec profils d'acces actifs et filtres applicatifs complexes. Des ensembles de visibilite materialises separent les scopes des expressions FTS/audit.
