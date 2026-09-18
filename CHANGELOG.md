@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.15.4 — Navigation fiable vers les fiches
+
+- Les liens de titre utilisent une navigation navigateur complète, exclue de l’intercepteur d’onglets. Cela évite un chargement permanent lors d’une transition ne changeant que la query sous Vinext.
+- Liens clavier, ouverture dans un nouvel onglet et contrôles d’accès conservés. Aucun changement de données ni migration ; utiliser `lite upgrade` puis compiler.
+
+
 ## 0.15.3 — Ouverture des fiches depuis les listes
 
 - Les titres des lignes ouvrent leur fiche native, avec lien accessible au clavier et identifiants encodés.
