@@ -110,6 +110,9 @@ export type AppOperationDefinition = {
   operation: import('./operations.ts').Operation; // built with the existing operation() helper
   handle(ctx: AppOperationContext): Promise<AppOperationResult>;
 };
+export type AssistantProfilePolicy = { instructions:string; toolNames:readonly string[] };
+export type AssistantPolicyDeclaration = { profiles:Readonly<Record<string,AssistantProfilePolicy>> };
+export type McpPolicyDeclaration = { defaultEnabledToolNames?:readonly string[]; profiles?:Readonly<Record<string,readonly string[]>> };
 export type AppExtensions = {
   access?:AccessDeclaration;
   beforeWrite?: BeforeWrite;
@@ -117,4 +120,8 @@ export type AppExtensions = {
   scope?: ScopeProvider;
   /** Opt-in additif, distinct de `access`. Absent ⇒ aucune route publique. */
   publicIngress?: PublicIngressDeclaration;
+  /** Optional app-owned curation. Server permissions and MCP activation remain authoritative. */
+  assistant?:AssistantPolicyDeclaration;
+  /** Optional app defaults; persisted administrator switches always override this list. */
+  mcp?:McpPolicyDeclaration;
 };
