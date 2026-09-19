@@ -69,11 +69,14 @@ function BrowserInterruption({session}:{session:Session}) {
   useEffect(()=>{
     const element=dialog.current;if(!element)return;
     const stopEscape=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();}};
+    // Intercept before document-level Radix listeners, including document hydration roots.
+    const stopPointerDown=(event:PointerEvent)=>event.stopPropagation();
+    element.addEventListener('pointerdown',stopPointerDown);
     window.addEventListener('keydown',stopEscape,true);
     if(!element.open)element.showModal();
-    return()=>{window.removeEventListener('keydown',stopEscape,true);if(element.open)element.close();};
+    return()=>{element.removeEventListener('pointerdown',stopPointerDown);window.removeEventListener('keydown',stopEscape,true);if(element.open)element.close();};
   },[]);
-  return <dialog ref={dialog} data-lite-assistant-ui aria-labelledby="lite-browser-interruption-title" style={{pointerEvents:'auto'}} onPointerDown={event=>event.stopPropagation()} onCancel={event=>event.preventDefault()} className="m-0 h-dvh max-h-none w-screen max-w-none border-0 bg-slate-50 p-6 backdrop:bg-slate-950/40">
+  return <dialog ref={dialog} data-lite-assistant-ui aria-labelledby="lite-browser-interruption-title" style={{pointerEvents:'auto'}} onCancel={event=>event.preventDefault()} className="m-0 h-dvh max-h-none w-screen max-w-none border-0 bg-slate-50 p-6 backdrop:bg-slate-950/40">
     <div className="flex h-full items-center justify-center"><div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm" role="status">
       <h1 id="lite-browser-interruption-title" className="text-xl font-semibold text-slate-900">{!session.ready?'Connexion à votre espace…':session.error?'Connexion interrompue':'Une autre fenêtre est active'}</h1>
       {session.ready&&<><p className="mt-3 text-base text-slate-600">{session.error||'Vous pouvez continuer ici. L’autre fenêtre sera mise en pause.'}</p><button type="button" autoFocus className="mt-5 rounded-lg bg-slate-900 px-4 py-3 text-base text-white" onClick={session.takeover}>{session.error?'Réessayer la connexion':'Continuer dans cette fenêtre'}</button></>}

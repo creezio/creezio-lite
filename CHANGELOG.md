@@ -1,5 +1,10 @@
 # Versions de Lite
 
+## 0.15.11
+
+- Le garde de session intercepte pointerdown directement sur le dialog natif, avant les écouteurs document de Radix. La reprise au pointeur conserve ainsi les modales et leurs brouillons aussi dans les applications hydratées sur document.
+- La régression vérifie l’installation et le nettoyage de cet écouteur ; la recette sur WinHub confirme la conservation du formulaire après Escape, pointerdown, pointerup et clic de reprise.
+
 ## 0.15.10 — Sessions, analytics essentiels et conflits d’unicité
 
 - Le garde de session navigateur utilise la top layer native, reste actionnable au-dessus d’une modale applicative et conserve le brouillon pendant la reprise de main.
