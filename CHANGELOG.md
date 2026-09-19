@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.15.9 — Analytics sans relance après refus d’accès
+
+- Le buffer d’analytics abandonne les lots refusés avec HTTP 401 ou 403 au lieu de les remettre en file et de répéter les requêtes.
+- Les erreurs réseau et les réponses serveur transitoires restent réessayées. Les permissions, les profils d’accès, les données et le schéma ne changent pas.
+- Aucune migration ni nouvelle clé n’est requise. Les applications peuvent adopter le runtime par la procédure habituelle après publication de la release.
+
 ## 0.15.8 — Outils de chat sélectionnés par profil
 
 - Les applications peuvent définir un ensemble d’outils MCP actif par défaut pour chaque profil d’accès observé côté serveur. Les réglages administrateur enregistrés restent prioritaires ; les permissions et les espaces restent contrôlés à chaque appel.
