@@ -381,11 +381,12 @@ function readQuery(value: unknown): AccessQuery | null {
   return null;
 }
 
-/** session / health / mcp.tools.* transport. Discovery content (modules.list, OpenAPI, …) is not an envelope. */
+/** Browser/session transport. Discovery and administrative observability content are not an envelope. */
 function isTransportEnvelope(entry: AccessCatalogEntry): boolean {
   if (entry.essential !== true) return false;
   if (entry.id === 'core.health') return true;
   if (entry.id === 'mcp.tools.available' || entry.id === 'mcp.tools.call') return true;
+  if (entry.id === 'analytics.ingest') return true;
   return entry.moduleId === 'session';
 }
 

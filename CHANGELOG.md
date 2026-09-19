@@ -1,5 +1,13 @@
 # Versions de Lite
 
+## 0.15.10 — Sessions, analytics essentiels et conflits d’unicité
+
+- Le garde de session navigateur utilise la top layer native, reste actionnable au-dessus d’une modale applicative et conserve le brouillon pendant la reprise de main.
+- L’ingestion analytics essentielle reste disponible pour les sessions des rôles autorisés après adoption des profils ; les lectures administratives restent soumises à leurs droits et les jetons restent exclus.
+- Les créations et modifications génériques qui perdent une course sur une contrainte SQL d’unicité reçoivent HTTP 409 `unique_conflict`, sans exposer le nom de l’index, la table ni la valeur concurrente.
+- La ligne et l’audit du perdant restent annulés atomiquement. Les erreurs de contrainte non reconnues conservent leur réponse générique ; aucune erreur SQL privée n’est renvoyée.
+- Aucun changement de schéma ni migration. Après publication de la release, utiliser `lite upgrade`, puis reconstruire l’application.
+
 ## 0.15.9 — Analytics sans relance après refus d’accès
 
 - Le buffer d’analytics abandonne les lots refusés avec HTTP 401 ou 403 au lieu de les remettre en file et de répéter les requêtes.

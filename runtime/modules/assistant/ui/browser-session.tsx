@@ -16,7 +16,7 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
   }
   useEffect(()=>{
     // A fresh identity per document prevents duplicated tabs sharing a lease.
-    const windowId=crypto.randomUUID();identity.current=windowId;setId(windowId);
+    const windowId=identity.current||crypto.randomUUID();identity.current=windowId;setId(windowId);
     const phone=/Android.*Mobile|iPhone|iPod/i.test(navigator.userAgent)||(window.matchMedia('(pointer: coarse)').matches&&Math.min(screen.width,screen.height)<600);
     setMobile(phone);
     let stopped=false,ws:WebSocket|undefined,pollTimer:ReturnType<typeof setTimeout>|undefined,wsTimer:ReturnType<typeof setInterval>|undefined,watch:ReturnType<typeof setInterval>|undefined;
@@ -64,14 +64,28 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
   },[attempt]);
   return <Context.Provider value={{windowId:id,mobile,ready,state,error,takeover:()=>{takeover.current=!error;workspace.current=undefined;setReady(false);setAttempt(n=>n+1);},report}}>{children}</Context.Provider>;
 }
+function BrowserInterruption({session}:{session:Session}) {
+  const dialog=useRef<HTMLDialogElement>(null);
+  useEffect(()=>{
+    const element=dialog.current;if(!element)return;
+    const stopEscape=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();}};
+    window.addEventListener('keydown',stopEscape,true);
+    if(!element.open)element.showModal();
+    return()=>{window.removeEventListener('keydown',stopEscape,true);if(element.open)element.close();};
+  },[]);
+  return <dialog ref={dialog} data-lite-assistant-ui aria-labelledby="lite-browser-interruption-title" style={{pointerEvents:'auto'}} onPointerDown={event=>event.stopPropagation()} onCancel={event=>event.preventDefault()} className="m-0 h-dvh max-h-none w-screen max-w-none border-0 bg-slate-50 p-6 backdrop:bg-slate-950/40">
+    <div className="flex h-full items-center justify-center"><div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm" role="status">
+      <h1 id="lite-browser-interruption-title" className="text-xl font-semibold text-slate-900">{!session.ready?'Connexion à votre espace…':session.error?'Connexion interrompue':'Une autre fenêtre est active'}</h1>
+      {session.ready&&<><p className="mt-3 text-base text-slate-600">{session.error||'Vous pouvez continuer ici. L’autre fenêtre sera mise en pause.'}</p><button type="button" autoFocus className="mt-5 rounded-lg bg-slate-900 px-4 py-3 text-base text-white" onClick={session.takeover}>{session.error?'Réessayer la connexion':'Continuer dans cette fenêtre'}</button></>}
+    </div></div>
+  </dialog>;
+}
 export function BrowserWindowGate({children}:{children:ReactNode}) {
   const session=useBrowserSession();if(!session)return <>{children}</>;
+  const inactive=!session.ready||!session.state.active;
   return <>
     {!session.mobile&&<div hidden={!session.state.active} inert={!session.state.active}>{children}</div>}
-    {(!session.ready||!session.state.active)&&<div data-lite-assistant-ui className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-50 p-6"><div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm" role="status">
-      <h1 className="text-xl font-semibold text-slate-900">{!session.ready?'Connexion à votre espace…':session.error?'Connexion interrompue':'Une autre fenêtre est active'}</h1>
-      {session.ready&&<><p className="mt-3 text-base text-slate-600">{session.error||'Vous pouvez continuer ici. L’autre fenêtre sera mise en pause.'}</p><button className="mt-5 rounded-lg bg-slate-900 px-4 py-3 text-base text-white" onClick={session.takeover}>{session.error?'Réessayer la connexion':'Continuer dans cette fenêtre'}</button></>}
-    </div></div>}
+    {inactive&&<BrowserInterruption session={session}/>}
   </>;
 }
 export function BrowserConnectionStatus(){
