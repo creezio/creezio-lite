@@ -1,6 +1,6 @@
 {
   "name": "lite",
-  "version": "0.15.8",
+  "version": "0.15.9",
   "private": true,
   "type": "module",
   "description": "Socle autonome de logiciels métier pour GPT Sites",
