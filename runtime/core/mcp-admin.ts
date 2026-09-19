@@ -1,21 +1,23 @@
-import type { ApiContext, Workspace } from './types.ts';
+import type { ApiContext, Workspace, McpPolicyDeclaration } from './types.ts';
 import type { Operation } from './operations.ts';
 import { operationTool, type ToolBinding } from './tools.ts';
 import { fail, requireRole } from './validation.ts';
 import { json, readJson } from './http.ts';
 
-export async function toolBindings(c:ApiContext,org:Workspace,operations:Operation[]):Promise<ToolBinding[]>{
+export async function toolBindings(c:ApiContext,org:Workspace,operations:Operation[],defaults?:McpPolicyDeclaration,profileIds:readonly string[]=[]):Promise<ToolBinding[]>{
   const [policies,custom]=await c.env.DB.batch<Record<string,any>>([
     c.env.DB.prepare('SELECT name,enabled,version FROM lite_mcp_policies WHERE org_id=?').bind(org.id),
     c.env.DB.prepare('SELECT name,operation_id,description FROM lite_mcp_tools WHERE org_id=?').bind(org.id),
   ]);
   const definitions=[...operations.filter(op=>op.mcp).map(op=>({name:op.toolName,operationId:op.id,description:op.description,custom:false})),...custom.results.filter(t=>operations.some(op=>op.id===t.operation_id&&op.mcp)).map(t=>({name:String(t.name),operationId:String(t.operation_id),description:String(t.description),custom:true}))];
-  return definitions.map(tool=>{const policy=policies.results.find(p=>p.name===tool.name);return {...tool,enabled:policy?Boolean(policy.enabled):true,version:Number(policy?.version??0)};});
+  const configured=defaults?.profiles?[...new Set(profileIds.flatMap(id=>[...(defaults.profiles?.[id]??[])]))]:defaults?.defaultEnabledToolNames;
+  const enabledByDefault=configured?new Set(configured):null;
+  return definitions.map(tool=>{const policy=policies.results.find(p=>p.name===tool.name);return {...tool,enabled:policy?Boolean(policy.enabled):enabledByDefault?enabledByDefault.has(tool.name):true,version:Number(policy?.version??0)};});
 }
-export async function mcpAdminRoute(request:Request,c:ApiContext,org:Workspace,operations:Operation[]):Promise<Response|null>{
+export async function mcpAdminRoute(request:Request,c:ApiContext,org:Workspace,operations:Operation[],defaults?:McpPolicyDeclaration):Promise<Response|null>{
   const url=new URL(request.url),path=url.pathname.replace('/api/v1/','');if(!path.startsWith('admin/mcp/'))return null;
   requireRole(org.role,['owner','admin']);const db=c.env.DB;
-  const bindings=await toolBindings(c,org,operations);
+  const bindings=await toolBindings(c,org,operations,defaults,c.access?.snapshot.observedProfileIds);
   const audit=(action:string,id:string)=>db.prepare('INSERT INTO lite_audit(id,org_id,user_id,action,resource_id,details,created_at) VALUES(?,?,?,?,?,?,?)').bind(crypto.randomUUID(),org.id,c.identity!.userId,action,id,'{}',new Date().toISOString());
   if(path==='admin/mcp/tools'&&request.method==='GET')return json({tools:bindings.map(t=>{const op=operations.find(o=>o.id===t.operationId)!,tool=operationTool(op,async()=>({}),t);return {...t,category:op.moduleName,access:op.method==='GET'?'read':'write',requiredScope:op.method==='GET'?'read':'write',allowedRoles:op.roles,annotations:tool.annotations,inputSchema:tool.inputSchema,method:op.method,path:op.path};}),operations:operations.map(op=>({id:op.id,description:op.description,method:op.method,path:op.path,moduleName:op.moduleName,mcp:op.mcp,mcpReason:op.mcpReason}))});
   if(path==='admin/mcp/tools'&&request.method==='POST'){
@@ -58,7 +60,7 @@ export async function mcpAdminRoute(request:Request,c:ApiContext,org:Workspace,o
   }
   if(path==='admin/mcp/diagnostics'||path==='admin/mcp/diagnostics/export'){
     const checks=[{id:'oauth',ok:Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='lite_oauth_tokens'").first()),message:'OAuth disponible avec autorisation et révocation des connexions'},{id:'database',ok:Boolean(await db.prepare('SELECT id FROM lite_orgs WHERE id=?').bind(org.id).first()),message:'Base de données accessible'},{id:'catalog',ok:operations.every(o=>o.description&&o.id),message:'Catalogue des opérations documenté'},{id:'bindings',ok:bindings.every(t=>operations.some(o=>o.id===t.operationId)),message:'Chaque outil est rattaché à une API'},{id:'access',ok:true,message:'Droits contrôlés à chaque appel HTTP et MCP'}];
-    const response=json({healthy:checks.every(c=>c.ok),checks,version:'0.15.7',operations:operations.length,tools:bindings.length});if(path.endsWith('/export'))response.headers.set('Content-Disposition','attachment; filename="lite-mcp-diagnostic.json"');return response;
+    const response=json({healthy:checks.every(c=>c.ok),checks,version:'0.15.8',operations:operations.length,tools:bindings.length});if(path.endsWith('/export'))response.headers.set('Content-Disposition','attachment; filename="lite-mcp-diagnostic.json"');return response;
   }
   if(path==='admin/mcp/metrics'){
     const rows=(await db.prepare("SELECT status,duration_ms,detail_json FROM lite_request_logs WHERE org_id=? AND source='mcp' ORDER BY created_at DESC LIMIT 1000").bind(org.id).all<{status:number;duration_ms:number;detail_json:string}>()).results;

@@ -1,5 +1,10 @@
 # Versions de Lite
 
+## 0.15.8 — Outils de chat sélectionnés par profil
+
+- Les applications peuvent définir un ensemble d’outils MCP actif par défaut pour chaque profil d’accès observé côté serveur. Les réglages administrateur enregistrés restent prioritaires ; les permissions et les espaces restent contrôlés à chaque appel.
+- Le chat natif reçoit des instructions et une sélection d’outils propres au métier. La recherche et l’appel différés remplacent la troncature silencieuse des catalogues dépassant la limite fournisseur, avec revalidation du schéma final et des droits actuels.
+- Sans configuration applicative, les defaults MCP existants restent inchangés. Aucune migration de base ni nouvelle clé n’est requise. Voir docs/ASSISTANT-TOOLS.md.
 ## 0.15.7 — Assistant adapté à la largeur disponible
 
 - Le shell et le widget partagent les modes docké, superposé et plein écran. Un panneau docké conserve au moins 640px de contenu après la sidebar ; sinon il se superpose sans padding droit.
