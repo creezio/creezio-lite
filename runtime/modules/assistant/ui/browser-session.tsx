@@ -15,6 +15,11 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
     try{await fetch('/api/v1/assistant/browser/events',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({windowId:identity.current,event,...fields}),keepalive:true});}catch{}
   }
   useEffect(()=>{
+    const release=()=>{const windowId=identity.current;if(!windowId)return;try{navigator.sendBeacon('/api/v1/assistant/browser/release',new Blob([JSON.stringify({windowId})],{type:'application/json'}));}catch{}};
+    window.addEventListener('pagehide',release);
+    return()=>{window.removeEventListener('pagehide',release);release();};
+  },[]);
+  useEffect(()=>{
     // A fresh identity per document prevents duplicated tabs sharing a lease.
     const windowId=identity.current||crypto.randomUUID();identity.current=windowId;setId(windowId);
     const phone=/Android.*Mobile|iPhone|iPod/i.test(navigator.userAgent)||(window.matchMedia('(pointer: coarse)').matches&&Math.min(screen.width,screen.height)<600);
@@ -42,7 +47,7 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
     async function start(){
       try{
         const initial=await post('connect',{kind:phone?'controller':'desktop',takeover:takeover.current});takeover.current=false;
-        if(stopped){release();return;}
+        if(stopped)return;
         receive(initial);if(!initial.active)return;
         try{
           const url=new URL('/api/v1/assistant/browser/socket',window.location.href);url.protocol=url.protocol==='https:'?'wss:':'ws:';url.searchParams.set('windowId',windowId);if(initial.workspaceId)url.searchParams.set('workspace',initial.workspaceId);
@@ -57,10 +62,9 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
     }
     const onError=(event:ErrorEvent)=>void report('browser.error',{code:event.error?.name??'Error'});
     const onRejection=(event:PromiseRejectionEvent)=>void report('browser.rejection',{code:event.reason?.name??'Error'});
-    const release=()=>{try{navigator.sendBeacon('/api/v1/assistant/browser/release',new Blob([JSON.stringify({windowId})],{type:'application/json'}));}catch{}};
-    window.addEventListener('error',onError);window.addEventListener('unhandledrejection',onRejection);window.addEventListener('pagehide',release);
+    window.addEventListener('error',onError);window.addEventListener('unhandledrejection',onRejection);
     void start();
-    return()=>{stopped=true;controller.abort();if(pollTimer)clearTimeout(pollTimer);if(wsTimer)clearInterval(wsTimer);if(watch)clearInterval(watch);ws?.close();release();window.removeEventListener('error',onError);window.removeEventListener('unhandledrejection',onRejection);window.removeEventListener('pagehide',release);};
+    return()=>{stopped=true;controller.abort();if(pollTimer)clearTimeout(pollTimer);if(wsTimer)clearInterval(wsTimer);if(watch)clearInterval(watch);ws?.close();window.removeEventListener('error',onError);window.removeEventListener('unhandledrejection',onRejection);};
   },[attempt]);
   return <Context.Provider value={{windowId:id,mobile,ready,state,error,takeover:()=>{takeover.current=!error;workspace.current=undefined;setReady(false);setAttempt(n=>n+1);},report}}>{children}</Context.Provider>;
 }
@@ -69,11 +73,14 @@ function BrowserInterruption({session}:{session:Session}) {
   useEffect(()=>{
     const element=dialog.current;if(!element)return;
     const stopEscape=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();}};
+    // Intercept before document-level Radix listeners, including document hydration roots.
+    const stopPointerDown=(event:PointerEvent)=>event.stopPropagation();
+    element.addEventListener('pointerdown',stopPointerDown);
     window.addEventListener('keydown',stopEscape,true);
     if(!element.open)element.showModal();
-    return()=>{window.removeEventListener('keydown',stopEscape,true);if(element.open)element.close();};
+    return()=>{element.removeEventListener('pointerdown',stopPointerDown);window.removeEventListener('keydown',stopEscape,true);if(element.open)element.close();};
   },[]);
-  return <dialog ref={dialog} data-lite-assistant-ui aria-labelledby="lite-browser-interruption-title" style={{pointerEvents:'auto'}} onPointerDown={event=>event.stopPropagation()} onCancel={event=>event.preventDefault()} className="m-0 h-dvh max-h-none w-screen max-w-none border-0 bg-slate-50 p-6 backdrop:bg-slate-950/40">
+  return <dialog ref={dialog} data-lite-assistant-ui aria-labelledby="lite-browser-interruption-title" style={{pointerEvents:'auto'}} onCancel={event=>event.preventDefault()} className="m-0 h-dvh max-h-none w-screen max-w-none border-0 bg-slate-50 p-6 backdrop:bg-slate-950/40">
     <div className="flex h-full items-center justify-center"><div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm" role="status">
       <h1 id="lite-browser-interruption-title" className="text-xl font-semibold text-slate-900">{!session.ready?'Connexion à votre espace…':session.error?'Connexion interrompue':'Une autre fenêtre est active'}</h1>
       {session.ready&&<><p className="mt-3 text-base text-slate-600">{session.error||'Vous pouvez continuer ici. L’autre fenêtre sera mise en pause.'}</p><button type="button" autoFocus className="mt-5 rounded-lg bg-slate-900 px-4 py-3 text-base text-white" onClick={session.takeover}>{session.error?'Réessayer la connexion':'Continuer dans cette fenêtre'}</button></>}

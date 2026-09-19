@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.15.11
+
+- Les reprises conservent le bail du document : seul le départ de page ou le démontage du provider le libère. Un nettoyage de tentative ou une réponse connect obsolète ne peut plus supprimer le nouveau bail de la même fenêtre.
+- Le garde de session intercepte pointerdown directement sur le dialog natif, avant les écouteurs document de Radix. La reprise au pointeur conserve ainsi les modales et leurs brouillons aussi dans les applications hydratées sur document.
+- La régression vérifie l’installation et le nettoyage de cet écouteur ; la recette sur WinHub confirme la conservation du formulaire après Escape, pointerdown, pointerup et clic de reprise.
+
 ## 0.15.10 — Sessions, analytics essentiels et conflits d’unicité
 
 - Le garde de session navigateur utilise la top layer native, reste actionnable au-dessus d’une modale applicative et conserve le brouillon pendant la reprise de main.
