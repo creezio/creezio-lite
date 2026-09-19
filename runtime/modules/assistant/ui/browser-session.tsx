@@ -15,6 +15,11 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
     try{await fetch('/api/v1/assistant/browser/events',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({windowId:identity.current,event,...fields}),keepalive:true});}catch{}
   }
   useEffect(()=>{
+    const release=()=>{const windowId=identity.current;if(!windowId)return;try{navigator.sendBeacon('/api/v1/assistant/browser/release',new Blob([JSON.stringify({windowId})],{type:'application/json'}));}catch{}};
+    window.addEventListener('pagehide',release);
+    return()=>{window.removeEventListener('pagehide',release);release();};
+  },[]);
+  useEffect(()=>{
     // A fresh identity per document prevents duplicated tabs sharing a lease.
     const windowId=identity.current||crypto.randomUUID();identity.current=windowId;setId(windowId);
     const phone=/Android.*Mobile|iPhone|iPod/i.test(navigator.userAgent)||(window.matchMedia('(pointer: coarse)').matches&&Math.min(screen.width,screen.height)<600);
@@ -42,7 +47,7 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
     async function start(){
       try{
         const initial=await post('connect',{kind:phone?'controller':'desktop',takeover:takeover.current});takeover.current=false;
-        if(stopped){release();return;}
+        if(stopped)return;
         receive(initial);if(!initial.active)return;
         try{
           const url=new URL('/api/v1/assistant/browser/socket',window.location.href);url.protocol=url.protocol==='https:'?'wss:':'ws:';url.searchParams.set('windowId',windowId);if(initial.workspaceId)url.searchParams.set('workspace',initial.workspaceId);
@@ -57,10 +62,9 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
     }
     const onError=(event:ErrorEvent)=>void report('browser.error',{code:event.error?.name??'Error'});
     const onRejection=(event:PromiseRejectionEvent)=>void report('browser.rejection',{code:event.reason?.name??'Error'});
-    const release=()=>{try{navigator.sendBeacon('/api/v1/assistant/browser/release',new Blob([JSON.stringify({windowId})],{type:'application/json'}));}catch{}};
-    window.addEventListener('error',onError);window.addEventListener('unhandledrejection',onRejection);window.addEventListener('pagehide',release);
+    window.addEventListener('error',onError);window.addEventListener('unhandledrejection',onRejection);
     void start();
-    return()=>{stopped=true;controller.abort();if(pollTimer)clearTimeout(pollTimer);if(wsTimer)clearInterval(wsTimer);if(watch)clearInterval(watch);ws?.close();release();window.removeEventListener('error',onError);window.removeEventListener('unhandledrejection',onRejection);window.removeEventListener('pagehide',release);};
+    return()=>{stopped=true;controller.abort();if(pollTimer)clearTimeout(pollTimer);if(wsTimer)clearInterval(wsTimer);if(watch)clearInterval(watch);ws?.close();window.removeEventListener('error',onError);window.removeEventListener('unhandledrejection',onRejection);};
   },[attempt]);
   return <Context.Provider value={{windowId:id,mobile,ready,state,error,takeover:()=>{takeover.current=!error;workspace.current=undefined;setReady(false);setAttempt(n=>n+1);},report}}>{children}</Context.Provider>;
 }
