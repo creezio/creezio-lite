@@ -34,7 +34,7 @@ const RUNTIME_ERROR_CODES=[
   'preferences_too_large','provider_auth','provider_failure','provider_interrupted','provider_limit','provider_model','provider_quota','provider_redirect','provider_response','provider_stream','provider_timeout',
   'provider_tool','provider_unavailable','provider_unknown','provider_unreachable','query_too_long','read_only_token','record_not_found','required_field','round_limit','sender_required','service_unavailable',
   'setup_required','sites_identity','slug_exists','storage_unavailable','sync_busy','system_group','task_not_found','temporarily_unavailable','token_scope','token_workspace','too_many_terms','tool_exists',
-  'tool_forbidden','tool_limit','tool_not_found','transcription_failed','trash_required','ui_action_closed','ui_forbidden','ui_run_closed','ui_target_required','unknown_field','unknown_nav_entry','unknown_operation',
+  'tool_forbidden','tool_limit','tool_not_found','transcription_failed','trash_required','ui_action_closed','ui_forbidden','ui_run_closed','ui_target_required','unique_conflict','unknown_field','unknown_nav_entry','unknown_operation',
   'unreadable','unsupported_grant_type','unsupported_patch','unsupported_response_type','unsupported_test','vault_unavailable','version_conflict','version_required','websocket_required','websocket_unavailable',
   'window_inactive','workspace_limit','workspace_not_found',
 ] as const;

@@ -122,6 +122,7 @@ test('validateAccessDeclaration refuses empty lists, duplicates, module:/essenti
   throws(body => { body.capabilities[0].operations = ['module:clients']; }, 'module_operation');
   throws(body => { body.capabilities[0].operations = ['modules.list']; }, 'essential_operation');
   throws(body => { body.capabilities[0].operations = ['session.me']; }, 'essential_operation');
+  throws(body => { body.capabilities[0].operations = ['analytics.ingest']; }, 'essential_operation');
   throws(body => { body.capabilities.push({ id: 'fx_missing_op', operations: ['fx.unknown.op'] }); }, 'unknown_operation');
   throws(body => { body.profiles[0].capabilities = ['fx_absent']; }, 'unknown_capability');
   throws(body => { body.profiles[0].id = 'role:member'; }, 'role_group');
@@ -133,7 +134,7 @@ test('validateAccessDeclaration refuses empty lists, duplicates, module:/essenti
 });
 
 test('legacy decisions match operationAllowed on real kit operations (owner deny bypass, essential, allow inert)', () => {
-  const ops = ['module.clients.list', 'module.clients.create', 'files.list', 'access.catalog', 'modules.list', 'session.me', 'core.health', 'search.query'];
+  const ops = ['module.clients.list', 'module.clients.create', 'files.list', 'access.catalog', 'modules.list', 'session.me', 'core.health', 'analytics.ingest', 'search.query'];
   const roles = ['owner', 'admin', 'member', 'viewer'];
   const denialSets = [
     [],
@@ -293,6 +294,23 @@ test('negative rights table: adopted, incomplete and legacy stay fail-closed', (
       allowed: true, reason: 'allowed',
     },
     {
+      name: 'analytics ingest remains callable without an app capability after adoption',
+      over: {
+        snapshot: snapshot('adopted', { observedProfileIds: [] }), receipt: receipt({ bindings: [] }),
+        principal: principal('member'), query: { kind: 'operation', operationId: 'analytics.ingest' },
+        denials: [{ operationId: 'module:observability', effect: 'deny' }],
+      },
+      allowed: true, reason: 'allowed',
+    },
+    {
+      name: 'analytics admin reads remain outside the transport envelope',
+      over: {
+        snapshot: snapshot('adopted', { observedProfileIds: [] }), receipt: receipt({ bindings: [] }),
+        principal: principal('member'), query: { kind: 'operation', operationId: 'analytics.overview' },
+      },
+      allowed: false, reason: 'denied_role',
+    },
+    {
       name: 'legacy snapshot with a declaration present never falls back to permissive legacy',
       over: { snapshot: snapshot('legacy', { catalogRevision: null, receiptRevision: null, observedProfileIds: [] }) },
       allowed: false, reason: 'denied_conflict',
@@ -377,6 +395,15 @@ test('read credential cannot write; tokenAllowed false is denied_credential; ses
   const readToken = tokenCredential({ tokenId: 'fx_token_read', workspaceId: WS, mode: 'read' });
   const writeToken = tokenCredential({ tokenId: 'fx_token_write', workspaceId: WS, mode: 'write' });
   const readOauth = oauthCredential({ tokenId: 'fx_oauth', grantId: 'fx_grant', clientId: 'fx_client', workspaceId: WS, mode: 'read' });
+  const analyticsToken = decide({
+    principal: principal('member', { credential: 'token' }),
+    credential: writeToken,
+    query: { kind: 'operation', operationId: 'analytics.ingest' },
+    snapshot: snapshot('adopted', { observedProfileIds: [] }),
+    receipt: receipt({ bindings: [] }),
+  });
+  assert.equal(analyticsToken.allowed, false);
+  assert.equal(analyticsToken.reason, 'denied_credential');
   const writeList = decide({
     principal: principal('member', { credential: 'token' }),
     credential: readToken,

@@ -24,10 +24,15 @@ test('UI: temporary connection failure retries manually without taking over anot
   await act(async()=>{instance=create(React.createElement(BrowserSessionProvider,null,React.createElement(BrowserWindowGate,null,'Protected content')));});
   const button=()=>instance.root.findByType('button');
   assert.equal(button().children.join(''),'Réessayer la connexion');
+  const gate=instance.root.findByProps({'data-lite-assistant-ui':true});
+  assert.equal(gate.type,'dialog','session interruption uses the browser top layer instead of guessing an open app dialog');
+  assert.equal(button().props.type,'button');assert.equal(button().props.autoFocus,true);
+  let cancelPrevented=false;gate.props.onCancel({preventDefault(){cancelPrevented=true;}});assert.equal(cancelPrevented,true,'Escape cannot expose inactive form controls');
   assert.match(JSON.stringify(instance.toJSON()),/Connexion momentanément indisponible/);
   assert.doesNotMatch(JSON.stringify(instance.toJSON()),/worker restarted|SyntaxError/);
   await act(async()=>{button().props.onClick();});
   assert.equal(attempts.length,2);assert.equal(attempts[1].takeover,false);
+  assert.equal(attempts[1].windowId,attempts[0].windowId,'a manual retry keeps the document lease identity');
   assert.equal(button().children.join(''),'Continuer dans cette fenêtre');
   await act(async()=>{button().props.onClick();});
   assert.equal(attempts[2].takeover,true,'takeover requires explicit action on a confirmed competing-window state');

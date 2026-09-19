@@ -20,6 +20,17 @@ function label(value: unknown, max = 100) {
   return value.trim();
 }
 function version(value: unknown) { if (!Number.isInteger(value) || Number(value) < 1) fail(400, 'version_required', 'La version du document est obligatoire.'); return Number(value); }
+function rethrowRecordWriteError(error: unknown): never {
+  let current:unknown=error;
+  for(let depth=0;depth<4&&current instanceof Error;depth++){
+    const sqlite=current as Error&{code?:unknown;errcode?:unknown;cause?:unknown};
+    if(sqlite.code==='SQLITE_CONSTRAINT_UNIQUE'||sqlite.errcode===2067||/\bD1_ERROR:\s*UNIQUE constraint failed\b/i.test(sqlite.message)){
+      fail(409,'unique_conflict','Une valeur devant être unique est déjà utilisée. Corrigez le champ concerné ou ouvrez le document existant.');
+    }
+    current=sqlite.cause;
+  }
+  throw error;
+}
 function audit(db: D1Database, org: string, user: string, action: string, resource: string, details: unknown = {}, condition = '') {
   return db.prepare(`INSERT INTO lite_audit (id, org_id, user_id, action, resource_id, details, created_at) SELECT ?,?,?,?,?,?,? ${condition}`)
     .bind(uuid(), org, user, action, resource, JSON.stringify(details), timestamp());
@@ -221,7 +232,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         await commitRequestAccessBatch(db,access,[
           db.prepare('INSERT INTO lite_records(id,org_id,module_id,data,search_text,version,created_by,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?,?)').bind(recordId,org.id,mod.id,JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),user.userId,now,now),
           audit(db,org.id,user.userId,`${mod.id}.create`,recordId),
-        ]);return json({record:await getRecord(db,org.id,mod.id,recordId,scoped)},201);
+        ]).catch(rethrowRecordWriteError);return json({record:await getRecord(db,org.id,mod.id,recordId,scoped)},201);
       }
       if(request.method==='PATCH' && id) {
         // A read grant never suffices for a write: the target must be in write scope.
@@ -233,7 +244,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         const result=await commitRequestAccessBatch(db,access,[
           db.prepare(`UPDATE lite_records SET data=?,search_text=?,version=version+1,updated_at=? WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM lite_records r WHERE r.id=lite_records.id AND ${writeFilter.sql})`).bind(JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),timestamp(),id,org.id,mod.id,expected,...writeFilter.bindings),
           audit(db,org.id,user.userId,`${mod.id}.update`,id,{},'WHERE changes()=1'),
-        ]);
+        ]).catch(rethrowRecordWriteError);
         if(!result[0].meta.changes) fail(409,'version_conflict','Ce document a été modifié. Rechargez-le.');
         return json({record:await getRecord(db,org.id,mod.id,id,scoped)});
       }
