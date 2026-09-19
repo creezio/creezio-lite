@@ -137,7 +137,7 @@ export async function flushUsageAnalytics(): Promise<void> {
       body: JSON.stringify({ events: batch }),
       keepalive: true,
     });
-    if (!res.ok) {
+    if (!res.ok && res.status !== 401 && res.status !== 403) {
       queue = [...batch, ...queue].slice(0, MAX_QUEUE);
     }
   } catch {
