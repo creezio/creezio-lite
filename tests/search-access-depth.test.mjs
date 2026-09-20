@@ -7,6 +7,7 @@ import {coreOperations} from '../runtime/core/operations.ts';
 import {searchData,searchSelection} from '../runtime/core/search.ts';
 import {createRequestAccessContext,disposeRequestAccessContext} from '../runtime/core/access-profiles-store.ts';
 import {resolveScope} from '../runtime/core/scope.ts';
+import {dataTools} from '../runtime/core/tools.ts';
 
 test('D1 materializes deep access predicates without changing visibility, ranking or counts',async t=>{
  const local=await localDatabase();let access;
@@ -29,6 +30,7 @@ test('D1 materializes deep access predicates without changing visibility, rankin
   access=await fresh();
   const provider=deep=>({recordFilter(_p,ref){const column=ref.alias+'.'+ref.idColumn;return {sql:deep?'('+Array(60).fill(column+' IS NULL').join(' OR ')+' OR '+column+'<>?)':column+'<>?',bindings:[hidden]};},fileFilter(_p,ref){const column=ref.alias+'.'+ref.idColumn;return{sql:deep?'('+Array(60).fill(column+' IS NULL').join(' OR ')+' OR '+column+'<>?)':column+'<>?',bindings:['file-hidden']};}});
   const options=deep=>({scope:resolveScope(provider(deep),access),principal,access});
+  const deepClient=client(db,alice,undefined,app,{access:declaration,scope:provider(true)});
   const meter={queries:[]};const measured={prepare(sql){const statement=db.prepare(sql);return{bind(...values){meter.queries.push({chars:sql.length,bindings:values.length});return statement.bind(...values);}};},batch:statements=>db.batch(statements)};
   const started=performance.now();
   for(const [query,extra]of [['Alpha',{}],['Alpha shared',{}],['Alpha',{moduleId:'clients'}],['Alpha',{limit:1,offset:1}],[visible,{moduleId:'audit'}],['secret-orphan',{}],['secret',{}]]){
@@ -37,6 +39,13 @@ test('D1 materializes deep access predicates without changing visibility, rankin
    assert.deepEqual(actual,expected,query+JSON.stringify(extra));assert.equal(JSON.stringify(actual).includes(hidden),false);assert.equal(actual.items.some(x=>x.id==='file-hidden'||x.id==='orphan-audit'||x.id==='foreign-audit'||x.id===foreign.body.record.id),false);
   }
   const records=await searchData(db,app,workspace,'Alpha',{...options(true),moduleId:'clients'});assert.equal(records.total,2);assert.equal(records.items[0].id,visible);assert.ok(records.items.some(x=>x.id===other));
+  const apiFound=await deepClient(`modules/clients/records?q=Alpha&workspace=${org}`);assert.equal(apiFound.status,200,JSON.stringify(apiFound.body));assert.equal(apiFound.body.total,2);assert.equal(apiFound.body.items.some(x=>x.id===hidden),false);
+  const apiPage=await deepClient(`modules/clients/records?q=Alpha&limit=1&offset=1&workspace=${org}`);assert.equal(apiPage.status,200,JSON.stringify(apiPage.body));assert.equal(apiPage.body.total,2);assert.equal(apiPage.body.items.length,1);assert.notEqual(apiPage.body.items[0].id,hidden);
+  const apiEmpty=await deepClient(`modules/clients/records?q=absent&workspace=${org}`);assert.equal(apiEmpty.status,200,JSON.stringify(apiEmpty.body));assert.equal(apiEmpty.body.total,0);
+  const apiFiltered=await deepClient(`modules/clients/records?q=Alpha&field=name&value=${encodeURIComponent('Alpha visible')}&workspace=${org}`);assert.equal(apiFiltered.status,200,JSON.stringify(apiFiltered.body));assert.deepEqual(apiFiltered.body.items.map(x=>x.id),[visible]);
+  const toolApi=async(path,init={})=>{const result=await deepClient(path+(path.includes('?')?'&':'?')+'workspace='+org,{method:init.method,body:init.body===undefined?undefined:JSON.parse(init.body)});if(result.status>=400)throw new Error(JSON.stringify(result.body));return result.body;};
+  const listTool=dataTools(app,'owner',toolApi).find(tool=>tool.name==='lite_clients_list');assert.ok(listTool);
+  const mcpFound=await listTool.execute({query:'Alpha'});assert.equal(mcpFound.total,2);assert.equal(mcpFound.items.some(x=>x.id===hidden),false);
   const audits=await searchData(db,app,workspace,visible,{...options(true),moduleId:'audit'});assert.equal(audits.total,2);assert.equal(new Set(audits.items.map(x=>x.id)).size,2);
   const selection=await searchSelection(db,app,workspace,'',{...options(true)});assert.deepEqual(selection.bindings,[]);
   t.diagnostic(JSON.stringify({elapsedMs:Math.round(performance.now()-started),maxSqlChars:Math.max(...meter.queries.map(q=>q.chars)),maxBindings:Math.max(...meter.queries.map(q=>q.bindings)),deepOrTerms:60}));

@@ -96,7 +96,7 @@ function searchScope(app:AppDefinition,org:Workspace,options:SearchOptions):SqlF
   return {ctes,sql:'d.id IN (SELECT id FROM search_visible_documents)',bindings:[org.id,...auditRecords.bindings,org.id,...auditFiles.bindings,org.id,...audit.recovery.bindings,org.id,...audit.records.bindings,org.id,...audit.files.bindings,org.id,org.id,org.id,...records.bindings]};
 }
 
-export async function searchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:SearchOptions={}) {
+async function buildSearchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:SearchOptions,applyScope:boolean) {
   const terms=searchTerms(query);
   const context=await searchContext(db,app,org.id);
   const policies=context.policies.filter(m=>m.readRoles.includes(org.role)&&canReadModule(org,m.id,options.access)&&m.search.enabled&&m.search.fields.length&&(!options.moduleId||options.moduleId===m.id));
@@ -104,9 +104,10 @@ export async function searchSelection(db:D1Database,app:AppDefinition,org:Worksp
   if(!terms.length||!policies.length)return {cte:'WITH ranked AS (SELECT id,0 AS score FROM lite_search_documents WHERE 0)',bindings:[],policies,indexing};
   // Policy filtering happens inside the query, before counts, excerpts and pagination.
   // One FTS row per field lets an administrator remove a field immediately.
-  // The scope is evaluated in the same place: an out-of-scope document never becomes a match.
-  // Documents of the files index obey fileFilter, exactly like the native files routes; every other index obeys recordFilter.
-  const scope=searchScope(app,org,options);
+  // Global search evaluates scope here, before ranking and counts. The business
+  // records route applies its equivalent record scope once in the outer query.
+  // Documents of the files index obey fileFilter; every other global index obeys recordFilter.
+  const scope=applyScope?searchScope(app,org,options):{sql:'1=1',bindings:[]};
   const allowed=JSON.stringify(policies.flatMap(m=>m.search.fields.map(field=>({module:m.id,field,title:field===m.titleField?1:0}))));
   const matches=`SELECT d.id,CAST(t.key AS INTEGER) AS term,CAST(json_extract(p.value,'$.title') AS INTEGER) AS title_match
     FROM json_each(?) t CROSS JOIN lite_search_fts JOIN lite_search_documents d ON d.id=lite_search_fts.document_id
@@ -117,6 +118,19 @@ export async function searchSelection(db:D1Database,app:AppDefinition,org:Worksp
   return {cte,bindings:[...bindings,terms.length],policies,indexing};
 }
 
+export async function searchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:SearchOptions={}) {
+  return buildSearchSelection(db,app,org,query,options,true);
+}
+
+/**
+ * FTS candidates for one business module. The caller must join these candidates
+ * to workspace/module-bound lite_records and apply recordScope in that same
+ * statement before counts or pagination. Keeping the deep access predicate in
+ * the outer record query avoids duplicating it inside D1's expression tree.
+ */
+export async function searchModuleCandidates(db:D1Database,app:AppDefinition,org:Workspace,query:string,moduleId:string,options:Omit<SearchOptions,'moduleId'>={}) {
+  return buildSearchSelection(db,app,org,query,{...options,moduleId},false);
+}
 export async function searchData(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:SearchOptions={}) {
   const {cte,bindings,policies,indexing}=await searchSelection(db,app,org,query,options);
   const terms=searchTerms(query),limit=options.limit??30,offset=options.offset??0;

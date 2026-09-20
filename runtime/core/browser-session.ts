@@ -10,6 +10,8 @@ export const windowId = (value: unknown) => {
   return value as string;
 };
 type Slot = { window_id:string; kind:string; lease_until:string; path:string };
+// The ISO prefix keeps text comparisons chronological; the opaque suffix makes renew/release a CAS operation.
+const nextLease=()=>`${new Date(Date.now()+LEASE_MS).toISOString()}#${crypto.randomUUID()}`;
 export async function uiLog(c:ApiContext,org:Workspace,event:string,fields:{windowId?:string;actionId?:string;runId?:string;conversationId?:string;code?:string;status?:number;transport?:string;type?:string}={}) {
   // Only protocol metadata: never form text, DOM content, headers or credentials.
   const {windowId,actionId,runId,conversationId,...detail}=fields;
@@ -34,13 +36,13 @@ export async function requireWindow(c:ApiContext,org:Workspace,id:string,desktop
 export async function sessionState(c:ApiContext,org:Workspace,id:string) {
   const rows=(await c.env.DB.prepare('SELECT window_id,kind,lease_until,path FROM lite_browser_sessions WHERE org_id=? AND user_id=? AND lease_until>?').bind(org.id,c.identity!.userId,now()).all<Slot>()).results;
   const mine=rows.find(r=>r.window_id===id),desktop=rows.find(r=>r.kind==='desktop');
-  return {active:Boolean(mine),kind:mine?.kind??null,desktopConnected:Boolean(desktop),desktopPath:desktop?.path??null,leaseMs:LEASE_MS,serverTime:now(),workspaceId:org.id};
+  return {active:Boolean(mine),kind:mine?.kind??null,desktopConnected:Boolean(desktop),desktopPath:desktop?.path??null,leaseMs:LEASE_MS,leaseUntil:mine?.lease_until.split('#')[0]??null,releaseToken:mine?.lease_until??null,serverTime:now(),workspaceId:org.id};
 }
 export async function pollWindow(c:ApiContext,org:Workspace,id:string,path?:string) {
   // Update only an existing, unexpired lease. An old window never takes over automatically.
   const cleanPath=typeof path==='string'&&path.startsWith('/')?path.split('?')[0].slice(0,300):'';
   await c.env.DB.prepare('UPDATE lite_browser_sessions SET lease_until=?,path=CASE WHEN ?=\'\' THEN path ELSE ? END WHERE org_id=? AND user_id=? AND window_id=? AND lease_until>?')
-    .bind(new Date(Date.now()+LEASE_MS).toISOString(),cleanPath,cleanPath,org.id,c.identity!.userId,id,now()).run();
+    .bind(nextLease(),cleanPath,cleanPath,org.id,c.identity!.userId,id,now()).run();
   const state=await sessionState(c,org,id);
   if(!state.active||state.kind!=='desktop')return {...state,actions:[]};
   const rows=await c.env.DB.prepare(`SELECT a.id,a.action_type,a.payload_json,a.expires_at FROM lite_assistant_ui_actions a JOIN lite_assistant_conversations c ON c.id=a.conversation_id
@@ -56,7 +58,7 @@ export async function browserSessionRoute(request:Request,c:ApiContext,org:Works
   const body=await readJson(request),id=windowId(body.windowId);
   if(path==='browser/connect') {
     if(!['desktop','controller'].includes(String(body.kind)))fail(400,'invalid_window_kind','Type de fenêtre invalide.');
-    const until=new Date(Date.now()+LEASE_MS).toISOString();
+    const until=nextLease();
     const changed=await c.env.DB.prepare(`INSERT INTO lite_browser_sessions(org_id,user_id,kind,window_id,lease_until,path) VALUES(?,?,?,?,?,'')
       ON CONFLICT(org_id,user_id,kind) DO UPDATE SET window_id=excluded.window_id,lease_until=excluded.lease_until,path=''
       WHERE lite_browser_sessions.lease_until<=? OR lite_browser_sessions.window_id=excluded.window_id OR ?=1`)
@@ -66,8 +68,10 @@ export async function browserSessionRoute(request:Request,c:ApiContext,org:Works
   }
   if(path==='browser/poll')return json(await pollWindow(c,org,id,typeof body.path==='string'?body.path:undefined));
   if(path==='browser/release') {
-    await c.env.DB.prepare('DELETE FROM lite_browser_sessions WHERE org_id=? AND user_id=? AND window_id=?').bind(org.id,c.identity!.userId,id).run();
-    await uiLog(c,org,'window.released',{windowId:id});return json({ok:true});
+    const releaseToken=typeof body.releaseToken==='string'&&body.releaseToken.length<=120?body.releaseToken:'';
+    if(!releaseToken)fail(400,'invalid_window','Bail de fenêtre invalide.');
+    const released=await c.env.DB.prepare('DELETE FROM lite_browser_sessions WHERE org_id=? AND user_id=? AND window_id=? AND lease_until=?').bind(org.id,c.identity!.userId,id,releaseToken).run();
+    await uiLog(c,org,released.meta.changes?'window.released':'window.release_ignored',{windowId:id});return json({ok:true,released:Boolean(released.meta.changes)});
   }
   if(path==='browser/events') {
     await requireWindow(c,org,id);

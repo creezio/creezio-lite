@@ -47,3 +47,24 @@ test('one desktop and one phone per user/workspace; queued delivery survives unr
   const noDesktop=await dispatchUiAction({app,env:{DB:db},identity:alice},{id:org,role:'owner'},conv,run,()=>{},'click',{ref:'t1-1'},controller.signal);assert.equal(noDesktop.code,'desktop_offline');
  }finally{db.close();}
 });
+
+
+test('reload lease: stale release cannot delete a renewed tab and closing frees the slot',async()=>{
+ const db=await localDb();try{
+  const org=await boot(client(db,alice));
+  const desktop='fixture-reload-window',other='fixture-other-window';
+  const request=async(path,body)=>({body:await dispatchRequest(new Request(`https://test.example/api/v1/assistant/${path}?workspace=${org}`,{method:'POST',headers:{origin:'https://test.example','content-type':'application/json','x-lite-window':body.windowId},body:JSON.stringify(body)}),{app,env:{DB:db},identity:alice}).then(r=>r.json())});
+  const first=(await request('browser/connect',{windowId:desktop,kind:'desktop'})).body;
+  const renewed=(await request('browser/connect',{windowId:desktop,kind:'desktop'})).body;
+  assert.equal(first.active,true);assert.equal(renewed.active,true);
+  assert.notEqual(renewed.releaseToken,first.releaseToken,'each renewal has an unambiguous release token');
+  const stale=(await request('browser/release',{windowId:desktop,releaseToken:first.releaseToken})).body;
+  assert.equal(stale.released,false,'the old document cannot release its replacement');
+  const alive=(await request('browser/poll',{windowId:desktop,path:'/commandes'})).body;
+  assert.equal(alive.active,true,'normal navigation keeps the renewed tab active');
+  assert.equal((await request('browser/connect',{windowId:other,kind:'desktop'})).body.active,false,'a real second window remains blocked');
+  const closed=(await request('browser/release',{windowId:desktop,releaseToken:alive.releaseToken})).body;
+  assert.equal(closed.released,true);
+  assert.equal((await request('browser/connect',{windowId:other,kind:'desktop'})).body.active,true,'closing the active tab frees the slot');
+ }finally{db.close();}
+});

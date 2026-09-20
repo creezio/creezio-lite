@@ -11,17 +11,18 @@ const source=await readFile(new URL('../runtime/modules/assistant/ui/browser-ses
 const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText
  .replaceAll('"react/jsx-runtime"',JSON.stringify(pathToFileURL(deps.resolve('react/jsx-runtime')).href))
  .replaceAll("'react'",JSON.stringify(pathToFileURL(deps.resolve('react')).href))
- .replaceAll("'./browser-session-response'",JSON.stringify(new URL('../runtime/modules/assistant/ui/browser-session-response.ts',import.meta.url).href));
+ .replaceAll("'./browser-session-response'",JSON.stringify(new URL('../runtime/modules/assistant/ui/browser-session-response.ts',import.meta.url).href))
+ .replaceAll("'./browser-session-identity'",JSON.stringify('data:text/javascript;base64,'+Buffer.from("export const claimBrowserWindowIdentity=async()=>({windowId:globalThis.fixtureWindowId??=crypto.randomUUID(),close(){}})").toString('base64')));
 const {BrowserSessionProvider,BrowserWindowGate,useBrowserSession}=await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'));
 
 test('UI: temporary connection failure retries manually without taking over another window',async()=>{
- const names=['window','navigator','screen','WebSocket','fetch','IS_REACT_ACT_ENVIRONMENT'];const saved=new Map(names.map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)]));
+ const names=['window','navigator','screen','WebSocket','fetch','IS_REACT_ACT_ENVIRONMENT','fixtureWindowId'];const saved=new Map(names.map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)]));
  const pendingReleases=[];let leaseActive=false;
  const globals={window:{location:{href:'https://fixture.example/',pathname:'/',reload(){}},matchMedia:()=>({matches:false}),addEventListener(){},removeEventListener(){},dispatchEvent(){}},navigator:{userAgent:'Fixture desktop',sendBeacon:()=>{pendingReleases.push(()=>{leaseActive=false;});return true;}},screen:{width:1400,height:900},WebSocket:class {constructor(){throw Error('Fixture HTTP only')}},IS_REACT_ACT_ENVIRONMENT:true};
  const attempts=[];let instance;
  const dialogListeners=new Map();let dialogClosed=false;
  const nativeDialog={open:false,showModal(){this.open=true;},close(){this.open=false;dialogClosed=true;},addEventListener(type,listener){dialogListeners.set(type,listener);},removeEventListener(type,listener){assert.equal(dialogListeners.get(type),listener);dialogListeners.delete(type);}};
- globals.fetch=async(url,options)=>{const body=JSON.parse(options.body);if(url.endsWith('/connect')){attempts.push(body);if(attempts.length>1)leaseActive=true;return attempts.length===1?new Response('Your worker restarted mid-request.',{status:503}):Response.json({active:false,kind:null,desktopConnected:true});}return Response.json({active:false,kind:null,desktopConnected:true});};
+ globals.fetch=async(url,options)=>{const body=JSON.parse(options.body);if(url.endsWith('/connect')){attempts.push(body);if(attempts.length>1)leaseActive=true;return attempts.length===1?new Response('Your worker restarted mid-request.',{status:503}):Response.json(attempts.length===2?{active:false,kind:null,desktopConnected:true,leaseUntil:null,releaseToken:null}:{active:true,kind:'desktop',desktopConnected:true,leaseUntil:'2099-01-01T00:00:00.000Z',releaseToken:'fixture-lease-current'});}return Response.json({active:true,kind:'desktop',desktopConnected:true,leaseUntil:'2099-01-01T00:00:00.000Z',releaseToken:'fixture-lease-current'});};
  for(const [key,value] of Object.entries(globals))Object.defineProperty(globalThis,key,{value,configurable:true,writable:true});
  try{
   await act(async()=>{instance=create(React.createElement(BrowserSessionProvider,null,React.createElement(BrowserWindowGate,null,'Protected content')),{createNodeMock:element=>element.type==='dialog'?nativeDialog:null});});
@@ -51,10 +52,10 @@ test('UI: temporary connection failure retries manually without taking over anot
 
 
 test('UI: a superseded connect response cannot release the current document lease',async()=>{
- const names=['window','navigator','screen','WebSocket','fetch','IS_REACT_ACT_ENVIRONMENT'];const saved=new Map(names.map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)]));
+ const names=['window','navigator','screen','WebSocket','fetch','IS_REACT_ACT_ENVIRONMENT','fixtureWindowId'];const saved=new Map(names.map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)]));
  let resolveOld,session,instance,connectCount=0;const beacons=[],listeners=new Map();
  const globals={window:{location:{href:'https://fixture.example/',pathname:'/',reload(){}},matchMedia:()=>({matches:false}),addEventListener(type,listener){listeners.set(type,listener);},removeEventListener(type){listeners.delete(type);},dispatchEvent(){}},navigator:{userAgent:'Fixture desktop',sendBeacon:(...args)=>{beacons.push(args);return true;}},screen:{width:1400,height:900},WebSocket:class {static OPEN=1;constructor(){this.readyState=0;}close(){}},IS_REACT_ACT_ENVIRONMENT:true};
- const response=()=>Response.json({active:true,kind:'desktop',desktopConnected:true});
+ const response=()=>Response.json({active:true,kind:'desktop',desktopConnected:true,leaseUntil:'2099-01-01T00:00:00.000Z',releaseToken:'fixture-lease-current'});
  globals.fetch=async(url)=>{if(url.endsWith('/connect')&&++connectCount===1)return new Promise(resolve=>{resolveOld=resolve;});return response();};
  function Probe(){session=useBrowserSession();return null;}
  for(const [key,value]of Object.entries(globals))Object.defineProperty(globalThis,key,{value,configurable:true,writable:true});
