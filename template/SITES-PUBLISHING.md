@@ -16,26 +16,31 @@ Le correctif de [migrations locales](https://github.com/creezio/creezio-lite/blo
    authentifié, une écriture puis sa relecture dans D1 et un fichier R2 avant de déclarer le socle validé.
 4. Refaire le contrôle après chaque changement de migrations ou de dépendances.
 
-## Limitation reproduite
+## Compatibilité du contrôle local corrigée
 
 Wrangler 4.92.0 peut fragmenter un trigger quand un CASE suit une virgule ou un opérateur
 sans espace. Le END du CASE est alors traité comme celui du BEGIN du trigger.
 Le résultat peut produire `incomplete input: SQLITE_ERROR`.
 Voir le [signalement Cloudflare](https://github.com/cloudflare/workers-sdk/pull/15226).
-Le socle historique est lui-même concerné : ce garde révèle une incompatibilité,
-il ne prétend pas la réparer ni garantir la publication.
+À partir de Lite 0.15.14, la migration canonique `0003_search_index.sql` espace les deux
+expressions concernées. Le garde est exécuté dans la CI du kit sur toutes les migrations
+du template et doit réussir avec la version de Wrangler figée.
 
-L’échec de WinHub sur Sites présente cette erreur, mais Sites ne fournit pas ici le nom
-du fichier fautif ni la version de son parseur. Le lien avec ce bug reste une hypothèse
-tant que le moteur distant ou ses diagnostics ne le confirment pas.
+Cette correction prouve uniquement la compatibilité avec le découpage du Wrangler installé
+et conserve le même schéma et les mêmes triggers SQLite. Une publication Sites peut encore
+échouer avec `incomplete input` si l’hébergement emploie un autre découpage ou exécuteur.
+Le contrôle local ne prouve ni le parseur utilisé par Sites, ni l’application des migrations.
+La première publication du socle et la recette D1/R2 restent obligatoires.
 
 ## Reprise après échec
 
 Conserver le projet, les bindings, l’archive, son hash et les identifiants retournés.
 Demander le fichier, le statement fautif et la liste des migrations déjà appliquées.
 L’absence de binding dans l’outil de lecture ne prouve pas qu’aucune migration n’a été appliquée.
-Ne pas rejouer l’archive identique, supprimer les triggers, réinitialiser le Site ou réécrire
-les anciennes migrations quand cette frontière est inconnue.
+Ne pas rejouer l’archive identique, supprimer les triggers ou réinitialiser le Site quand cette
+frontière est inconnue. Une application existante ne reçoit pas cette modification par une mise
+à jour du seul runtime : si `0003_search_index.sql` n'a jamais été appliquée, reporter explicitement
+les deux espaces depuis la migration canonique ; si elle a déjà été appliquée, conserver son historique.
 
 Le correctif de l’exécuteur doit transmettre chaque statement complet (frontières Drizzle)
 à D1, préserver les points-virgules internes et enregistrer atomiquement l’application.

@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.15.14 — 2026-09-20
+
+- Corrige les deux expressions `,CASE` de la migration canonique `0003_search_index.sql` afin que Wrangler 4.92.0 conserve chaque trigger comme un statement complet. Le SQL et les objets D1 restent identiques.
+- Exécute le contrôle de découpage Wrangler sur toutes les migrations du template dans la CI et couvre les régressions `,CASE` et `*CASE`.
+- Les nouvelles applications reçoivent la migration corrigée. Une application existante conserve une migration déjà appliquée ; si `0003_search_index.sql` n'a jamais été appliquée, les deux espaces peuvent être reportés explicitement. Ce contrôle ne prouve pas la compatibilité de l’exécuteur d’hébergement : publication Sites et recette D1/R2 restent nécessaires.
+
 ## 0.15.13 — 2026-09-20
 
 - Align administrative Navigation and Activity links with their actual operations. Workspace administrators receive these operations within role and token limits, while explicit denials remain effective. Recovery exceptions are unchanged.
