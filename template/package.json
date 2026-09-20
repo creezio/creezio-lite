@@ -16,7 +16,8 @@
     "db:local": "node scripts/migrate-local.mjs",
     "prebuild": "node scripts/prepare-lite.mjs",
     "pretypecheck": "node scripts/prepare-lite.mjs",
-    "predev": "node scripts/prepare-lite.mjs"
+    "predev": "node scripts/prepare-lite.mjs",
+    "check:sites-migrations": "node scripts/check-sites-migrations.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

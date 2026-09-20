@@ -1,0 +1,17 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {inspectMigration} from '../template/scripts/check-sites-migrations.mjs';
+test('Wrangler regression: CASE after comma fragments a valid SQLite trigger',()=>{
+ const sql="CREATE TRIGGER example AFTER INSERT ON items BEGIN INSERT INTO history SELECT new.id,CASE WHEN new.id > 0 THEN 1 ELSE 0 END; END;";
+ const db=new DatabaseSync(':memory:');
+ try {db.exec('CREATE TABLE items(id INTEGER); CREATE TABLE history(id INTEGER, flag INTEGER);');db.exec(sql);db.exec('INSERT INTO items VALUES(1)');assert.equal(db.prepare('SELECT flag FROM history').get().flag,1);} finally {db.close();}
+ assert.ok(inspectMigration(sql).length>0);
+ assert.deepEqual(inspectMigration(sql.replace(',CASE',', CASE')),[]);
+});
+test('ordinary statements and semicolons in literals stay intact',()=>{
+ assert.deepEqual(inspectMigration("CREATE TABLE items(id INTEGER);\n--> statement-breakpoint\nINSERT INTO items VALUES ('a;b');"),[]);
+});
+test('complete trigger without CASE remains one statement',()=>{
+ assert.deepEqual(inspectMigration("CREATE TRIGGER example AFTER INSERT ON items BEGIN DELETE FROM history; INSERT INTO history VALUES(new.id); END;"),[]);
+});

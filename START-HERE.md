@@ -7,7 +7,7 @@ L’objectif est une application indépendante hébergée dans GPT Sites. Le dé
 3. Installer les dépendances figées du template avec pnpm. Utiliser les compétences Sites disponibles pour la configuration d’exécution et les installations en environnement géré.
 4. Exécuter `node bin/lite.mjs create --spec /chemin/brief.json --out /chemin/application-vide` depuis ce dépôt. Le dossier cible doit être vide.
 5. Suivre le `AGENTS.md` de l’application. Son `.openai/hosting.json` contient les bindings D1/R2 et aucun `project_id` transmis depuis le kit. Réutiliser un identifiant uniquement lorsqu’on modifie cette même application.
-6. Ajouter le métier dans les déclarations de modules et les règles métier. Ne pas recopier manuellement les listes de navigation, recherche ou outils.
+6. Avant le métier, valider la première publication du socle et sa persistance selon [la procédure Sites](template/SITES-PUBLISHING.md). Ajouter le métier dans les déclarations de modules et les règles métier. Ne pas recopier manuellement les listes de navigation, recherche ou outils.
 7. Exécuter le doctor, les tests des règles métier, le typecheck et le build. Vérifier les parcours de création, modification, recherche et refus d’accès.
 8. Enregistrer et publier avec Sites, vérifier le résultat final et remettre l’URL déployée.
 
