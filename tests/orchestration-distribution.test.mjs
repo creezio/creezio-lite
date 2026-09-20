@@ -224,7 +224,7 @@ test('adopt refuses a symlinked discovery path or parent before any write, inclu
     assert.equal(await readFile(target, 'utf8'), stale, 'cible externe non écrasée'); assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.11.9', 'manifeste non réécrit');
     await rm(join(app, orchestrationDiscovery)); await writeFile(join(app, orchestrationDiscovery), stale);
     const repaired = await adopt(app, true); assert.deepEqual(repaired.written, []); assert.deepEqual(repaired.writtenGenerated, [orchestrationDiscovery]);
-    assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.15.12');
+    assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.15.13');
     assert.equal((await adopt(app, true)).changed, false);
     });
   });

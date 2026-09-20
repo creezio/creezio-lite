@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.15.13 — 2026-09-20
+
+- Align administrative Navigation and Activity links with their actual operations. Workspace administrators receive these operations within role and token limits, while explicit denials remain effective. Recovery exceptions are unchanged.
+- Render structured navigation API errors as readable text instead of crashing React.
+- Add endpoint, mutation, member-denial and UI error regressions.
+
 ## 0.15.12 — 2026-09-20
 
 - Preserve a browser tab identity across reload and navigation while distinguishing duplicated/live windows. Conditional release tokens prevent a late pagehide from deleting a renewed lease.
