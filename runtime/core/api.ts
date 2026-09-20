@@ -4,7 +4,7 @@ import type { D1Database } from "@cloudflare/workers-types";
 import type { ApiContext, AppExtensions, Identity, Principal, Role, ScopeAction, ScopeProvider, Workspace } from './types.ts';
 import { ApiError, boundedInteger, errorBody, fail, moduleNavigable, moduleWritable, requireModuleRole, requireRole, roles, validateData } from './validation.ts';
 import { checkOrigin, hash, inviteToken, json, readBytes, readJson } from './http.ts';
-import { searchRoute, searchSelection } from './search.ts';
+import { searchModuleCandidates, searchRoute } from './search.ts';
 import { businessModule } from './registry.ts';
 import { accessTokenRoute } from './access-tokens.ts';
 import { coreOperations, matchOperation, assertOperationAllowed, canReadModule } from './operations.ts';
@@ -211,7 +211,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         const q=url.searchParams.get('q')??''; if(q.length>120) fail(400,'query_too_long','Recherche trop longue.');
         const terms:unknown[]=[org.id,mod.id]; let where='r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL';
         let indexing=false;
-        if(q){const selection=await searchSelection(db,context.app,org,q,{moduleId:mod.id,...scoped});indexing=selection.indexing;
+        if(q){const selection=await searchModuleCandidates(db,context.app,org,q,mod.id,scoped);indexing=selection.indexing;
           where+=` AND r.id IN (${selection.cte} SELECT d.record_id FROM ranked x JOIN lite_search_documents d ON d.id=x.id)`;
           terms.push(...selection.bindings);
         }
