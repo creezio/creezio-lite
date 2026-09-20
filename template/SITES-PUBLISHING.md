@@ -8,7 +8,8 @@ Le correctif de [migrations locales](https://github.com/creezio/creezio-lite/blo
 
 1. Installer les dépendances figées et exécuter `pnpm check:sites-migrations`.
    Ce contrôle lit les fichiers sans les modifier et compare chaque statement Drizzle au
-   découpage du Wrangler installé. Une divergence bloque la validation de compatibilité.
+   découpage du Wrangler installé. Il refuse aussi les `SELECT CASE ... END` non parenthésés
+   dans un trigger, forme que l’API D1 distante peut rejeter. Une divergence bloque la validation de compatibilité.
    Un succès ne certifie pas le parseur utilisé par Sites.
 2. Construire et publier le socle privé avec les outils Sites natifs, dans le projet définitif.
    Réutiliser ensuite ce même project_id. Ne pas attendre la livraison pour ce premier essai.
@@ -31,6 +32,21 @@ et conserve le même schéma et les mêmes triggers SQLite. Une publication Site
 échouer avec `incomplete input` si l’hébergement emploie un autre découpage ou exécuteur.
 Le contrôle local ne prouve ni le parseur utilisé par Sites, ni l’application des migrations.
 La première publication du socle et la recette D1/R2 restent obligatoires.
+
+## Garde pour le parseur D1 distant
+
+Une reproduction sur l’API Cloudflare D1 distante a isolé une seconde incompatibilité :
+dans le corps d’un trigger, `SELECT CASE ... END;` échoue avec `incomplete input: SQLITE_ERROR`,
+alors que `SELECT (CASE ... END);` réussit. SQLite local et Miniflare acceptaient les deux formes ;
+ils ne pouvaient donc pas révéler ce défaut hébergé. Le garde masque commentaires, chaînes et
+identifiants cités, puis examine uniquement les corps de `CREATE TRIGGER`; un `SELECT CASE`
+hors trigger ou présent seulement dans du texte reste autorisé.
+
+À partir de Lite 0.15.15, `pnpm check:sites-migrations` signale cette forme avant publication.
+Pour une nouvelle migration, parenthéser seulement l’expression `CASE`. Ne pas réécrire une
+migration déjà appliquée. Si les vérifications locales sont vertes mais que D1 hébergé échoue,
+reproduire le statement exact sur une base D1 distante jetable avant tout reformatage général :
+conserver le SQL original, tester une variante minimale et enregistrer le code et le message D1.
 
 ## Reprise après échec
 

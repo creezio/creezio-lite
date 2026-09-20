@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.15.15 — 2026-09-20
+
+- Bloque au préflight les `SELECT CASE ... END` non parenthésés dans un trigger, forme SQLite valide mais rejetée par l’API Cloudflare D1 distante avec `incomplete input: SQLITE_ERROR` ; `SELECT (CASE ... END)` reste accepté.
+- Tokenise le SQL en masquant commentaires, chaînes et identifiants cités afin de limiter le garde aux corps de triggers, sans faux positif hors trigger.
+- Documente la divergence observée entre D1 distant et Miniflare, ainsi que la reproduction minimale sur une base D1 jetable lorsque le local est vert mais l’hébergement échoue. Aucune migration du kit n’est réécrite.
+
 ## 0.15.14 — 2026-09-20
 
 - Corrige les deux expressions `,CASE` de la migration canonique `0003_search_index.sql` afin que Wrangler 4.92.0 conserve chaque trigger comme un statement complet. Le SQL et les objets D1 restent identiques.
