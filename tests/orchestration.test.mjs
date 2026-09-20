@@ -435,7 +435,7 @@ test('the generator installs the standard as an exact managed copy usable withou
     await createApp({ out, spec: join(root, 'examples/services.json') });
     const manifest = JSON.parse(await readFile(join(out, orchestrationManifest), 'utf8'));
     const sources = await orchestrationSources();
-    assert.equal(manifest.formatVersion, 1); assert.equal(manifest.owner, 'creezio-lite'); assert.equal(manifest.kitVersion, '0.15.14');
+    assert.equal(manifest.formatVersion, 1); assert.equal(manifest.owner, 'creezio-lite'); assert.equal(manifest.kitVersion, '0.15.15');
     assert.deepEqual(Object.keys(manifest.files).sort(), Object.keys(sources).sort());
     for (const [path, source] of Object.entries(sources)) {
       const copy = await readFile(join(out, path)), original = await readFile(source);
@@ -443,7 +443,7 @@ test('the generator installs the standard as an exact managed copy usable withou
       assert.equal(manifest.files[path], createHash('sha256').update(copy).digest('hex'));
     }
     const report = await doctor(out);
-    assert.equal(report.ok, true); assert.deepEqual(report.orchestration, { status: 'current', installedVersion: '0.15.14', targetVersion: '0.15.14', conflicts: [] });
+    assert.equal(report.ok, true); assert.deepEqual(report.orchestration, { status: 'current', installedVersion: '0.15.15', targetVersion: '0.15.15', conflicts: [] });
     const lock = JSON.parse(await readFile(join(out, 'lite.lock.json'), 'utf8'));
     assert.ok(!Object.keys(lock.runtimeFiles).some(f => f.includes('.cursor')), 'le verrou runtime ne couvre pas le standard');
     const standalone = join(temp, 'standalone');
@@ -504,7 +504,7 @@ test('adopt inspects, applies once, preserves local rules and unmanaged files, a
     assert.equal(outdated.status, 'outdated'); assert.equal(outdated.files[`${orchestrationDir}/SKILL.md`], 'outdated'); assert.equal(outdated.installedVersion, '0.11.9');
     const upgraded = await adopt(app, true);
     assert.deepEqual(upgraded.written, [`${orchestrationDir}/SKILL.md`]); assert.equal(await readFile(skillPath, 'utf8'), previous);
-    assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.15.14');
+    assert.equal(JSON.parse(await readFile(manifestPath, 'utf8')).kitVersion, '0.15.15');
     assert.equal(await readFile(join(app, orchestrationDir, 'notes-locales.md'), 'utf8'), 'préservé\n');
 
     await writeFile(manifestPath, JSON.stringify({ formatVersion: 9 }) + '\n');
