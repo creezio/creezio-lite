@@ -53,7 +53,7 @@ export function navMount(c: NativeContext, app: AppDefinition) {
       const id=moduleRegistry(app).find(m=>m.href===e.href)?.id;
       if(!c.access)return !id||canReadModule(c.workspace,id);
       if(id)return canReadModule(c.workspace,id,c.access);
-      const mapped:Record<string,string>={'os.dashboard':'dashboard.get','os.mails':'mail.list','os.documents':'files.list','os.support':'support.list','os.audit':'audit.list','os.analytics':'analytics.overview','os.search':'search.settings','os.api':'api.catalog','os.mcp':'mcp.status','os.access':'access.catalog','os.integrations':'integrations.list','os.connections':'tokens.list',[OS_ADMIN_NAV_ENTRY.id]:'access.catalog'};
+      const mapped:Record<string,string>={'os.dashboard':'dashboard.get','os.mails':'mail.list','os.documents':'files.list','os.support':'support.list','os.audit':'logs.list','os.analytics':'analytics.overview','os.search':'search.settings','os.api':'api.catalog','os.mcp':'mcp.status','os.access':'access.catalog','os.integrations':'integrations.list','os.connections':'tokens.list',[OS_ADMIN_NAV_ENTRY.id]:'nav.catalog'};
       return !!mapped[e.id]&&c.access.evaluateAccess({kind:'operation',operationId:mapped[e.id]}).allowed;
     }), features:{plugins:false,fleet:false},
     getSession:()=>({sub:c.user.userId,role:c.workspace.role==='owner'?'owner':'collaborator',permissions:permissions(c,app),impersonating:false}),

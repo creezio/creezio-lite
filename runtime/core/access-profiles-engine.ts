@@ -113,6 +113,17 @@ export const workspaceAdminOperationIds = [
 
 const ADMIN_OPS = new Set<string>(workspaceAdminOperationIds);
 
+/**
+ * Native administration surfaces granted by the workspace role. Unlike the
+ * recovery operations above, these always remain subject to group deny policy.
+ */
+export const workspaceAdminProfileOperationIds = [
+  'nav.catalog', 'nav.upsert-override', 'nav.reorder', 'nav.delete-override',
+  'logs.list',
+] as const;
+
+const ADMIN_PROFILE_OPS = new Set<string>(workspaceAdminProfileOperationIds);
+
 export class AccessDeclarationError extends Error {
   readonly code: string;
   constructor(code: string, message: string) {
@@ -505,6 +516,7 @@ function evaluateOperation(
   const admin = ADMIN_OPS.has(entry.id);
   if (!envelope && !admin && deniedByPolicy(entry, input.denials)) return deny('denied_policy', extra);
   if (envelope || admin) return decision(true, 'allowed', extra);
+  if (ADMIN_PROFILE_OPS.has(entry.id)) return decision(true, 'allowed', extra);
   if (input.state === 'incomplete' || !input.declaration || !input.receipt) return deny('denied_incomplete', extra);
   if (options?.skipBinding) return decision(true, 'allowed', extra);
 
