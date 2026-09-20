@@ -192,3 +192,19 @@ export const generatedFiles = sqliteTable('lite_generated_files', {
  uniqueIndex('lite_generated_files_published_intent').on(t.orgId,t.intentId).where(sql`${t.state}='published'`),
  check('lite_generated_file_size',sql`${t.size}>0 AND ${t.size}<=10485760`),check('lite_generated_file_capabilities',sql`json_valid(${t.capabilitiesJson})`),
  check('lite_generated_file_state',sql`${t.state} IN ('staging','staged','published','abandoned')`)]);
+
+// Standalone password authentication. Accounts bind only to an explicit lite_users id.
+export const passwordAccounts=sqliteTable('lite_password_accounts',{
+ userId:text('user_id').primaryKey().references(()=>users.id,{onDelete:'cascade'}),usernameNorm:text('username_norm').notNull(),emailNorm:text('email_norm').notNull(),
+ passwordSalt:text('password_salt'),passwordHash:text('password_hash'),passwordIterations:integer('password_iterations'),activatedAt:text('activated_at'),disabledAt:text('disabled_at'),expiresAt:text('expires_at'),
+ authVersion:integer('auth_version').notNull().default(1),createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[uniqueIndex('lite_password_accounts_username').on(t.usernameNorm),uniqueIndex('lite_password_accounts_email').on(t.emailNorm),check('lite_password_account_version',sql`${t.authVersion} >= 1`),check('lite_password_account_secret',sql`(${t.passwordSalt} IS NULL AND ${t.passwordHash} IS NULL AND ${t.passwordIterations} IS NULL) OR (${t.passwordSalt} IS NOT NULL AND ${t.passwordHash} IS NOT NULL AND ${t.passwordIterations}=100000)`) ]);
+export const passwordSessions=sqliteTable('lite_password_sessions',{
+ sessionHash:text('session_hash').primaryKey(),userId:text('user_id').notNull().references(()=>passwordAccounts.userId,{onDelete:'cascade'}),authVersion:integer('auth_version').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),revokedAt:text('revoked_at'),
+},t=>[index('lite_password_sessions_user').on(t.userId,t.expiresAt),check('lite_password_session_version',sql`${t.authVersion} >= 1`)]);
+export const passwordTokens=sqliteTable('lite_password_tokens',{
+ tokenHash:text('token_hash').primaryKey(),userId:text('user_id').notNull().references(()=>passwordAccounts.userId,{onDelete:'cascade'}),purpose:text('purpose').notNull(),expiresAt:text('expires_at').notNull(),createdAt:text('created_at').notNull(),consumedAt:text('consumed_at'),
+},t=>[index('lite_password_tokens_user').on(t.userId,t.purpose,t.expiresAt),check('lite_password_token_purpose',sql`${t.purpose} IN ('activation','reset')`)]);
+export const passwordThrottles=sqliteTable('lite_password_throttles',{
+ bucketHash:text('bucket_hash').primaryKey(),attempts:integer('attempts').notNull(),windowExpiresAt:text('window_expires_at').notNull(),
+},t=>[index('lite_password_throttles_expiry').on(t.windowExpiresAt),check('lite_password_throttle_attempts',sql`${t.attempts} >= 1`)]);

@@ -1,5 +1,14 @@
 # Versions de Lite
 
+## 0.16.0 — 2026-09-20
+
+- Ajoute une primitive générique d’authentification autonome par identifiant ou email et mot de passe, sans liaison implicite d’identité par email.
+- Stocke uniquement les dérivés PBKDF2-SHA-256 des mots de passe et les empreintes SHA-256 des sessions et jetons ; activation et reset sont à usage unique, le reset révoque toutes les sessions.
+- Ajoute les routes serveur bornées `login`, `logout`, `activate` et `reset`, avec contrôle d’origine, cookie sécurisé, expirations, throttling D1 durable et callbacks applicatifs de notification.
+- Ajoute la migration additive `0014_big_dreaming_celestial.sql`, la documentation du contrat et les régressions activation/session/reset/révocation/expiration/throttling.
+- Ajoute le provisioning atomique de membres par policy serveur : capability autorisée, reçu adopté, groupe lié exclusivement au profil cible et gardes de concurrence D1.
+- Rend le formulaire de connexion visible dès le rendu serveur et évite l’entête par défaut lorsqu’une application fournit son propre formulaire.
+
 ## 0.15.15 — 2026-09-20
 
 - Bloque au préflight les `SELECT CASE ... END` non parenthésés dans un trigger, forme SQLite valide mais rejetée par l’API Cloudflare D1 distante avec `incomplete input: SQLITE_ERROR` ; `SELECT (CASE ... END)` reste accepté.

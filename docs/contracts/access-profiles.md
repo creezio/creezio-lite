@@ -51,6 +51,10 @@ export type AccessDeclaration = {
   catalogRevision: string;
   profiles: readonly AccessProfile[];
   capabilities: readonly AccessCapability[];
+  provisioningPolicies?: readonly Readonly<{
+    id: string; capabilityId: AccessCapabilityId;
+    targetProfileId: AccessProfileId; role: 'member';
+  }>[];
 };
 export type AppExtensions = {
   beforeWrite?: BeforeWrite;
@@ -139,7 +143,9 @@ export const workspaceAdminOperationIds = [
 
 `defineExtensions(app, ext, catalog?)` : si `ext.access` absent → legacy, pas d’autre contrôle d’accès ; si présent → valide ou throw (même famille qu’aujourd’hui pour les ops).
 
-**Fail-closed déclaration** : IDs profils/capabilities uniques ; `profile.capabilities ⊆ capabilities.id` ; chaque `operations[]` unique, ⊂ catalogue, **sans** `module:` ni `essential` ; chaque `receivableBy` ⊆ `op.roles` de **chaque** op citée (plafond) ; `assignableBy`/`receivableBy` **non vides** (vide = invalide, pas « personne » fail-open) ; `assignmentApproval === 'owner'` ; `catalogRevision` non vide ; pas de défaut `assignableBy=['admin']`. `AccessDeclaration` ne porte **pas** de `groupId`. Bindings du reçu / bind : `groupId` ne matche **pas** `/^(role:)/` ; `(groupId, profileId)` unique ; `profileId` ∈ déclaration ; `profileRevision` = révision déclarée.
+**Fail-closed déclaration** : IDs profils/capabilities uniques ; `profile.capabilities ⊆ capabilities.id` ; chaque `operations[]` unique, ⊂ catalogue, **sans** `module:` ni `essential` ; chaque `receivableBy` ⊆ `op.roles` de **chaque** op citée (plafond) ; `assignableBy`/`receivableBy` **non vides** (vide = invalide, pas « personne » fail-open) ; `assignmentApproval === 'owner'` ; `catalogRevision` non vide ; pas de défaut `assignableBy=['admin']`. Une `provisioningPolicy` cite une capability et un profil déclarés, fixe le rôle à `member`, et exige que ce profil accepte `member`. `AccessDeclaration` ne porte **pas** de `groupId`. Bindings du reçu / bind : `groupId` ne matche **pas** `/^(role:)/` ; `(groupId, profileId)` unique ; `profileId` ∈ déclaration ; `profileRevision` = révision déclarée.
+
+`commitProvisionedMember(context,input)` est le seul chemin natif pour créer atomiquement un nouveau membre et l’ajouter à un groupe profilé. Il exige un lease adopté, la capability de la policy serveur, un groupe custom lié exclusivement au profil cible, une version de groupe exacte, un reçu et un epoch encore valides, ainsi qu’un nouvel identifiant utilisateur. Le batch ajoute `lite_users`, `lite_members`, les statements métier préparés par le serveur, le membre au groupe et l’audit natif ; une garde ou postcondition en échec annule l’ensemble. L’email ne sert jamais à rattacher une identité existante.
 
 ## 4. États, snapshot, évaluation
 

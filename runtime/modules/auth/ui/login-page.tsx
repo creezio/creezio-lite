@@ -177,15 +177,17 @@ export function LoginPage({ footer, form, ...formProps }: LoginPageProps = {}) {
           <LogoTile logoUrl={login.logoUrl} productName={productName} size="sm" />
         </div>
         <div className="flex flex-1 items-center justify-center">
-          <div className={`w-full max-w-sm ${entrance}`}>
-            <div className="mb-8 space-y-2">
-              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-                Connexion
-              </h1>
-              <p className="text-[15px] leading-relaxed text-slate-500">
-                Accédez à votre espace {productName}.
-              </p>
-            </div>
+          <div className="w-full max-w-sm">
+            {!form ? (
+              <div className="mb-8 space-y-2">
+                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+                  Connexion
+                </h1>
+                <p className="text-[15px] leading-relaxed text-slate-500">
+                  Accédez à votre espace {productName}.
+                </p>
+              </div>
+            ) : null}
             {form ?? <LoginForm {...formProps} />}
             {login.secondaryLink?.label && login.secondaryLink?.href ? (
               <p

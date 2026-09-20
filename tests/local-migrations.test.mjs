@@ -9,7 +9,7 @@ const drizzleDir=fileURLToPath(new URL('../template/drizzle',import.meta.url));
 test('all native migrations apply on empty D1 and replay without modification',async()=>{
  const local=await localDatabase();
  try{
- assert.equal(await migrate(local.db,drizzleDir),14);
+ assert.equal(await migrate(local.db,drizzleDir),15);
  assert.equal(await migrate(local.db,drizzleDir),0);
  assert.equal((await local.db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='lite_search_document_insert'").all()).results.length,1);
  assert.equal((await local.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='lite_public_ingress_claims'").all()).results.length,1);
@@ -34,12 +34,12 @@ test('persistent local D1 keeps data and migration markers after restart',async(
  try{
  const directory=fileURLToPath(new URL('../template/drizzle',import.meta.url));
  local=await localDatabase({id:'persistent-migration-fixture',persist});
- assert.equal(await migrate(local.db,directory),14);
+ assert.equal(await migrate(local.db,directory),15);
  await local.db.prepare("INSERT INTO lite_orgs(id,name,created_at) VALUES('persistent-org','Must survive restart','2026-09-16T00:00:00Z')").run();
  await local.dispose();local=undefined;
  local=await localDatabase({id:'persistent-migration-fixture',persist});
  assert.equal(await migrate(local.db,directory),0);
- assert.equal((await local.db.prepare('SELECT COUNT(*) AS n FROM d1_migrations').first()).n,14);
+ assert.equal((await local.db.prepare('SELECT COUNT(*) AS n FROM d1_migrations').first()).n,15);
  assert.equal((await local.db.prepare("SELECT name FROM lite_orgs WHERE id='persistent-org'").first()).name,'Must survive restart');
  }finally{if(local)await local.dispose();assert.equal(dirname(resolve(persist)),resolve(tmpdir()));assert.ok(persist.includes('lite-migrate-persist-'));await rm(persist,{recursive:true,force:true});}
 });

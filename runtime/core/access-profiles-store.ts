@@ -181,6 +181,54 @@ export async function updateAccessReceipt(context:RequestAccessContext,mutation:
   return lease.state.receiptVersion+1;
 }
 
+export type ProvisionedMemberInput=Readonly<{
+ policyId:string;
+ identity:Identity;
+ groupId:string;
+ expectedGroupVersion:number;
+ statements:D1PreparedStatement[];
+}>;
+
+/** Atomically provision a new member through a validated server policy and request lease. */
+export async function commitProvisionedMember(context:RequestAccessContext,input:ProvisionedMemberInput):Promise<void>{
+ const lease=leases.get(context);
+ if(!lease?.active||lease.input.snapshot.state!=='adopted'||!lease.input.receipt)fail(403,'operation_forbidden','Adopted access is required.');
+ if(!isObject(input)||typeof input.policyId!=='string'||!input.policyId||typeof input.groupId!=='string'||!input.groupId||!Number.isInteger(input.expectedGroupVersion)||input.expectedGroupVersion<1||!Array.isArray(input.statements)||!isObject(input.identity)||typeof input.identity.userId!=='string'||!input.identity.userId.trim()||input.identity.userId!==input.identity.userId.trim()||typeof input.identity.email!=='string'||!input.identity.email.trim()||typeof input.identity.displayName!=='string'||!input.identity.displayName.trim())fail(400,'invalid_arguments','Invalid provisioning request.');
+ const policy=lease.input.declaration?.provisioningPolicies?.find(candidate=>candidate.id===input.policyId);
+ if(!policy||policy.role!=='member')fail(403,'operation_forbidden','Provisioning policy refused.');
+ const capability=context.evaluateAccess({kind:'capability',capabilityId:policy.capabilityId});
+ if(!capability.allowed)fail(capability.reason==='denied_conflict'?409:403,capability.reason==='denied_conflict'?'version_conflict':'operation_forbidden','Provisioning capability refused.');
+ const profile=lease.input.declaration!.profiles.find(candidate=>candidate.id===policy.targetProfileId);
+ const group=lease.state.groups.find(candidate=>candidate.id===input.groupId&&!candidate.builtin&&!NATIVE_ROLE_GROUP.test(candidate.id));
+ if(!profile||!profile.receivableBy.includes('member')||!group)fail(403,'operation_forbidden','Provisioning target refused.');
+ let receipt:AccessAdoptionReceipt;
+ try{receipt=validateNativeReceipt(lease.state.receipt,lease.input.declaration!,lease.state.groups);}catch{fail(409,'version_conflict','Access receipt changed.');}
+ const bindings=receipt.bindings.filter(binding=>binding.groupId===group.id);
+ if(bindings.length!==1||bindings[0].profileId!==profile.id||bindings[0].profileRevision!==profile.revision)fail(403,'operation_forbidden','Provisioning group is not exclusively bound to its target profile.');
+ if(group.version!==input.expectedGroupVersion)fail(409,'version_conflict','Provisioning group changed.');
+ if(lease.state.members.some(member=>member.user_id===input.identity.userId)||group.memberIds.includes(input.identity.userId))fail(409,'version_conflict','Provisioned identity already exists.');
+
+ const db=lease.db,org=lease.workspaceId,token=crypto.randomUUID(),until=receipt.validUntil??null;
+ const current=requestAccessCommitGuard(context);
+ const tokenGuard={sql:'EXISTS(SELECT 1 FROM lite_access_epochs WHERE org_id=? AND write_token=?)',bindings:[org,token]};
+ const nextMembers=JSON.stringify([...group.memberIds,input.identity.userId]);
+ const details=JSON.stringify({policyId:policy.id,profileId:profile.id,groupId:group.id,subjectUserId:input.identity.userId});
+ try{
+  await db.batch([
+   db.prepare(current.sql).bind(...current.bindings),
+   db.prepare(`UPDATE lite_access_epochs SET write_token=? WHERE org_id=? AND revision=? AND EXISTS(SELECT 1 FROM lite_access_receipts WHERE org_id=? AND version=?) AND NOT EXISTS(SELECT 1 FROM lite_users WHERE id=?) AND NOT EXISTS(SELECT 1 FROM lite_members WHERE org_id=? AND user_id=?) AND (? IS NULL OR julianday(?)>julianday('now'))`).bind(token,org,lease.state.epoch,org,lease.state.receiptVersion,input.identity.userId,org,input.identity.userId,until,until),
+   db.prepare(`SELECT CASE WHEN ${tokenGuard.sql} THEN 1 ELSE json('lite_access_revoked') END AS authorized`).bind(...tokenGuard.bindings),
+   db.prepare(`INSERT INTO lite_users(id,email,name) SELECT ?,?,? WHERE ${tokenGuard.sql}`).bind(input.identity.userId,input.identity.email,input.identity.displayName,...tokenGuard.bindings),
+   db.prepare(`INSERT INTO lite_members(org_id,user_id,role) SELECT ?,?,'member' WHERE ${tokenGuard.sql}`).bind(org,input.identity.userId,...tokenGuard.bindings),
+   ...input.statements,
+   db.prepare(`UPDATE lite_access_groups SET members_json=?,version=version+1 WHERE org_id=? AND id=? AND version=? AND ${tokenGuard.sql} AND EXISTS(SELECT 1 FROM lite_members WHERE org_id=? AND user_id=? AND role='member') AND NOT EXISTS(SELECT 1 FROM json_each(members_json) WHERE value=?)`).bind(nextMembers,org,group.id,input.expectedGroupVersion,...tokenGuard.bindings,org,input.identity.userId,input.identity.userId),
+   db.prepare(`SELECT CASE WHEN EXISTS(SELECT 1 FROM lite_members WHERE org_id=? AND user_id=? AND role='member') AND EXISTS(SELECT 1 FROM lite_access_groups g,json_each(g.members_json) j WHERE g.org_id=? AND g.id=? AND g.version=? AND j.value=?) THEN 1 ELSE json('lite_access_revoked') END AS provisioned`).bind(org,input.identity.userId,org,group.id,input.expectedGroupVersion+1,input.identity.userId),
+   db.prepare(`INSERT INTO lite_audit(id,org_id,user_id,action,resource_id,details,created_at) SELECT ?,?,?,?,?,?,? WHERE ${tokenGuard.sql}`).bind(crypto.randomUUID(),org,lease.actorUserId,'access.member.provision',input.identity.userId,details,new Date().toISOString(),...tokenGuard.bindings),
+   db.prepare('UPDATE lite_access_epochs SET write_token=NULL WHERE org_id=? AND write_token=?').bind(org,token),
+  ]);
+ }catch(error){if(String(error).includes('malformed JSON'))fail(409,'version_conflict','Access or provisioning state changed.');throw error;}
+ lease.active=false;
+}
 /** Validate an existing server lease; this helper never constructs authority. */
 export function requestAccessMatches(context:RequestAccessContext|null,workspaceId:string,role:Role,userId?:string,credential?:Principal['credential']):boolean{
  const lease=context?leases.get(context):undefined;

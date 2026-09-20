@@ -23,6 +23,13 @@ export type AccessProfile = {
   assignableBy: readonly Role[];
   assignmentApproval: 'owner';
 };
+export type ProvisioningPolicy = Readonly<{
+  id: string;
+  capabilityId: AccessCapabilityId;
+  targetProfileId: AccessProfileId;
+  role: 'member';
+}>;
+
 export type GroupProfileBinding = {
   groupId: string;
   profileId: AccessProfileId;
@@ -37,6 +44,7 @@ export type AccessDeclaration = {
   catalogRevision: string;
   profiles: readonly AccessProfile[];
   capabilities: readonly AccessCapability[];
+  provisioningPolicies?: readonly ProvisioningPolicy[];
 };
 export type AccessAdoptionState = 'legacy' | 'incomplete' | 'adopted';
 export type AccessDecisionReason =
@@ -273,7 +281,36 @@ function inspectDeclaration(declaration: unknown, catalog: Map<string, AccessCat
       ...(typeof raw.label === 'string' ? { label: raw.label } : {}),
     }));
   }
-  return { ok: true, value: Object.freeze({ catalogRevision, profiles: Object.freeze(profiles), capabilities: Object.freeze(capabilities) }) };
+  let provisioningPolicies: ProvisioningPolicy[] | undefined;
+  if (declaration.provisioningPolicies !== undefined) {
+    if (!Array.isArray(declaration.provisioningPolicies) || !declaration.provisioningPolicies.length) {
+      return fail('empty_list', 'La liste des politiques de provisioning ne peut pas être vide.');
+    }
+    provisioningPolicies = [];
+    const policyIds = new Set<string>();
+    for (const raw of declaration.provisioningPolicies) {
+      if (!plain(raw)) return fail('invalid_shape', 'Politique de provisioning invalide.');
+      const id = asString(raw.id);
+      const capabilityId = asString(raw.capabilityId);
+      const targetProfileId = asString(raw.targetProfileId);
+      if (!id || !capabilityId || !targetProfileId || raw.role !== 'member') {
+        return fail('invalid_provisioning_policy', 'Politique de provisioning invalide.');
+      }
+      if (policyIds.has(id)) return fail('duplicate_id', `Politique de provisioning dupliquée : ${id}.`);
+      if (!capabilityIds.has(capabilityId)) return fail('unknown_capability', `Capacité de provisioning inconnue : ${capabilityId}.`);
+      const target = profiles.find(profile => profile.id === targetProfileId);
+      if (!target) return fail('unknown_profile', `Profil de provisioning inconnu : ${targetProfileId}.`);
+      if (!target.receivableBy.includes('member')) return fail('invalid_provisioning_policy', `Le profil ${targetProfileId} ne peut pas être attribué à member.`);
+      policyIds.add(id);
+      provisioningPolicies.push(Object.freeze({ id, capabilityId, targetProfileId, role: 'member' }));
+    }
+  }
+  return { ok: true, value: Object.freeze({
+    catalogRevision,
+    profiles: Object.freeze(profiles),
+    capabilities: Object.freeze(capabilities),
+    ...(provisioningPolicies ? { provisioningPolicies: Object.freeze(provisioningPolicies) } : {}),
+  }) };
 }
 
 export function validateAccessDeclaration(declaration: unknown, catalog: readonly AccessCatalogEntry[]): AccessDeclaration {
