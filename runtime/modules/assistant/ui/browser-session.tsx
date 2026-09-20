@@ -2,40 +2,39 @@
 import {createContext,useContext,useEffect,useRef,useState,type ReactNode} from 'react';
 
 import {readBrowserSessionResponse} from './browser-session-response';
+import {claimBrowserWindowIdentity} from './browser-session-identity';
 
-export type BrowserState={active:boolean;kind:'desktop'|'controller'|null;desktopConnected:boolean;desktopPath?:string|null;workspaceId?:string;actions?:unknown[]};
+export type BrowserState={active:boolean;kind:'desktop'|'controller'|null;desktopConnected:boolean;desktopPath?:string|null;workspaceId?:string;leaseUntil?:string|null;releaseToken?:string|null;actions?:unknown[]};
 type Session={windowId:string;mobile:boolean;ready:boolean;state:BrowserState;error:string;takeover:()=>void;report:(event:string,fields?:Record<string,unknown>)=>Promise<void>};
 const Context=createContext<Session|null>(null);
 export const useBrowserSession=()=>useContext(Context);
 export function BrowserSessionProvider({children}:{children:ReactNode}) {
   const [id,setId]=useState(''),[mobile,setMobile]=useState(false),[ready,setReady]=useState(false),[state,setState]=useState<BrowserState>({active:false,kind:null,desktopConnected:false}),[error,setError]=useState(''),[attempt,setAttempt]=useState(0);
-  const takeover=useRef(false),identity=useRef(''),workspace=useRef<string|undefined>(undefined);
+  const takeover=useRef(false),identity=useRef(''),releaseToken=useRef<string|null>(null),workspace=useRef<string|undefined>(undefined);
   async function report(event:string,fields:Record<string,unknown>={}) {
     if(!identity.current)return;
     try{await fetch('/api/v1/assistant/browser/events',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({windowId:identity.current,event,...fields}),keepalive:true});}catch{}
   }
   useEffect(()=>{
-    const release=()=>{const windowId=identity.current;if(!windowId)return;try{navigator.sendBeacon('/api/v1/assistant/browser/release',new Blob([JSON.stringify({windowId})],{type:'application/json'}));}catch{}};
+    const release=()=>{const windowId=identity.current,token=releaseToken.current;if(!windowId||!token)return;try{navigator.sendBeacon('/api/v1/assistant/browser/release',new Blob([JSON.stringify({windowId,releaseToken:token})],{type:'application/json'}));}catch{}};
     window.addEventListener('pagehide',release);
     return()=>{window.removeEventListener('pagehide',release);release();};
   },[]);
   useEffect(()=>{
-    // A fresh identity per document prevents duplicated tabs sharing a lease.
-    const windowId=identity.current||crypto.randomUUID();identity.current=windowId;setId(windowId);
     const phone=/Android.*Mobile|iPhone|iPod/i.test(navigator.userAgent)||(window.matchMedia('(pointer: coarse)').matches&&Math.min(screen.width,screen.height)<600);
     setMobile(phone);
     let stopped=false,ws:WebSocket|undefined,pollTimer:ReturnType<typeof setTimeout>|undefined,wsTimer:ReturnType<typeof setInterval>|undefined,watch:ReturnType<typeof setInterval>|undefined;
-    let connected=false,lastState=0,polling=false,wsLast=0;const controller=new AbortController();
+    let connected=false,lastState=0,polling=false,wsLast=0,closeIdentity=()=>{};const controller=new AbortController();
     const post=async(path:string,body:Record<string,unknown>)=>{
-      const res=await fetch('/api/v1/assistant/browser/'+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({windowId,...body}),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(6000)])});
+      const res=await fetch('/api/v1/assistant/browser/'+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({windowId:identity.current,...body}),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(6000)])});
       return readBrowserSessionResponse(res);
     };
     const receive=(next:BrowserState)=>{
       if(stopped)return;
       if(workspace.current&&workspace.current!==next.workspaceId){window.location.reload();return;}
-      workspace.current=next.workspaceId;lastState=performance.now();connected=next.active;
+      workspace.current=next.workspaceId;releaseToken.current=next.releaseToken??null;lastState=performance.now();connected=next.active;
       setReady(true);setState(next);setError('');
-      if(next.active&&next.kind==='desktop')for(const action of next.actions??[])window.dispatchEvent(new CustomEvent('lite-assistant-ui-action',{detail:{...(action as object),windowId}}));
+      if(next.active&&next.kind==='desktop')for(const action of next.actions??[])window.dispatchEvent(new CustomEvent('lite-assistant-ui-action',{detail:{...(action as object),windowId:identity.current}}));
     };
     async function poll(){
       if(stopped||polling)return;polling=true;
@@ -46,6 +45,9 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
     const fallback=()=>{if(stopped)return;if(wsTimer)clearInterval(wsTimer);ws?.close();if(!pollTimer&&!polling){void report('transport.fallback',{transport:'http'});void poll();}};
     async function start(){
       try{
+        const claimed=await claimBrowserWindowIdentity();closeIdentity=claimed.close;
+        if(stopped){claimed.close();return;}
+        const windowId=claimed.windowId;identity.current=windowId;setId(windowId);
         const initial=await post('connect',{kind:phone?'controller':'desktop',takeover:takeover.current});takeover.current=false;
         if(stopped)return;
         receive(initial);if(!initial.active)return;
@@ -64,7 +66,7 @@ export function BrowserSessionProvider({children}:{children:ReactNode}) {
     const onRejection=(event:PromiseRejectionEvent)=>void report('browser.rejection',{code:event.reason?.name??'Error'});
     window.addEventListener('error',onError);window.addEventListener('unhandledrejection',onRejection);
     void start();
-    return()=>{stopped=true;controller.abort();if(pollTimer)clearTimeout(pollTimer);if(wsTimer)clearInterval(wsTimer);if(watch)clearInterval(watch);ws?.close();window.removeEventListener('error',onError);window.removeEventListener('unhandledrejection',onRejection);};
+    return()=>{stopped=true;controller.abort();closeIdentity();if(pollTimer)clearTimeout(pollTimer);if(wsTimer)clearInterval(wsTimer);if(watch)clearInterval(watch);ws?.close();window.removeEventListener('error',onError);window.removeEventListener('unhandledrejection',onRejection);};
   },[attempt]);
   return <Context.Provider value={{windowId:id,mobile,ready,state,error,takeover:()=>{takeover.current=!error;workspace.current=undefined;setReady(false);setAttempt(n=>n+1);},report}}>{children}</Context.Provider>;
 }

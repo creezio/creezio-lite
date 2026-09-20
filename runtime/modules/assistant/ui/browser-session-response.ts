@@ -10,5 +10,6 @@ export async function readBrowserSessionResponse(res:Response) {
   if(!record||typeof record.active!=='boolean'||![null,'desktop','controller'].includes(record.kind as string|null)||typeof record.desktopConnected!=='boolean') {
     throw Object.assign(new Error('Réponse de connexion invalide. Réessayez dans quelques secondes.'),{status:502});
   }
-  return record as {active:boolean;kind:'desktop'|'controller'|null;desktopConnected:boolean;workspaceId?:string;actions?:unknown[]};
+  if((record.leaseUntil!==null&&record.leaseUntil!==undefined&&typeof record.leaseUntil!=='string')||(record.releaseToken!==null&&record.releaseToken!==undefined&&typeof record.releaseToken!=='string'))throw Object.assign(new Error('Réponse de connexion invalide. Réessayez dans quelques secondes.'),{status:502});
+  return record as {active:boolean;kind:'desktop'|'controller'|null;desktopConnected:boolean;workspaceId?:string;leaseUntil?:string|null;releaseToken?:string|null;actions?:unknown[]};
 }
