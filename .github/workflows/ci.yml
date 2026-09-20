@@ -20,6 +20,8 @@ jobs:
           run_install: false
       - name: Install locked template dependencies
         run: pnpm --dir template install --frozen-lockfile
+      - name: Verify migrations with the installed Wrangler splitter
+        run: pnpm --dir template run check:sites-migrations
       - run: npm run test:sites
       - run: npm run check
       - run: pnpm --dir template run typecheck

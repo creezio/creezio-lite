@@ -4,14 +4,14 @@ CREATE VIRTUAL TABLE lite_search_fts USING fts5(document_id UNINDEXED, field_key
 CREATE TRIGGER lite_search_document_insert AFTER INSERT ON lite_search_documents BEGIN
  
  INSERT INTO lite_search_fts(document_id,field_key,value)
- SELECT new.id,j.key,CASE j.type WHEN 'true' THEN 'true oui 1' WHEN 'false' THEN 'false non 0' ELSE CAST(j.value AS TEXT) END
+ SELECT new.id,j.key, CASE j.type WHEN 'true' THEN 'true oui 1' WHEN 'false' THEN 'false non 0' ELSE CAST(j.value AS TEXT) END
  FROM json_each(new.data) j WHERE j.type NOT IN ('null','array','object') AND j.key NOT LIKE '\_%' ESCAPE '\';
  END;
 --> statement-breakpoint
 CREATE TRIGGER lite_search_document_update AFTER UPDATE ON lite_search_documents BEGIN
  DELETE FROM lite_search_fts WHERE document_id=old.id;
  INSERT INTO lite_search_fts(document_id,field_key,value)
- SELECT new.id,j.key,CASE j.type WHEN 'true' THEN 'true oui 1' WHEN 'false' THEN 'false non 0' ELSE CAST(j.value AS TEXT) END
+ SELECT new.id,j.key, CASE j.type WHEN 'true' THEN 'true oui 1' WHEN 'false' THEN 'false non 0' ELSE CAST(j.value AS TEXT) END
  FROM json_each(new.data) j WHERE j.type NOT IN ('null','array','object') AND j.key NOT LIKE '\_%' ESCAPE '\';
  END;
 --> statement-breakpoint

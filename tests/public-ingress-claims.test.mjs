@@ -17,7 +17,7 @@ const PRIOR_SQL = Object.freeze({
   '0000_new_jane_foster.sql': 'cd3de741a34292dce7f4e3ce28c87950cceecebb6c357c1df9b8a4f6b7e655a3',
   '0001_strange_praxagora.sql': 'f85703e2def09c6dbb36803ed1c10f297011b05eca49f366fc184ebf76a325be',
   '0002_search_registry.sql': '01b09bc581fea78c0157e2d84ab13a36de4e049497929e33c4783163c52090d6',
-  '0003_search_index.sql': '00511999123c4c5435feebd18ec22670c2ef1b0d0b4dad2e39ad97ba77126c59',
+  '0003_search_index.sql': '638ffacae0f4e9665ad0ded65c4f31cfad5f1ef7f15229ccc4d5124ce33f1b88',
   '0004_api_access.sql': '342a6cbba232ebed5788a56e52179715172f097527008def87da397443558172',
   '0005_admin_operations.sql': '227711bd31c0581f99fa1d52e7bb71b9fc900e80e4092c5303ba587e4341d4f2',
   '0006_assistant_integrations.sql': '59042b242c008804f830206f5a441a13fd790437d6cb28bdc0a1a355f51d1e69',
@@ -94,7 +94,7 @@ function clockStore(db, over = {}) {
   return { store, setNow(ms) { now = ms; }, advance(ms) { now += ms; }, now: () => now };
 }
 
-test('0000-0010 SQL remains byte-identical; 0011 is additive claims-only', async () => {
+test('0000-0010 SQL matches the published baseline including the authorized 0003 whitespace fix; 0011 is additive claims-only', async () => {
   for (const [name, want] of Object.entries(PRIOR_SQL)) {
     const got = sha256(migrationBytes(await readFile(join(root, 'template/drizzle', name))));
     assert.equal(got, want, name);
