@@ -26,6 +26,7 @@ import {
   Input,
   Label,
 } from "@lite/shell-ui/ui/kit";
+import { readResponseError } from "./response-error";
 
 type CatalogEntry = {
   id: string;
@@ -54,15 +55,6 @@ function sourceLabel(source: string): string {
   return source;
 }
 
-async function readError(res: Response): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    return body.error || res.statusText;
-  } catch {
-    return res.statusText;
-  }
-}
-
 export function NavAdminClient() {
   const [entries, setEntries] = useState<CatalogEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +67,7 @@ export function NavAdminClient() {
     try {
       const res = await fetch("/api/v1/modules/nav/catalog");
       if (!res.ok) {
-        setError(await readError(res));
+        setError(await readResponseError(res));
         setEntries(null);
         return;
       }
@@ -113,7 +105,7 @@ export function NavAdminClient() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(await readError(res));
+    if (!res.ok) throw new Error(await readResponseError(res));
   }
 
   async function toggleVisible(entry: CatalogEntry) {
@@ -177,7 +169,7 @@ export function NavAdminClient() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ids }),
       });
-      if (!res.ok) throw new Error(await readError(res));
+      if (!res.ok) throw new Error(await readResponseError(res));
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -193,7 +185,7 @@ export function NavAdminClient() {
         `/api/v1/modules/nav/overrides/${encodeURIComponent(entry.id)}`,
         { method: "DELETE" },
       );
-      if (!res.ok) throw new Error(await readError(res));
+      if (!res.ok) throw new Error(await readResponseError(res));
       toast.success("Retour aux défauts");
       await load();
     } catch (err) {

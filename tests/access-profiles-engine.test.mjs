@@ -11,6 +11,7 @@ import {
   evaluateAccessDecision,
   validateAccessDeclaration,
   workspaceAdminOperationIds,
+  workspaceAdminProfileOperationIds,
   NATIVE_ROLE_GROUP,
 } from '../runtime/core/access-profiles-engine.ts';
 
@@ -674,5 +675,8 @@ test('kernel-marked incomplete despite matching revisions stays default-deny (va
 test('workspaceAdminOperationIds lists the contract recovery and admin ops', () => {
   for (const id of ['access.receipt.update', 'access.bind', 'access.unbind', 'access.catalog', 'members.update']) {
     assert.equal(workspaceAdminOperationIds.includes(id), true, id);
+  }
+  for (const id of workspaceAdminProfileOperationIds) {
+    assert.equal(workspaceAdminOperationIds.includes(id), false, `${id} must remain denyable`);
   }
 });

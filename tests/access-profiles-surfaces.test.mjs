@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import './register-native-loader.mjs';
-import {app as originalApp,alice,eve,boot,client,localDb,fakeBucket,clientData} from './helpers.mjs';
+import {app as originalApp,alice,bob,eve,boot,client,localDb,fakeBucket,clientData} from './helpers.mjs';
 const {dispatchRequest}=await import('../runtime/modules/sites-adapter/src/dispatch.ts');
 const {operationCatalog}=await import('../runtime/modules/sites-adapter/src/catalog.ts');
 import {command} from '../runtime/core/commands.ts';
@@ -17,8 +17,8 @@ const operationIds=['module.clients.list','module.clients.get','module.clients.c
 const declaration={catalogRevision:'surfaces-v1',capabilities:[{id:'ordinary',operations:operationIds},{id:'catalog.price.edit',operations:['module.clients.update',priceCommand.operation.id]}],profiles:[{id:'ordinary',revision:1,capabilities:['ordinary'],receivableBy:['owner','admin','member'],assignableBy:['owner'],assignmentApproval:'owner'},{id:'price',revision:1,capabilities:['catalog.price.edit'],receivableBy:['owner','admin','member'],assignableBy:['owner'],assignmentApproval:'owner'}]};
 const rec=(price=false)=>({catalogRevision:declaration.catalogRevision,bindings:[{groupId:'fixture',profileId:'ordinary',profileRevision:1},...(price?[{groupId:'fixture',profileId:'price',profileRevision:1}]:[])]});
 async function fixture(fn){const db=await localDb(),bucket=fakeBucket();try{
- const org=await boot(client(db,alice,bucket,app));await boot(client(db,eve,bucket,app));db.raw.prepare("INSERT INTO lite_members(org_id,user_id,role) VALUES(?,?,'member')").run(org,eve.userId);
- db.raw.prepare('INSERT INTO lite_access_groups(org_id,id,name,members_json,version,created_at) VALUES(?,?,?,?,1,?)').run(org,'fixture','Fixture',JSON.stringify(['alice','eve']),new Date().toISOString());
+ const org=await boot(client(db,alice,bucket,app));await boot(client(db,bob,bucket,app));await boot(client(db,eve,bucket,app));db.raw.prepare("INSERT INTO lite_members(org_id,user_id,role) VALUES(?,?,'admin'),(?,?,'member')").run(org,bob.userId,org,eve.userId);
+ db.raw.prepare('INSERT INTO lite_access_groups(org_id,id,name,members_json,version,created_at) VALUES(?,?,?,?,1,?)').run(org,'fixture','Fixture',JSON.stringify(['alice','bob','eve']),new Date().toISOString());
  const seed=client(db,alice,bucket,app),visible=(await seed('modules/clients/records?workspace='+org,{method:'POST',body:{data:{...clientData,name:'Visible document',discount_percent:0}}})).body.record.id,hidden=(await seed('modules/clients/records?workspace='+org,{method:'POST',body:{data:{...clientData,name:'Invisible needleword',discount_percent:0}}})).body.record.id;
  for(const id of ['file-visible','file-hidden']){db.raw.prepare('INSERT INTO lite_files(id,org_id,name,object_key,size,content_type,created_by,created_at) VALUES(?,?,?,?,1,?,?,?)').run(id,org,id,id,'text/plain','alice',new Date().toISOString());await bucket.put(id,new Uint8Array([1]));}
  const seen=[];const scope={recordFilter:(p,r,a,access)=>{seen.push(access);return{sql:r.alias+'.'+r.idColumn+'<>?',bindings:[hidden]};},fileFilter:(p,r,a,access)=>{seen.push(access);return{sql:r.alias+'.'+r.idColumn+'<>?',bindings:['file-hidden']};}};
@@ -37,6 +37,26 @@ test('incomplete owner discovery is filtered and business execution is denied',a
 test('discovery keeps explicit operation and module denies for owners',async()=>fixture(async({db,org,call,setReceipt})=>{
  setReceipt();for(const operationId of ['modules.list','module:core']){db.raw.prepare("INSERT INTO lite_api_policies(org_id,group_id,operation_id,effect) VALUES(?,'fixture',?,'deny')").run(org,operationId);assert.equal((await call('modules')).status,403);db.raw.prepare('DELETE FROM lite_api_policies WHERE org_id=?').run(org);}
  db.raw.prepare("INSERT INTO lite_api_policies(org_id,group_id,operation_id,effect) VALUES(?,'fixture','module.clients.list','deny')").run(org);assert.deepEqual((await call('modules')).body.modules,[]);assert.equal((await call('modules/clients/records')).status,403);
+}));
+
+test('admin navigation links exercise their real endpoints while role ceilings and deny policy stay enforced',async()=>fixture(async({db,org,call,setReceipt})=>{
+ setReceipt();
+ for(const identity of [alice,bob]){
+  const nav=await call('modules/nav',{identity});assert.equal(nav.status,200,JSON.stringify(nav));
+  for(const id of ['os.admin.nav','os.audit'])assert.ok(nav.body.items.some(item=>item.id===id),`${identity.userId}: ${id}`);
+  assert.equal((await call('modules/nav/catalog',{identity})).status,200,identity.userId);
+  assert.equal((await call('admin/request-logs',{identity})).status,200,identity.userId);
+ }
+ let changed=await call('modules/nav/overrides',{identity:bob,method:'PUT',body:{entryId:'os.admin.nav',label:'Navigation équipe'}});
+ assert.equal(changed.status,200,JSON.stringify(changed));
+ for(const path of ['modules/nav/catalog','admin/request-logs'])assert.equal((await call(path,{identity:eve})).status,403,path);
+ const memberNav=await call('modules/nav',{identity:eve});for(const id of ['os.admin.nav','os.audit'])assert.equal(memberNav.body.items.some(item=>item.id===id),false,id);
+
+ db.raw.prepare("INSERT INTO lite_api_policies(org_id,group_id,operation_id,effect) VALUES(?,'fixture','nav.upsert-override','deny')").run(org);
+ changed=await call('modules/nav/overrides',{identity:bob,method:'PUT',body:{entryId:'os.admin.nav',label:'Refus attendu'}});
+ assert.equal(changed.status,403,JSON.stringify(changed));
+ db.raw.prepare("INSERT INTO lite_api_policies(org_id,group_id,operation_id,effect) VALUES(?,'fixture','logs.list','deny')").run(org);
+ assert.equal((await call('admin/request-logs',{identity:bob})).status,403);
 }));
 
 test('owner row/file scope applies to list count detail dashboard download and audit search',async()=>fixture(async({db,org,call,setReceipt,visible,hidden,seen})=>{
