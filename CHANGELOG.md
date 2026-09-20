@@ -1,5 +1,11 @@
 # Versions de Lite
 
+## 0.15.12 — 2026-09-20
+
+- Preserve a browser tab identity across reload and navigation while distinguishing duplicated/live windows. Conditional release tokens prevent a late pagehide from deleting a renewed lease.
+- Keep module record search below the D1 expression-depth limit by applying row permissions once, before counting and pagination. Global search and field visibility retain their existing filters.
+- Add browser identity/release regressions and exercise module API and MCP tool search on Miniflare D1.
+
 ## 0.15.11
 
 - Les reprises conservent le bail du document : seul le départ de page ou le démontage du provider le libère. Un nettoyage de tentative ou une réponse connect obsolète ne peut plus supprimer le nouveau bail de la même fenêtre.
