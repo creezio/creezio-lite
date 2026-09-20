@@ -36,6 +36,7 @@ const RUNTIME_ERROR_CODES=[
   'setup_required','sites_identity','slug_exists','storage_unavailable','sync_busy','system_group','task_not_found','temporarily_unavailable','token_scope','token_workspace','too_many_terms','tool_exists',
   'tool_forbidden','tool_limit','tool_not_found','transcription_failed','trash_required','ui_action_closed','ui_forbidden','ui_run_closed','ui_target_required','unique_conflict','unknown_field','unknown_nav_entry','unknown_operation',
   'unreadable','unsupported_grant_type','unsupported_patch','unsupported_response_type','unsupported_test','vault_unavailable','version_conflict','version_required','websocket_required','websocket_unavailable',
+  'account_invalid','activation_consumed','activation_invalid','auth_failed','auth_rate_limited','auth_unavailable','identifier_invalid','password_invalid','reset_consumed','reset_invalid',
   'window_inactive','workspace_limit','workspace_not_found',
 ] as const;
 /** Codes returned as `{ok:false,error:'…'}` by the API kernel and the native mounts, and by the MCP transport before JSON-RPC. */

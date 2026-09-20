@@ -106,7 +106,7 @@ test('0000-0010 SQL matches the published baseline including the authorized 0003
   const journal = JSON.parse(await readFile(join(root, 'template/drizzle/meta/_journal.json'), 'utf8'));
   assert.equal(journal.entries[10].tag, '0010_browser_relay');
   assert.equal(journal.entries[11].tag, '0011_public_ingress_claims');
-  assert.equal(journal.entries.length, 14);
+  assert.equal(journal.entries.length, 15);
 });
 
 test('node:sqlite : acquire, busy, complete, replay snapshot stable, no secrets', async () => {
