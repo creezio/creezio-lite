@@ -68,3 +68,5 @@ Les mises à jour larges restent atomiques et paramétrées : quand les valeurs 
 ### Noms publics et colonnes
 
 Les noms de propriétés d'un contrat existant peuvent utiliser camelCase (`orderId`, `createdAt`) : les conserver évite de casser les consommateurs pendant un portage. Les noms SQL restent strictement snake_case. Déclarer explicitement `storage.columns`, par exemple `{orderId: "order_id", createdAt: "source_created_at"}` ; aucune déduction ni renommage silencieux. Les noms réservés aux métadonnées et les collisions restent refusés. `scaffoldModuleStorage(app, schema, {table, columns})` génère les mêmes noms physiques dans SQL, Drizzle et son nouveau snapshot. Le générateur ordinaire continue d'utiliser directement les noms snake_case du schéma.
+
+Un champ structuré `encoding: json` conserve la distinction entre absence (SQL NULL, champ serveur omis) et remise à zéro explicite (texte JSON `null`, propriété restituée à `null`). Les insertions, remplacements et patchs suivent cette règle, ainsi que leurs projections et index. Une migration de données existantes doit utiliser `data -> path` pour conserver le `null` JSON explicite.

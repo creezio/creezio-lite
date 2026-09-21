@@ -45,7 +45,7 @@ export function entityStorage(module:Module,spec?:ModuleEntitySpec){
   return expression;
  };
  const source=relational?`(SELECT id,org_id,'${module.id}' AS module_id,${dataExpression('e')} AS data,version,created_by,created_at,updated_at,deleted_at FROM ${quote(table)} e)`:'lite_records';
- const values=(data:Record<string,unknown>)=>fields.map(f=>data[f.key]==null?null:f.encoding==='json'?JSON.stringify(data[f.key]):f.type==='boolean'?(data[f.key]?1:0):data[f.key]);
+ const values=(data:Record<string,unknown>)=>fields.map(f=>data[f.key]===undefined?null:f.encoding==='json'?JSON.stringify(data[f.key]):data[f.key]===null?null:f.type==='boolean'?(data[f.key]?1:0):data[f.key]);
  // A wide write binds its values once; every destination remains a physical column.
  const assignmentValues=(entries:unknown[],extraBindings:number)=>{
   if(entries.length+extraBindings<=100)return {prefix:'',bindings:entries,at:(index:number)=>'?'};
@@ -68,7 +68,7 @@ export function entityStorage(module:Module,spec?:ModuleEntitySpec){
  const patchStatement=(input:{id:string;orgId:string;patch:Record<string,unknown>;version:number;now:string;filter:SqlFragment}):SqlFragment=>{
   const {id,orgId,version,now,filter}=input,patch=validateStoredPatch(module,input.patch,{});
   const changed=fields.filter(f=>Object.hasOwn(patch,f.key));
-  const patchValues=relational?changed.map(f=>patch[f.key]==null?null:f.encoding==='json'?JSON.stringify(patch[f.key]):f.type==='boolean'?(patch[f.key]?1:0):patch[f.key]):changed.map(f=>JSON.stringify(patch[f.key]??null));
+  const patchValues=relational?changed.map(f=>patch[f.key]===undefined?null:f.encoding==='json'?JSON.stringify(patch[f.key]):patch[f.key]===null?null:f.type==='boolean'?(patch[f.key]?1:0):patch[f.key]):changed.map(f=>JSON.stringify(patch[f.key]??null));
   const params=assignmentValues([...(relational?patchValues:[...patchValues,...patchValues]),now],3+(relational?0:1)+filter.bindings.length);
   let set:string;
   if(relational){

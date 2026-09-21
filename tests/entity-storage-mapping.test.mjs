@@ -14,6 +14,7 @@ async function exercise(db){
  const options=defineExtensions(app,{registry:createBrandModuleRegistry(app,[{id:'mapped',tables:['mapped_items'],entitySpecs:{mapped:spec}}])});
  const a=client(db,alice,undefined,app,options),b=client(db,bob,undefined,app,options),org=await boot(a);await boot(b);
  const result=await a('modules/mapped/records',{method:'POST',body:{data:{displayName:'Uniqueinvoice',orderId:'legacy-order',rowCount:2}}});assert.equal(result.status,201,JSON.stringify(result.body));const record=result.body.record,adapter=entityStorage(schema,spec);
+ assert.equal(Object.hasOwn(record.data,'frozenDocument'),false);
  assert.equal(record.data.displayName,'Uniqueinvoice');assert.equal(record.data.orderId,'legacy-order');assert.equal((await b('modules/mapped/records/'+record.id)).status,404);
  const patch=adapter.patchStatement({id:record.id,orgId:org,version:1,now:'2026-09-21',filter:{sql:'1=1',bindings:[]},patch:{createdAt:'old-exact-instant',isReady:false,frozenDocument:{lines:[{keep:true}]}}});
  await assert.rejects(()=>db.batch([db.prepare(patch.sql).bind(...patch.bindings),db.prepare('SELECT * FROM no_such_target')]));
@@ -25,6 +26,18 @@ async function exercise(db){
  assert.equal((await a('search?q=Uniqueinvoice')).body.total,1);assert.equal((await b('search?q=Uniqueinvoice')).body.total,0);
  assert.equal((await db.prepare("SELECT COUNT(*) n FROM lite_records WHERE module_id='mapped'").first()).n,0);
  assert.equal((await a('modules/mapped/records/'+record.id,{method:'PATCH',body:{version:2,data:{createdAt:'forged'}}})).status,400);
+ const clear=adapter.patchStatement({id:record.id,orgId:org,version:2,now:'2026-09-22',filter:{sql:'1=1',bindings:[]},patch:{frozenDocument:null}});
+ await assert.rejects(()=>db.batch([db.prepare(clear.sql).bind(...clear.bindings),db.prepare('SELECT * FROM no_such_target')]));
+ assert.deepEqual((await a('modules/mapped/records/'+record.id)).body.record.data.frozenDocument,{lines:[{keep:true}]});
+ await db.prepare(clear.sql).bind(...clear.bindings).run();
+ assert.equal((await db.prepare('SELECT frozen_document FROM mapped_items WHERE id=?').bind(record.id).first()).frozen_document,'null');
+ assert.equal((await a('modules/mapped/records/'+record.id)).body.record.data.frozenDocument,null);
+ assert.equal(JSON.parse((await db.prepare('SELECT data FROM lite_search_documents WHERE record_id=?').bind(record.id).first()).data).frozenDocument,null);
+ const nullId=crypto.randomUUID();await adapter.insert(db,{id:nullId,orgId:org,userId:alice.userId,now:'2026-09-22',data:{displayName:'Explicit null',frozenDocument:null}}).run();
+ assert.equal((await a('modules/mapped/records/'+nullId)).body.record.data.frozenDocument,null);
+ const replace=adapter.updateStatement({id:nullId,orgId:org,version:1,now:'2026-09-22',filter:{sql:'1=1',bindings:[]},data:{displayName:'Still null',frozenDocument:null}});await db.prepare(replace.sql).bind(...replace.bindings).run();
+ assert.equal((await a('modules/mapped/records/'+nullId)).body.record.data.frozenDocument,null);
+
 }
 test('mapped logical camelCase keys retain their DTO on SQLite with snake_case columns',async t=>{const db=await localDb();t.after(()=>db.close());await exercise(db);});
 test('mapped logical camelCase keys retain their DTO on actual D1',async()=>{const wr=createRequire(createRequire(join(root,'template/package.json')).resolve('wrangler/package.json'));const {Miniflare}=await import(pathToFileURL(wr.resolve('miniflare')).href);const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response("ok")}}',compatibilityDate:'2026-05-15',d1Databases:['DB'],cf:false});try{const db=await mf.getD1Database('DB');for(const sql of (await migrationSql()).split('--> statement-breakpoint').map(s=>s.trim()).filter(Boolean))await db.prepare(sql).run();await exercise(db);}finally{await mf.dispose();}});
