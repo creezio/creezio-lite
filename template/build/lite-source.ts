@@ -1,3 +1,4 @@
+import {stabilizeVinextSlotContexts} from "../runtime/modules/sites-adapter/build/router-contexts";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import type { Plugin } from "vite";
@@ -13,6 +14,7 @@ export function liteSource(): Plugin {
   return {
     name: "lite-source-packages",
     enforce: "pre",
+    transform(code,id){const result=stabilizeVinextSlotContexts(code,id);return result===null?null:{code:result,map:null};},
     resolveId(id, importer) {
       if (importer?.startsWith(packages) && ["recharts", "react-resizable-panels"].includes(id)) {
         return this.resolve(id === "recharts" ? "lite-recharts" : "lite-resizable-panels", resolve("app/page.tsx"), { skipSelf: true });

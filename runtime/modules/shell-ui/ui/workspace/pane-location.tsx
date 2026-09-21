@@ -24,3 +24,5 @@ export function useWorkspaceRouter() {
     replace: (href: string, options?: {scroll?:boolean}) => navigate ? navigate(href, { replace: true, skipHistory: true }) : router.replace(href, options),
   }), [router, navigate]);
 }
+
+export {usePaneActive} from "./keep-alive";

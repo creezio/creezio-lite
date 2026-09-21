@@ -7,6 +7,7 @@ import {
 import {
   getBfcacheIdMapContext, getBfcacheSegmentIdContext, getLayoutSegmentContext,
 } from "vinext/shims/navigation-context-state";
+import {WorkspaceRenderedLocationContext} from "../../shell-ui/ui/workspace/use-location-search";
 import { getClientNavigationRenderContext } from "vinext/shims/navigation";
 
 // Vinext resolves layout children through these contexts, not Next's
@@ -35,4 +36,12 @@ function FreezeContext({ context, live, children }: {
 export function SitesPaneRouter({ live, children }: { live: boolean; children: ReactNode }) {
   return contexts.reduceRight<ReactNode>((node, context) =>
     createElement(FreezeContext, { context, live }, node), children);
+}
+
+/** Keep the shell's cache key in the same render snapshot as its RSC children.
+ * Vinext's public navigation hooks can fall back to the global committed URL
+ * while a retained layout already receives the next ElementsContext. */
+export function SitesWorkspaceLocation({children}:{children:ReactNode}) {
+ const snapshot=useContext(getClientNavigationRenderContext()!);
+ return createElement(WorkspaceRenderedLocationContext.Provider,{value:snapshot?{pathname:snapshot.pathname,search:snapshot.searchParams.toString()}:null},children);
 }

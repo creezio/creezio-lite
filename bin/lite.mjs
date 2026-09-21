@@ -92,7 +92,11 @@ export async function doctor(appPath){
  const bridgePath=join(app,'app/sites-pane-router.tsx');
  const bridge=await exists(bridgePath)?await readFile(bridgePath,'utf8'):'';
  const managedBridge=bridge.includes('@lite/sites-adapter/ui/pane-router');
- const hostIntegration={paneRouter:managedBridge?'managed':bridge?'legacy':'missing',migrationRequired:!managedBridge};
+ const chromePath=join(app,'app/brand-chrome.tsx'),buildPath=join(app,'build/lite-source.ts');
+ const chrome=await exists(chromePath)?await readFile(chromePath,'utf8'):'';
+ const build=await exists(buildPath)?await readFile(buildPath,'utf8'):'';
+ const renderLocation=chrome.includes('<SitesWorkspaceLocation>'),slotContexts=build.includes('stabilizeVinextSlotContexts');
+ const hostIntegration={paneRouter:managedBridge?'managed':bridge?'legacy':'missing',renderLocation,slotContexts,migrationRequired:!managedBridge||!renderLocation||!slotContexts};
  return {ok:!issues.length,kitVersion:lock.kitVersion,registered:Boolean(host.project_id),issues,orchestration,hostIntegration};
 }
 export async function upgrade(appPath,apply=false){

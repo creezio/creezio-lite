@@ -1,2 +1,2 @@
 "use client";
-export { SitesPaneRouter } from "@lite/sites-adapter/ui/pane-router";
+export {SitesPaneRouter, SitesWorkspaceLocation} from "@lite/sites-adapter/ui/pane-router";

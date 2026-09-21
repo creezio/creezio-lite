@@ -12,3 +12,5 @@ export { createGeneratedFilePublicationPort } from './generated-files.ts';
 export type { GeneratedFileStatement, GeneratedFileIntent, StagedGeneratedFile, GeneratedFilePublicationPort } from './generated-files.ts';
 export { preparePasswordAccount, resolvePasswordIdentity, handlePasswordAuth } from './password-auth.ts';
 export type { PasswordAuthEnvironment, PasswordAuthCallbacks, PreparedPasswordAccount } from './password-auth.ts';
+
+export {moduleDataSchema} from './operations.ts';

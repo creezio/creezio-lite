@@ -46,3 +46,25 @@ test('two records of the same module are separate pages; filters keep the same p
  assert.equal(sameWorkspacePage('/clients?q=A','/clients?q=B'),true);
  assert.equal(shouldOpenLockedNavigationInNewTab({id:'a',href:'/clients?record=A',locked:true},'/clients?record=B'),true);
 });
+
+test('shell observes query-only host navigation without patched history or a parent rerender',async()=>{
+ const {useLocationSearch}=await import('../runtime/modules/shell-ui/ui/workspace/use-location-search.tsx');
+ function Shell(){const search=useLocationSearch('/clients');return h('output',null,search);}
+ window.history.replaceState(null,'','/clients');nav.commitClientNavigationState(undefined,{releaseSnapshot:false});
+ let root;await act(()=>{root=create(h(Shell));});
+ try{
+  assert.equal(root.root.findByType('output').children.join(''),'');
+  await act(()=>{window.history.replaceState(null,'','/clients?record=A');nav.commitClientNavigationState(undefined,{releaseSnapshot:false});});
+  assert.equal(root.root.findByType('output').children.join(''),'record=A');
+ }finally{await act(()=>root.unmount());}
+});
+
+test('Sites shell keys its panes from the rendered snapshot before the global URL commits',async()=>{
+ const {SitesWorkspaceLocation}=await import('../runtime/modules/sites-adapter/ui/pane-router.tsx');
+ const {useWorkspaceLocation}=await import('../runtime/modules/shell-ui/ui/workspace/use-location-search.tsx');
+ function Shell(){return h('output',null,JSON.stringify(useWorkspaceLocation()));}
+ window.history.replaceState(null,'','/clients?record=A');nav.commitClientNavigationState(undefined,{releaseSnapshot:false});
+ let root;await act(()=>{root=create(h(Context.Provider,{value:nav.createClientNavigationRenderSnapshot('/support?ticket=B',{})},h(SitesWorkspaceLocation,null,h(Shell))));});
+ try{assert.deepEqual(JSON.parse(root.root.findByType('output').children[0]),{pathname:'/support',search:'ticket=B'});}
+ finally{await act(()=>root.unmount());}
+});

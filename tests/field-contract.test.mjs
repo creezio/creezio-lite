@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {defineApp,validateData} from '../runtime/core/validation.ts';
-import {fieldSchema} from '../runtime/core/operations.ts';
+import {fieldSchema,moduleDataSchema} from '../runtime/core/operations.ts';
 import {fieldInputValue,parseFieldInput,formatFieldValue} from '../runtime/ui/field-value.ts';
 const name={key:'name',label:'Nom',type:'text',required:true};
 const price={key:'price',label:'Prix',type:'number',integer:true,min:0,scale:100,unit:'EUR'};
@@ -21,4 +21,12 @@ test('reference declarations point to a known module and declared label',()=>{
  const other={id:'orders',name:'Orders',singular:'Order',description:'',titleField:'name',fields:[name,ref]};
  assert.equal(defineApp({...app,modules:[...app.modules,other]}).modules.length,2);
  assert.throws(()=>defineApp({...app,modules:[{...other,fields:[name,{...ref,reference:{moduleId:'missing'}}]}]}),/référence/);
+});
+
+test('module command schema is closed, preserves nullable optional fields and required keys',()=>{
+ const schema=moduleDataSchema(defineApp(app).modules[0]);
+ assert.equal(schema.additionalProperties,false);assert.deepEqual(schema.required,['name']);
+ assert.equal(schema.properties.price.anyOf[0].type,'integer');
+ assert.ok(schema.properties.price.anyOf.some(s=>s.type==='null'));
+ assert.deepEqual(moduleDataSchema(defineApp(app).modules[0],{partial:true}).required,[]);
 });

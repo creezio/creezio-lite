@@ -12,7 +12,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   configureAssistantTabWorkspace,
   resolveActiveSurface,
@@ -45,7 +45,7 @@ import {
   type WorkspacePersistedState,
   type WorkspaceTab,
 } from "./types";
-import { useLocationSearch } from "./use-location-search";
+import { useWorkspaceLocation } from "./use-location-search";
 import {
   getDefaultNewTabHref,
   getProductDetailCtxAdapter,
@@ -285,8 +285,7 @@ function dropDuplicatePathTabs(
 
 export function TabWorkspaceProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname() || "/";
-  const search = useLocationSearch(pathname);
+  const {pathname,search} = useWorkspaceLocation();
   const currentHref = hrefOf(pathname, search);
   const inWorkspace = isWorkspacePath(pathname);
 

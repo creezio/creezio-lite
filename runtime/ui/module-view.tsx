@@ -2,7 +2,7 @@
 import { DataTable, Badge } from '@lite/shell-ui/ui';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useEffect, useState, useCallback, useId } from 'react';
-import { useWorkspaceRouter as useRouter, usePaneSearchParams as useSearchParams } from '@lite/shell-ui/ui/workspace/pane-location';
+import { useWorkspaceRouter as useRouter, usePaneSearchParams as useSearchParams, usePaneActive } from '@lite/shell-ui/ui/workspace/pane-location';
 import { Plus, Search, Pencil, Archive, ChevronLeft, ChevronRight, FolderOpen } from 'lucide-react';
 import { Button } from '@lite/shell-ui/ui/kit';
 import { Input } from '@lite/shell-ui/ui/kit';
@@ -77,5 +77,6 @@ export function parentHref(module:Module,data:Record<string,unknown>):string|nul
 function RecordDetail({module,api,id,revision,onClose,onEdit}:{module:Module;api:Api;id:string;revision:number;onClose:()=>void;onEdit?:(record:RecordData)=>void}){
   const {data,error,loading}=useLoad<{record:RecordData}>(()=>api(`modules/${module.id}/records/${encodeURIComponent(id)}`),[api,module.id,id,revision],[api,module.id,id]);
   const parent=data?parentHref(module,data.record.data):null;
-  return <Dialog open onOpenChange={open=>{if(!open)onClose();}}><DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{data?String(data.record.data[module.titleField]):module.singular}</DialogTitle><DialogDescription>{module.name}</DialogDescription></DialogHeader><State error={error} loading={loading}/>{data?<><dl className="grid grid-cols-1 sm:grid-cols-2 gap-5">{module.fields.map(field=><div key={field.key} className={field.type==='textarea'?'sm:col-span-2':''}><dt className="text-sm text-muted-foreground">{field.label}</dt><dd className="whitespace-pre-wrap break-words mt-1">{field.key===module.parentField&&parent?<a className="underline" href={parent}>{formatFieldValue(field,data.record.data[field.key])}</a>:formatFieldValue(field,data.record.data[field.key])}</dd></div>)}</dl>{onEdit?<div className="flex justify-end"><Button onClick={()=>onEdit(data.record)}><Pencil size={15}/>Modifier</Button></div>:null}</>:null}</DialogContent></Dialog>;
+  const active=usePaneActive();
+  return <Dialog open={active} onOpenChange={open=>{if(!open&&active)onClose();}}><DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{data?String(data.record.data[module.titleField]):module.singular}</DialogTitle><DialogDescription>{module.name}</DialogDescription></DialogHeader><State error={error} loading={loading}/>{data?<><dl className="grid grid-cols-1 sm:grid-cols-2 gap-5">{module.fields.map(field=><div key={field.key} className={field.type==='textarea'?'sm:col-span-2':''}><dt className="text-sm text-muted-foreground">{field.label}</dt><dd className="whitespace-pre-wrap break-words mt-1">{field.key===module.parentField&&parent?<a className="underline" href={parent}>{formatFieldValue(field,data.record.data[field.key])}</a>:formatFieldValue(field,data.record.data[field.key])}</dd></div>)}</dl>{onEdit?<div className="flex justify-end"><Button onClick={()=>onEdit(data.record)}><Pencil size={15}/>Modifier</Button></div>:null}</>:null}</DialogContent></Dialog>;
 }
