@@ -9,7 +9,7 @@ export function validateStoredData(module:Module,input:unknown,options:{previous
  const fields=storedFields(module).filter(f=>f.required||!module.serverFields?.some(s=>s.key===f.key)||!!input&&typeof input==='object'&&Object.hasOwn(input,f.key));
  const absent=(value:unknown)=>value===undefined||value===null||value==='';
  const checked=fields.map(f=>f.required&&options.previous&&absent(options.previous[f.key])&&input&&typeof input==='object'&&absent((input as Record<string,unknown>)[f.key])?{...f,required:false}:f);
- return validateData({...module,fields:checked},input);
+ return validateData({...module,fields:checked},input,{stored:true});
 }
 /** Closed client input. Omitted server fields are inherited, never reset by a form. */
 export function validateEntityInput(module:Module,input:unknown,previous:Record<string,unknown>|null=null){
@@ -55,6 +55,6 @@ export async function commitWithEffects<T>(commit:()=>Promise<T>,effects:readonl
 /** Typed partial command write, as in Creezio PATCH: untouched legacy values are preserved verbatim. */
 export function validateStoredPatch(module:Module,patch:Record<string,unknown>,previous:Record<string,unknown>){
  const keys=new Set(Object.keys(patch));
- const checked=validateData({...module,fields:storedFields(module).filter(f=>keys.has(f.key))},patch);
+ const checked=validateData({...module,fields:storedFields(module).filter(f=>keys.has(f.key))},patch,{stored:true});
  return {...previous,...checked};
 }

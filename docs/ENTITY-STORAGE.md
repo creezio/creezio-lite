@@ -56,3 +56,5 @@ Les colonnes NULL des métadonnées serveur optionnelles sont projetées comme a
 ### Contexte des hooks de lecture et des effets
 
 `afterRead`, `afterList`, `beforeArchive` et les effets `afterCreate`/`afterUpdate`/`afterArchive` reçoivent `db`, la base D1 de la requête, avec l’espace et l’identité autorisés. Les modules peuvent ainsi reprendre leurs compteurs et projections relationnelles historiques. Toute requête ajoutée par un hook doit filtrer l’espace et respecter les droits métier ; la présence de `db` ne confère aucun droit. Les champs retournés par une projection ne sont pas réécrits en stockage. Les effets restent exécutés après commit.
+
+Les écritures serveur valident sans normaliser les textes : une chaîne vide de type text/textarea reste vide, les espaces et retours de ligne sont conservés, et un booléen optionnel null ne devient pas false. Les champs obligatoires vides et les valeurs trop longues restent refusés. La normalisation des formulaires demeure dans `validateEntityInput`, avant les règles métier.

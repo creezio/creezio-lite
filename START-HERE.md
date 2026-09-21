@@ -19,7 +19,7 @@ Déclarer les champs dans un fichier JSON, puis lancer :
 node bin/lite.mjs module --app /chemin/application --spec /chemin/module.json
 ```
 
-Cette commande ajoute la déclaration à `brand.json`. La prochaine compilation branche navigation, formulaire/tableau, API CRUD, recherche et outils MCP. Aucune nouvelle table n’est nécessaire pour un module déclaratif. Voir [docs/MODULES.md](docs/MODULES.md) pour les limites et les règles métier avancées.
+Cette commande ajoute le schéma canonique du module et régénère son instantané `brand.json`. Elle génère sa table relationnelle D1, son schéma Drizzle et sa migration. La prochaine compilation branche navigation, formulaire/tableau, API CRUD, recherche et outils MCP. Voir [docs/MODULES.md](docs/MODULES.md) pour les limites et les règles métier avancées.
 
 ## Mise à jour d’une application existante
 

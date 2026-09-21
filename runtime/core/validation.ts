@@ -139,7 +139,7 @@ function validateModuleParents(modules: Module[]) {
   }
 }
 
-export function validateData(mod: Module, input: unknown): Record<string, unknown> {
+export function validateData(mod: Module, input: unknown, options: {stored?: boolean} = {}): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail(400, 'invalid_data', 'Les données doivent être un objet.');
   const source = input as Record<string, unknown>;
   const allowed = new Set(mod.fields.map(f => f.key));
@@ -147,9 +147,18 @@ export function validateData(mod: Module, input: unknown): Record<string, unknow
   const result: Record<string, unknown> = {};
   for (const f of mod.fields) {
     let value = source[f.key];
-    if (typeof value === 'string') value = value.trim();
+    if (typeof value === 'string' && !options.stored) value = value.trim();
+    if (options.stored && f.required && typeof value === 'string' && !value.trim()) fail(400, 'required_field', `${f.label} est obligatoire.`);
     const empty = value === undefined || value === null || value === '';
-    if (empty) { if (f.required) fail(400, 'required_field', `${f.label} est obligatoire.`); result[f.key] = f.type === 'boolean' ? false : null; continue; }
+    if (empty) {
+      if (f.required) fail(400, 'required_field', `${f.label} est obligatoire.`);
+      // Server commands already selected their values: validation must not turn
+      // an empty text into NULL, or an unknown optional boolean into false.
+      result[f.key] = options.stored
+        ? (value === '' && !f.encoding && ['text','textarea'].includes(f.type) ? '' : null)
+        : (f.type === 'boolean' ? false : null);
+      continue;
+    }
     if (f.encoding === 'json') {
       try { if(typeof value==='string')value=JSON.parse(value); const encoded=JSON.stringify(value); if(encoded===undefined||encoded.length>(f.maxLength??5000))throw new Error(); value=JSON.parse(encoded); }
       catch { fail(400,'invalid_json',`${f.label} : JSON invalide ou trop long.`); }

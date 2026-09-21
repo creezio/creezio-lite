@@ -51,6 +51,12 @@ async function exercise(db){
  await db.prepare(patch.sql).bind(...patch.bindings).run();
  const patched=JSON.parse((await db.prepare(`SELECT data FROM ${adapter.source} WHERE id=?`).bind('wide').first()).data);assert.equal(patched.quantity,4);assert.deepEqual(patched.tags,['patched']);assert.equal(patched.snapshot_79,'value');
  assert.equal((await db.prepare(patch.sql).bind(...patch.bindings).run()).meta.changes,0);
+ const preservedText='  exact text\n  ';
+ const exact=adapter.patchStatement({id:'wide',orgId:org,patch:{snapshot_0:'',snapshot_1:preservedText},version:2,now:new Date().toISOString(),filter:{sql:'1=1',bindings:[]}});
+ await db.prepare(exact.sql).bind(...exact.bindings).run();
+ const physicalText=await db.prepare('SELECT snapshot_0,snapshot_1 FROM wide_items WHERE id=?').bind('wide').first();
+ assert.equal(physicalText.snapshot_0,'');assert.equal(physicalText.snapshot_1,preservedText);
+
 
 }
 test('relational D1 adapter: physical columns, field semantics, scope, search/reindex, CAS and commit hooks',async t=>{const db=await localDb();t.after(()=>db.close());await exercise(db);});
@@ -157,4 +163,30 @@ test('real D1: 26 relational modules compose a bounded read source with scope, p
  const page=await db.prepare('SELECT * FROM all_entities WHERE org_id=? ORDER BY id LIMIT ? OFFSET ?').bind('mine',5,20).all();assert.equal(page.results.length,5);assert.ok(page.results.every(row=>row.org_id==='mine'));
  const last=await db.prepare('SELECT data FROM '+source+' WHERE org_id=? AND module_id=?').bind('mine','entity-25').first();assert.equal(JSON.parse(last.data).name,'Token entity-25');
  assert.equal((await db.prepare("SELECT COUNT(*) n FROM all_entities WHERE org_id='foreign'").first()).n,1);
+});
+
+
+test('stored full and partial writes preserve empty text, whitespace and nullable booleans; client normalization stays separate',async()=>{
+ const textSchema={...schema,fields:[...schema.fields,{key:'tracking',label:'Tracking',type:'text',maxLength:8},{key:'note',label:'Note',type:'textarea',maxLength:30}]};
+ const input={name:' Box ',tracking:'',note:'  line 1\nline 2  ',active:null};
+ const full=validateStoredData(textSchema,input);
+ assert.equal(full.name,input.name);assert.equal(full.tracking,'');assert.equal(full.note,input.note);assert.equal(full.active,null);
+ const patch=validateStoredPatch(textSchema,{tracking:'',note:input.note,active:null},{name:'Previous',quantity:1});
+ assert.equal(patch.tracking,'');assert.equal(patch.note,input.note);assert.equal(patch.active,null);assert.equal(patch.quantity,1);
+ assert.throws(()=>validateStoredPatch(textSchema,{tracking:'        X'},{}),e=>e.code==='invalid_text');
+ assert.throws(()=>validateStoredData(textSchema,{...input,name:'   '}),e=>e.code==='required_field');
+ assert.throws(()=>validateStoredPatch(textSchema,{active:'true'},{}),e=>e.code==='invalid_boolean');
+ const prepared=await prepareEntityWrite({module:textSchema,data:{name:'  Box  ',tracking:'',note:'  note  '},previous:null});
+ assert.equal(prepared.name,'Box');assert.equal(prepared.tracking,null);assert.equal(prepared.note,'note');
+ for(const storage of [{kind:'records'},{kind:'relational',table:'storage_semantics'}]){
+  const db=await localDb();try{
+   if(storage.kind==='relational')for(const sql of relationalEntityMigration({schema:textSchema,storage}))await db.prepare(sql).run();
+   const org=await boot(client(db,alice));const adapter=entityStorage(textSchema,{schema:textSchema,storage});
+   await adapter.insert(db,{id:'preserved',orgId:org,data:input,userId:alice.userId,now:'2026-09-21'}).run();
+   const row=await db.prepare('SELECT data FROM '+adapter.source+' WHERE id=?').bind('preserved').first();const stored=JSON.parse(row.data);
+   assert.equal(stored.tracking,'');assert.equal(stored.note,input.note);assert.equal(stored.name,input.name);
+   if(storage.kind==='relational')assert.equal((await db.prepare('SELECT active FROM storage_semantics').first()).active,null);
+   else assert.equal(stored.active,null);
+  }finally{db.close();}
+ }
 });
