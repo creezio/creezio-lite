@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePanePathname as usePathname, usePaneSearchParams as useSearchParams } from '@lite/shell-ui/ui/workspace/pane-location';
 import { Skeleton } from "./primitives/skeleton";
 import { cn } from "@lite/shell-ui";
 

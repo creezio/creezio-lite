@@ -18,7 +18,7 @@ import {
 } from "@lite/shell-ui/ui";
 import brand from "@/brand.json";
 import { WorkspacePaneRouterContext } from "../runtime/modules/shell-ui/ui/workspace/keep-alive";
-import { SitesPaneRouter } from "./sites-pane-router";
+import { SitesPaneRouter, SitesWorkspaceLocation } from "./sites-pane-router";
 import { moduleRegistry } from "@/runtime/core/registry";
 import type { GlobalSearchHit } from "@/runtime/modules/shell-ui/ui/search/global-search-config";
 
@@ -72,7 +72,7 @@ export function BrandChrome({children}:{children:ReactNode}) {
         <SessionTools/>
         <SessionUsageAnalyticsProvider><></></SessionUsageAnalyticsProvider>
         <WorkspacePaneRouterContext.Provider value={SitesPaneRouter}>
-          <WorkspaceRoot>{children}</WorkspaceRoot>
+          <SitesWorkspaceLocation><WorkspaceRoot>{children}</WorkspaceRoot></SitesWorkspaceLocation>
         </WorkspacePaneRouterContext.Provider>
       </RequireSession>
       <DemoInSession/>

@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState, useTransition, type ChangeEvent } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePanePathname as usePathname, useWorkspaceRouter as useRouter, usePaneSearchParams as useSearchParams } from '@lite/shell-ui/ui/workspace/pane-location';
 import { Input } from "./primitives/input";
 import { Button } from "./primitives/button";
 import { cn } from "@lite/shell-ui";

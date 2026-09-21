@@ -1,6 +1,6 @@
 'use client';
 import { useRef, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useWorkspaceRouter as useRouter, usePaneSearchParams as useSearchParams } from '@lite/shell-ui/ui/workspace/pane-location';
 import { Upload, Download, Trash2, Plus, Copy, Settings2, ChevronRight, ChevronLeft } from 'lucide-react';
 import { Button } from '@lite/shell-ui/ui/kit';
 import { Input } from '@lite/shell-ui/ui/kit';

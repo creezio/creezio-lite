@@ -11,8 +11,20 @@ export function createClient(workspace: string): Api {
     return result;
   };
 }
-export function useLoad<T>(load:()=>Promise<T>, dependencies: unknown[]) {
-  const [state,setState]=useState<{data:T|null;error:string;loading:boolean}>({data:null,error:'',loading:true});
-  useEffect(()=>{let active=true;setState({data:null,error:'',loading:true});load().then(data=>{if(active)setState({data,error:'',loading:false});}).catch(e=>{if(active)setState({data:null,error:e.message,loading:false});});return()=>{active=false;};},dependencies); // caller supplies stable dependency set
-  return state;
+/** Retain a loaded view only while its identity (including auth/workspace) is unchanged.
+ * Revision is a refresh trigger, not the identity of the data. Late responses are discarded.
+ */
+export function useLoad<T>(load:()=>Promise<T>, dependencies: unknown[], identity: unknown[] = dependencies) {
+  type State = {identity:unknown[];data:T|null;error:string;loading:boolean};
+  const same=(a:unknown[],b:unknown[])=>a.length===b.length&&a.every((v,i)=>Object.is(v,b[i]));
+  const [state,setState]=useState<State>({identity,data:null,error:'',loading:true});
+  useEffect(()=>{
+    let active=true;
+    setState(previous=>({identity,data:same(previous.identity,identity)?previous.data:null,error:'',loading:true}));
+    load().then(data=>{if(active)setState({identity,data,error:'',loading:false});})
+      .catch(error=>{if(active)setState({identity,data:null,error:error instanceof Error?error.message:'Chargement impossible.',loading:false});});
+    return()=>{active=false;};
+  },dependencies); // caller supplies the complete, stable dependency set
+  if(!same(state.identity,identity))return {data:null,error:'',loading:true};
+  return {data:state.data,error:state.error,loading:state.loading};
 }

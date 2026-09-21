@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useWorkspaceRouter as useRouter, usePaneSearchParams as useSearchParams } from '@lite/shell-ui/ui/workspace/pane-location';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button, Input, Card } from '@lite/shell-ui/ui/kit';
 import { createClient } from './client';

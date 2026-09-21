@@ -9,6 +9,11 @@ export type Field = {
   type: 'text' | 'textarea' | 'email' | 'number' | 'date' | 'select' | 'boolean';
   required?: boolean; options?: string[]; maxLength?: number; min?: number; max?: number;
   searchable?: boolean;
+  /** Storage semantics shared by validation, API/MCP schemas and form/list presentation. */
+  integer?: boolean;
+  scale?: number;
+  unit?: string;
+  reference?: { moduleId: string; labelField?: string; multiple?: boolean };
 };
 /** A module without kind keeps the historical CRUD behaviour exactly. */
 export type ModuleKind = 'module' | 'entity' | 'collection';

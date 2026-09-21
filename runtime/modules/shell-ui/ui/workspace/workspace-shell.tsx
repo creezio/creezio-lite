@@ -12,7 +12,6 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import {
   ASSISTANT_PANEL_WIDTH_PX,
@@ -26,7 +25,7 @@ import { PageToolbarProvider } from "../layout/page-toolbar-context";
 import { KeepAliveOutlet } from "./keep-alive";
 import { useTabWorkspace } from "./tab-workspace-context";
 import { isWorkspacePath, normalizeHref } from "./types";
-import { useLocationSearch } from "./use-location-search";
+import { useWorkspaceLocation } from "./use-location-search";
 import { WorkspaceTabBar } from "./workspace-tab-bar";
 import {
   getPreferCatalogueSelector,
@@ -96,8 +95,7 @@ export function WorkspaceShell({
   sidebar?: ReactNode;
   footbar?: ReactNode;
 }) {
-  const pathname = usePathname() || "/";
-  const search = useLocationSearch(pathname);
+  const {pathname,search} = useWorkspaceLocation();
   // normalizeHref canonise "/" → /dashboard : la page racine (pure redirection)
   // ne doit jamais avoir sa propre pane keep-alive (boucle router.replace).
   const cacheKey = normalizeHref(search ? `${pathname}?${search}` : pathname);

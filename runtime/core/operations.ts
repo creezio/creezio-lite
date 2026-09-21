@@ -1,5 +1,5 @@
 import { requestAccessMatches, accessModuleReadable, type RequestAccessContext } from './access-profiles-store.ts';
-import type { AppDefinition, AppOperationDefinition, Field, Role, Workspace } from './types.ts';
+import type { AppDefinition, AppOperationDefinition, Field, Module, Role, Workspace } from './types.ts';
 import { roles, fail, idPattern, moduleWritable } from './validation.ts';
 
 export type JsonSchema = Record<string, any>;
@@ -18,7 +18,17 @@ export const stringSchema={type:'string',maxLength:300};
 export const idSchema={type:'string',minLength:1,maxLength:160};
 export const paging={limit:{type:'integer',minimum:1,maximum:100},offset:{type:'integer',minimum:0,maximum:100000},q:{type:'string',maxLength:120}};
 const admin:Role[]=['owner','admin'],writers:Role[]=['owner','admin','member'];
-export function fieldSchema(f:Field):JsonSchema{if(f.type==='date'&&!f.required)return {description:f.label,anyOf:[fieldSchema({...f,required:true}),{type:'string',enum:['']},{type:'null'}]};return {type:f.type==='number'?'number':f.type==='boolean'?'boolean':'string',description:f.label,...(f.type==='select'?{enum:f.options}:{}),...(f.type==='email'?{format:'email'}:{}),...(f.type==='date'?{format:'date'}:{}),...(f.maxLength?{maxLength:f.maxLength}:{}),...(f.min!==undefined?{minimum:f.min}:{}),...(f.max!==undefined?{maximum:f.max}:{})};}
+export function fieldSchema(f:Field):JsonSchema{if(f.type==='date'&&!f.required)return {description:f.label,anyOf:[fieldSchema({...f,required:true}),{type:'string',enum:['']},{type:'null'}]};return {type:f.type==='number'?(f.integer?'integer':'number'):f.type==='boolean'?'boolean':'string',description:f.label,...(f.type==='select'?{enum:f.options}:{}),...(f.type==='email'?{format:'email'}:{}),...(f.type==='date'?{format:'date'}:{}),...(f.maxLength?{maxLength:f.maxLength}:{}),...(f.min!==undefined?{minimum:f.min}:{}),...(f.max!==undefined?{maximum:f.max}:{})};}
+/** Derive a closed command data schema from the same fields as validateData.
+ * Optional blank values remain compatible with native forms; domain validation
+ * still handles normalization and business rules. Partial is for update/restore inputs.
+ */
+export function moduleDataSchema(module:Module,{partial=false}:{partial?:boolean}={}):JsonSchema {
+ const properties=Object.fromEntries(module.fields.map(field=>[field.key,field.required?fieldSchema(field):{
+  description:field.label,anyOf:[fieldSchema({...field,required:true}),{type:'null'},{type:'string',enum:['']}]
+ }]));
+ return objectSchema(properties,partial?[]:module.fields.filter(f=>f.required).map(f=>f.key));
+}
 export function operation(value:Omit<Operation,'kind'|'inputSchema'|'toolName'|'tokenAllowed'|'mcp'> & Partial<Pick<Operation,'kind'|'inputSchema'|'toolName'|'tokenAllowed'|'mcp'>>):Operation {
   const params=Object.fromEntries([...value.path.matchAll(/:([A-Za-z0-9_]+)/g)].map(m=>[m[1],idSchema]));
   const properties={...params,...(value.querySchema?{query:value.querySchema}:{}),...(value.bodySchema?{body:value.bodySchema}:{})};

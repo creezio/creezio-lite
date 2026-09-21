@@ -1,7 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
-import { useSearchParams, usePathname, useRouter } from "next/navigation";
+import { usePaneSearchParams as useSearchParams, usePanePathname as usePathname, useWorkspaceRouter as useRouter } from '@lite/shell-ui/ui/workspace/pane-location';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./primitives/select";
 import { SearchInput } from "./search-input";
 import { aidProps } from "./lib/aid";

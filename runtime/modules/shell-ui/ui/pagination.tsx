@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePanePathname as usePathname, usePaneSearchParams as useSearchParams } from '@lite/shell-ui/ui/workspace/pane-location';
 
 export function Pagination({
   page,

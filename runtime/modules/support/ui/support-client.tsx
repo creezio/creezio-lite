@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePaneSearchParams as useSearchParams } from '@lite/shell-ui/ui/workspace/pane-location';
 import { Badge, Button, Card, Input } from "@lite/shell-ui/ui/kit";
 
 const API = "/api/v1/platform/platform-support";

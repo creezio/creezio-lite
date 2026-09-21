@@ -10,6 +10,7 @@ const templateURL = new URL('../template/package.json', import.meta.url).href;
 function source(path) { const stem=path.replace(/\/dist\//g,'/src/').replace(/\.js$/,''); return [path,stem+'.ts',stem+'.tsx',join(stem,'index.ts')].find(existsSync); }
 registerHooks({
   resolve(spec, context, next) {
+    if(spec === "next/navigation")spec="vinext/shims/navigation";
     if (spec === 'next/dist/shared/lib/app-router-context.shared-runtime') spec = 'vinext/shims/internal/app-router-context';
     if (spec.startsWith('@lite/')) {
       const [name,...parts]=spec.slice('@lite/'.length).split('/');

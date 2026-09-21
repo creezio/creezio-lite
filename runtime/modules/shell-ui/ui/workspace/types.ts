@@ -429,6 +429,21 @@ export function samePathname(a: string, b: string): boolean {
   return pa === pb;
 }
 
+/** Query-addressed records have the same identity semantics as historical /module/id routes.
+ * Filters and pagination remain views of the same record/list.
+ */
+export function workspacePageKey(href: string): string {
+  const normalized = normalizeHref(href);
+  const [path, ...query] = normalized.split("?");
+  const params = new URLSearchParams(query.join("?"));
+  const identity = new URLSearchParams();
+  for (const key of ["record", "ticket"]) if (params.get(key)) identity.set(key, params.get(key)!);
+  return path + (identity.size ? "?" + identity.toString() : "");
+}
+export function sameWorkspacePage(a: string, b: string): boolean {
+  return workspacePageKey(a) === workspacePageKey(b);
+}
+
 /** Une navigation de page doit-elle préserver l'onglet actif protégé ? */
 export function shouldOpenLockedNavigationInNewTab(
   activeTab: Pick<WorkspaceTab, "id" | "href" | "locked">,
@@ -437,7 +452,7 @@ export function shouldOpenLockedNavigationInNewTab(
 ): boolean {
   return (
     isWorkspaceTabLocked(activeTab, pinnedTabId) &&
-    !samePathname(activeTab.href, targetHref)
+    !sameWorkspacePage(activeTab.href, targetHref)
   );
 }
 
