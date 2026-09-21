@@ -49,7 +49,7 @@ const recordRef={alias:'r',idColumn:'id',moduleColumn:'module_id'},fileRef={alia
 /** Scope is applied inside the statement, before any row is returned. Out of scope reads as not found. */
 async function getRecord(db: D1Database, org: string, mod: string, id: string, scoped: Scoped, action: ScopeAction = 'read') {
   const filter=recordScope(scoped.scope,scoped.principal,recordRef,action,scoped.access);
-  const row = await db.prepare(`SELECT r.id,r.module_id,r.data,r.version,r.created_at,r.updated_at FROM ${entityRecordSource(scoped.entitySpecs)} r WHERE r.id=? AND r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL AND ${filter.sql}`).bind(id,org,mod,...filter.bindings).first<Row>();
+  const row = await db.prepare(`SELECT r.id,r.module_id,r.data,r.version,r.created_at,r.updated_at FROM ${entityRecordSource(scoped.entitySpecs,mod)} r WHERE r.id=? AND r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL AND ${filter.sql}`).bind(id,org,mod,...filter.bindings).first<Row>();
   if (!row) fail(404,'record_not_found','Document introuvable.');
   return unpack(row);
 }
@@ -134,7 +134,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       // Counters exist for navigable modules only and apply the read scope before COUNT.
       const visible=context.app.modules.filter(m=>moduleNavigable(m)&&(m.readRoles??roles).includes(org.role)&&canReadModule(org,m.id,access));
       const filter=recordScope(scoped.scope,scoped.principal,recordRef,'read',scoped.access);
-      const counts=await Promise.all(visible.map(async m=>({id:m.id,name:m.name,count:(await db.prepare(`SELECT COUNT(*) AS n FROM ${entityRecordSource(scoped.entitySpecs)} r WHERE r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL AND ${filter.sql}`).bind(org.id,m.id,...filter.bindings).first<{n:number}>())?.n??0})));
+      const counts=await Promise.all(visible.map(async m=>({id:m.id,name:m.name,count:(await db.prepare(`SELECT COUNT(*) AS n FROM ${entityRecordSource(scoped.entitySpecs,m.id)} r WHERE r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL AND ${filter.sql}`).bind(org.id,m.id,...filter.bindings).first<{n:number}>())?.n??0})));
       return json({modules:counts,workspace:org});
     }
     const systemRecord=path.match(/^(members|audit)\/([^/]+)$/);

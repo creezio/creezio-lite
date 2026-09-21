@@ -95,8 +95,13 @@ export function relationalEntityMigration(spec:ModuleEntitySpec):string[]{
  `CREATE TRIGGER ${quote(storage.table+'_search_delete')} AFTER DELETE ON ${table} BEGIN ${remove} END`,
  ];
 }
-export function entityRecordSource(specs:Record<string,ModuleEntitySpec>={}){
+export function entityRecordSource(specs:Record<string,ModuleEntitySpec>={},moduleId?:string){
+ // A known entity reads its own table; composition is only for cross-entity services.
+ if(moduleId){const spec=specs[moduleId];return spec?entityStorage(spec.schema,spec).source:'lite_records';}
  const relational=Object.values(specs).filter(s=>s.storage.kind==='relational');
  if(!relational.length)return 'lite_records';
- return `(SELECT id,org_id,module_id,data,version,created_by,created_at,updated_at,deleted_at FROM lite_records WHERE module_id NOT IN (${relational.map(s=>"'"+s.schema.id+"'").join(',')}) UNION ALL ${relational.map(s=>'SELECT * FROM '+entityStorage(s.schema,s).source).join(' UNION ALL ')})`;
+ let branches=[`SELECT id,org_id,module_id,data,version,created_by,created_at,updated_at,deleted_at FROM lite_records WHERE module_id NOT IN (${relational.map(s=>"'"+s.schema.id+"'").join(',')})`,...relational.map(s=>'SELECT * FROM '+entityStorage(s.schema,s).source)];
+ // D1 limits a compound SELECT to five terms. Nest bounded groups for any module count.
+ while(branches.length>5){const groups:string[]=[];for(let index=0;index<branches.length;index+=5)groups.push('SELECT * FROM ('+branches.slice(index,index+5).join(' UNION ALL ')+')');branches=groups;}
+ return '('+branches.join(' UNION ALL ')+')';
 }

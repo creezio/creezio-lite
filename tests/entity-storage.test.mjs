@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';import {join} from 'node:path';
 import {defineApp,defineExtensions,createBrandModuleRegistry,relationalEntityMigration,prepareEntityWrite,runAfterCommit,moduleDataSchema,commitWithEffects,validateStoredData,validateStoredPatch,entityStorage} from '../runtime/core/index.ts';
+import {entityRecordSource} from '../runtime/core/entity-storage.ts';
 import {coreOperations} from '../runtime/core/operations.ts';
 import {localDb,client,boot,alice,bob,root,migrationSql} from './helpers.mjs';
 const schema={serverFields:[{key:'active',label:'Active',type:'boolean'}],id:'inventory',name:'Inventory',singular:'Item',description:'Inventory',titleField:'name',fields:[
@@ -136,4 +137,24 @@ for(const kind of ['records','relational'])test(kind+': SQL business PATCH prese
  await assert.rejects(()=>execute({display:'computed'},2),e=>e.code==='unknown_field');
  await assert.rejects(()=>execute({name:null},2),e=>e.code==='required_field');
  assert.equal((await execute({},2)).meta.changes,1);
+});
+
+test('real D1: 26 relational modules compose a bounded read source with scope, pagination and legacy compatibility',async t=>{
+ const wr=createRequire(createRequire(join(root,'template/package.json')).resolve('wrangler/package.json'));const {Miniflare}=await import(pathToFileURL(wr.resolve('miniflare')).href);
+ const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response("ok")}}',compatibilityDate:'2026-05-15',d1Databases:['DB'],cf:false});t.after(()=>mf.dispose());const db=await mf.getD1Database('DB');
+ for(const sql of (await migrationSql()).split('--> statement-breakpoint').map(s=>s.trim()).filter(Boolean))await db.prepare(sql).run();
+ const specs=Object.fromEntries(Array.from({length:26},(_,i)=>{const id='entity-'+i;return [id,{schema:{id,name:id,singular:id,titleField:'name',fields:[{key:'name',label:'Name',type:'text',required:true}]},storage:{kind:'relational',table:'entity_'+i}}];}));
+ assert.doesNotMatch(entityRecordSource(specs,'entity-25'),/UNION|lite_records|entity_24/);
+ assert.match(entityRecordSource(specs,'entity-25'),/entity_25/);
+ await db.prepare("INSERT INTO lite_users(id,email,name) VALUES('owner','owner@test','Owner')").run();
+ for(const id of ['mine','foreign'])await db.prepare('INSERT INTO lite_orgs(id,name,created_at) VALUES(?,?,?)').bind(id,id,'2026-09-21').run();
+ for(const spec of Object.values(specs))await db.batch(relationalEntityMigration(spec).map(sql=>db.prepare(sql)));
+ for(const spec of Object.values(specs))await entityStorage(spec.schema,spec).insert(db,{id:spec.schema.id,orgId:'mine',data:{name:'Token '+spec.schema.id},userId:'owner',now:'2026-09-21'}).run();
+ await entityStorage(specs['entity-25'].schema,specs['entity-25']).insert(db,{id:'hidden',orgId:'foreign',data:{name:'Private'},userId:'owner',now:'2026-09-21'}).run();
+ await db.prepare(`INSERT INTO lite_records(id,org_id,module_id,data,search_text,version,created_by,created_at,updated_at) VALUES('legacy','mine','old','{"name":"Legacy"}','legacy',1,'owner','2026-09-21','2026-09-21')`).run();
+ const source=entityRecordSource(specs);await db.prepare('CREATE VIEW all_entities AS SELECT * FROM '+source).run();
+ assert.equal((await db.prepare('SELECT COUNT(*) n FROM all_entities WHERE org_id=?').bind('mine').first()).n,27);
+ const page=await db.prepare('SELECT * FROM all_entities WHERE org_id=? ORDER BY id LIMIT ? OFFSET ?').bind('mine',5,20).all();assert.equal(page.results.length,5);assert.ok(page.results.every(row=>row.org_id==='mine'));
+ const last=await db.prepare('SELECT data FROM '+source+' WHERE org_id=? AND module_id=?').bind('mine','entity-25').first();assert.equal(JSON.parse(last.data).name,'Token entity-25');
+ assert.equal((await db.prepare("SELECT COUNT(*) n FROM all_entities WHERE org_id='foreign'").first()).n,1);
 });
