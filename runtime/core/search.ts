@@ -1,3 +1,5 @@
+import {entityRecordSource,entityStorage} from './entity-storage.ts';
+import type {ModuleEntitySpec} from './module-contract.ts';
 import type { RequestAccessContext } from './access-profiles-store.ts';
 import type { D1Database } from '@cloudflare/workers-types';
 import type { AppDefinition, Identity, Principal, ScopeProvider, SqlFragment, Workspace } from './types.ts';
@@ -7,7 +9,7 @@ import { json, readJson } from './http.ts';
 import { canReadModule } from './operations.ts';
 import { auditVisibility, fileScope, openScope, recordScope } from './scope.ts';
 
-type SearchOptions={limit?:number;offset?:number;moduleId?:string;scope?:ScopeProvider;principal?:Principal;access?:RequestAccessContext};
+type SearchOptions={entitySpecs?:Record<string,ModuleEntitySpec>;limit?:number;offset?:number;moduleId?:string;scope?:ScopeProvider;principal?:Principal;access?:RequestAccessContext};
 
 const sources = ['records','tasks','files','support','members','audit','mail'];
 type Override = {module_id:string;enabled:number;fields_json:string;version:number};
@@ -25,27 +27,30 @@ export async function searchPolicies(db:D1Database,app:AppDefinition,org:string)
 }
 
 /** Read current policies and index state in one trip; never cache permissions. */
-async function searchContext(db:D1Database,app:AppDefinition,org:string) {
+async function searchContext(db:D1Database,app:AppDefinition,org:string,entitySpecs?:Record<string,ModuleEntitySpec>) {
   const [settings,progress]=await db.batch([
     db.prepare('SELECT module_id,enabled,fields_json,version FROM lite_search_settings WHERE org_id=?').bind(org),
     db.prepare('SELECT source,cursor,complete FROM lite_search_progress WHERE org_id=?').bind(org),
   ]);
-  return {policies:applySearchPolicies(app,settings.results as Override[]),indexing:await prepareSearchIndex(db,org,progress.results as SearchProgress[])};
+  return {policies:applySearchPolicies(app,settings.results as Override[]),indexing:await prepareSearchIndex(db,org,progress.results as SearchProgress[],entitySpecs)};
 }
 
 /** Bounded, resumable backfill. A ready index needs no writes or source scans. */
-export async function prepareSearchIndex(db:D1Database,org:string,progress?:SearchProgress[]) {
+export async function prepareSearchIndex(db:D1Database,org:string,progress?:SearchProgress[],entitySpecs:Record<string,ModuleEntitySpec>={}) {
+  const relational=Object.values(entitySpecs).filter(s=>s.storage.kind==='relational');
+  const allSources=[...sources,...relational.map(s=>'entity_'+s.schema.id.replaceAll('-','_'))];
+  const sourceSql=(source:string)=>{const spec=relational.find(s=>source==='entity_'+s.schema.id.replaceAll('-','_'));return spec?`(SELECT *,id AS source_key,'${source}' AS source,id AS record_id FROM ${entityStorage(spec.schema,spec).source} WHERE deleted_at IS NULL)`:`lite_search_source_${source}`;};
   const states=progress??(await db.prepare('SELECT source,cursor,complete FROM lite_search_progress WHERE org_id=?').bind(org).all<SearchProgress>()).results;
-  const pending=sources.filter(source=>!states.some(state=>state.source===source&&state.complete));
+  const pending=allSources.filter(source=>!states.some(state=>state.source===source&&state.complete));
   if(!pending.length)return false;
   const cursors=pending.map(source=>states.find(state=>state.source===source)?.cursor??'');
   // Fetch one extra key to distinguish a full final page from a partial backfill.
-  const pages=await db.batch(pending.map((source,i)=>db.prepare(`SELECT source_key FROM lite_search_source_${source} WHERE org_id=? AND source=? AND source_key>? ORDER BY source_key LIMIT 51`).bind(org,source,cursors[i])));
+  const pages=await db.batch(pending.map((source,i)=>db.prepare(`SELECT source_key FROM ${sourceSql(source)} WHERE org_id=? AND source=? AND source_key>? ORDER BY source_key LIMIT 51`).bind(org,source,cursors[i])));
   const writes=pending.flatMap((source,i)=>{
     const rows=pages[i].results as {source_key:string}[],last=rows.slice(0,50).at(-1)?.source_key??cursors[i];
     return [
       ...(rows.length?[db.prepare(`INSERT INTO lite_search_documents(org_id,module_id,record_id,data,updated_at)
-        SELECT org_id,module_id,record_id,data,updated_at FROM lite_search_source_${source}
+        SELECT org_id,module_id,record_id,data,updated_at FROM ${sourceSql(source)}
         WHERE org_id=? AND source=? AND source_key>? AND source_key<=?
         ON CONFLICT(org_id,module_id,record_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at`).bind(org,source,cursors[i],last)]:[]),
       db.prepare(`INSERT INTO lite_search_progress(org_id,source,cursor,complete) VALUES(?,?,?,?)
@@ -55,8 +60,8 @@ export async function prepareSearchIndex(db:D1Database,org:string,progress?:Sear
   });
   // Check the committed progress in the same transaction. Concurrent searches
   // may advance the cursor, but a stale batch must never move it backwards.
-  const result=await db.batch([...writes,db.prepare(`SELECT COUNT(*) AS completed FROM lite_search_progress WHERE org_id=? AND complete=1 AND source IN (${sources.map(()=>'?').join(',')})`).bind(org,...sources)]);
-  return (result.at(-1)?.results[0] as {completed:number}|undefined)?.completed!==sources.length;
+  const result=await db.batch([...writes,db.prepare(`SELECT COUNT(*) AS completed FROM lite_search_progress WHERE org_id=? AND complete=1 AND source IN (${allSources.map(()=>'?').join(',')})`).bind(org,...allSources)]);
+  return (result.at(-1)?.results[0] as {completed:number}|undefined)?.completed!==allSources.length;
 }
 
 export function searchTerms(query:string):string[] {
@@ -78,13 +83,13 @@ function searchScope(app:AppDefinition,org:Workspace,options:SearchOptions):SqlF
   const auditRecords=recordScope(scope,principal,{alias:'r',idColumn:'id',moduleColumn:'module_id'},'read',options.access);
   const auditFiles=fileScope(scope,principal,{alias:'f',idColumn:'id'},'read',options.access);
   // Flat joins avoid D1 depth 100: nested EXISTS still expands materialized scopes.
-  const audit=auditVisibility(app,org,options.access);
-  const ctes=`search_visible_records AS MATERIALIZED (SELECT r.id FROM lite_records r WHERE r.org_id=? AND ${auditRecords.sql}),
+  const audit=auditVisibility(app,org,options.access,options.entitySpecs);
+  const ctes=`search_visible_records AS MATERIALIZED (SELECT r.id FROM ${entityRecordSource(options.entitySpecs)} r WHERE r.org_id=? AND ${auditRecords.sql}),
     search_visible_files AS MATERIALIZED (SELECT f.id FROM lite_files f WHERE f.org_id=? AND ${auditFiles.sql}),
     search_visible_audit AS MATERIALIZED (
       SELECT a.id FROM lite_audit a WHERE a.org_id=? AND ${audit.recovery.sql}
       UNION SELECT a.id FROM lite_audit a
-        JOIN lite_records r ON r.org_id=a.org_id AND r.id=a.resource_id
+        JOIN ${entityRecordSource(options.entitySpecs)} r ON r.org_id=a.org_id AND r.id=a.resource_id
         JOIN search_visible_records vr ON vr.id=r.id WHERE a.org_id=? AND ${audit.records.sql}
       UNION SELECT a.id FROM lite_audit a
         JOIN lite_files f ON f.org_id=a.org_id AND f.id=a.resource_id
@@ -98,7 +103,7 @@ function searchScope(app:AppDefinition,org:Workspace,options:SearchOptions):SqlF
 
 async function buildSearchSelection(db:D1Database,app:AppDefinition,org:Workspace,query:string,options:SearchOptions,applyScope:boolean) {
   const terms=searchTerms(query);
-  const context=await searchContext(db,app,org.id);
+  const context=await searchContext(db,app,org.id,options.entitySpecs);
   const policies=context.policies.filter(m=>m.readRoles.includes(org.role)&&canReadModule(org,m.id,options.access)&&m.search.enabled&&m.search.fields.length&&(!options.moduleId||options.moduleId===m.id));
   const indexing=context.indexing;
   if(!terms.length||!policies.length)return {cte:'WITH ranked AS (SELECT id,0 AS score FROM lite_search_documents WHERE 0)',bindings:[],policies,indexing};
@@ -152,7 +157,7 @@ export async function searchData(db:D1Database,app:AppDefinition,org:Workspace,q
   return {items,pages,total:(count.results[0] as {total:number}|undefined)?.total??0,indexing,engine:'d1-fts5'};
 }
 
-export async function searchRoute(request:Request,db:D1Database,app:AppDefinition,org:Workspace,user:Identity,scoped:{scope?:ScopeProvider;principal?:Principal;access?:RequestAccessContext}={}):Promise<Response|null> {
+export async function searchRoute(request:Request,db:D1Database,app:AppDefinition,org:Workspace,user:Identity,scoped:{entitySpecs?:Record<string,ModuleEntitySpec>;scope?:ScopeProvider;principal?:Principal;access?:RequestAccessContext}={}):Promise<Response|null> {
   const url=new URL(request.url),path=url.pathname.replace(/^\/api\/v1\//,'').replace(/\/$/,'');
   if(path==='registry'&&request.method==='GET')return json({modules:visibleModules(app,org.role).filter(m=>canReadModule(org,m.id,scoped.access)),workspace:org});
   if(path==='search'&&request.method==='GET'){
@@ -172,7 +177,7 @@ export async function searchRoute(request:Request,db:D1Database,app:AppDefinitio
       db.prepare('DELETE FROM lite_search_documents WHERE org_id=?').bind(org.id),
       db.prepare('DELETE FROM lite_search_progress WHERE org_id=?').bind(org.id),
     ]);
-    return json({indexing:await prepareSearchIndex(db,org.id)});
+    return json({indexing:await prepareSearchIndex(db,org.id,undefined,scoped.entitySpecs)});
   }
   const match=path.match(/^admin\/search\/([a-z][a-z0-9-]*)$/);
   if(match&&request.method==='PUT'){

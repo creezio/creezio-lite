@@ -1,3 +1,4 @@
+import { editableFields } from './entity-write.ts';
 import { requestAccessMatches, accessModuleReadable, type RequestAccessContext } from './access-profiles-store.ts';
 import type { AppDefinition, AppOperationDefinition, Field, Module, Role, Workspace } from './types.ts';
 import { roles, fail, idPattern, moduleWritable } from './validation.ts';
@@ -18,16 +19,16 @@ export const stringSchema={type:'string',maxLength:300};
 export const idSchema={type:'string',minLength:1,maxLength:160};
 export const paging={limit:{type:'integer',minimum:1,maximum:100},offset:{type:'integer',minimum:0,maximum:100000},q:{type:'string',maxLength:120}};
 const admin:Role[]=['owner','admin'],writers:Role[]=['owner','admin','member'];
-export function fieldSchema(f:Field):JsonSchema{if(f.type==='date'&&!f.required)return {description:f.label,anyOf:[fieldSchema({...f,required:true}),{type:'string',enum:['']},{type:'null'}]};return {type:f.type==='number'?(f.integer?'integer':'number'):f.type==='boolean'?'boolean':'string',description:f.label,...(f.type==='select'?{enum:f.options}:{}),...(f.type==='email'?{format:'email'}:{}),...(f.type==='date'?{format:'date'}:{}),...(f.maxLength?{maxLength:f.maxLength}:{}),...(f.min!==undefined?{minimum:f.min}:{}),...(f.max!==undefined?{maximum:f.max}:{})};}
+export function fieldSchema(f:Field):JsonSchema{if(f.encoding==='json')return {description:f.label,anyOf:[{type:'string',maxLength:f.maxLength??5000},{type:'array',items:{}},{type:'object',additionalProperties:true}]};if(f.type==='date'&&!f.required)return {description:f.label,anyOf:[fieldSchema({...f,required:true}),{type:'string',enum:['']},{type:'null'}]};return {type:f.type==='number'?(f.integer?'integer':'number'):f.type==='boolean'?'boolean':'string',description:f.label,...(f.type==='select'?{enum:f.options}:{}),...(f.type==='email'?{format:'email'}:{}),...(f.type==='date'?{format:'date'}:{}),...(f.maxLength?{maxLength:f.maxLength}:{}),...(f.min!==undefined?{minimum:f.min}:{}),...(f.max!==undefined?{maximum:f.max}:{})};}
 /** Derive a closed command data schema from the same fields as validateData.
  * Optional blank values remain compatible with native forms; domain validation
  * still handles normalization and business rules. Partial is for update/restore inputs.
  */
 export function moduleDataSchema(module:Module,{partial=false}:{partial?:boolean}={}):JsonSchema {
- const properties=Object.fromEntries(module.fields.map(field=>[field.key,field.required?fieldSchema(field):{
+ const properties=Object.fromEntries(editableFields(module).map(field=>[field.key,field.required?fieldSchema(field):{
   description:field.label,anyOf:[fieldSchema({...field,required:true}),{type:'null'},{type:'string',enum:['']}]
  }]));
- return objectSchema(properties,partial?[]:module.fields.filter(f=>f.required).map(f=>f.key));
+ return objectSchema(properties,partial?[]:editableFields(module).filter(f=>f.required).map(f=>f.key));
 }
 export function operation(value:Omit<Operation,'kind'|'inputSchema'|'toolName'|'tokenAllowed'|'mcp'> & Partial<Pick<Operation,'kind'|'inputSchema'|'toolName'|'tokenAllowed'|'mcp'>>):Operation {
   const params=Object.fromEntries([...value.path.matchAll(/:([A-Za-z0-9_]+)/g)].map(m=>[m[1],idSchema]));
@@ -129,14 +130,14 @@ export function coreOperations(app:AppDefinition):Operation[]{
     ['trace','GET','conversations/:id/trace','Actions et diagnostics de sa conversation'],['chat','POST','chat','Dialoguer avec OpenAI ou Hermes'],['transcribe','POST','transcribe','Transcrire un message vocal'],
   ] as const)add(`assistant.${id}`,method,`assistant/${path}`,'assistant','Assistant',description,{...personalAssistant,...(id==='transcribe'?{requestType:'file' as const}:method==='POST'||method==='PATCH'?{bodySchema:{type:'object',additionalProperties:true}}:{})});
   for(const module of app.modules){
-    const data=objectSchema(Object.fromEntries(module.fields.map(f=>[f.key,fieldSchema(f)])),module.fields.filter(f=>f.required).map(f=>f.key));
+    const data=objectSchema(Object.fromEntries(editableFields(module).map(f=>[f.key,fieldSchema(f)])),editableFields(module).filter(f=>f.required).map(f=>f.key));
     // Entities and collections expose reads only; every mutation is a declared command.
     const actions=([['list','GET',''],['get','GET','/:id'],['create','POST',''],['update','PATCH','/:id'],['archive','DELETE','/:id']] as const).filter(([,method])=>method==='GET'||moduleWritable(module));
     for(const [action,method,suffix] of actions){
       add(`module.${module.id}.${action}`,method,`modules/${module.id}/records${suffix}`,module.id,module.name,`${module.name} : ${action}`,{kind:'business',roles:method==='GET'?(module.readRoles??roles):(module.writeRoles??writers),toolName:`lite_${module.id.replaceAll('-','_')}_${action}`,
-        ...(action==='list'?{querySchema:objectSchema({...paging,field:stringSchema,value:stringSchema,sort:{enum:module.fields.map(f=>f.key)},direction:{enum:['asc','desc']}})}:{}),
+        ...(action==='list'?{querySchema:objectSchema({...paging,field:stringSchema,value:stringSchema,sort:{enum:module.fields.filter(f=>f.storage!=='computed').map(f=>f.key)},direction:{enum:['asc','desc']}})}:{}),
         ...(action==='create'?{bodySchema:objectSchema({data},['data'])}:{}),
-        ...(action==='update'?{bodySchema:objectSchema({data,version:{type:'integer',minimum:1}},['data','version'])}:{}),
+        ...(action==='update'?{bodySchema:objectSchema({data:{...data,required:[]},version:{type:'integer',minimum:1}},['data','version'])}:{}),
         ...(action==='archive'?{bodySchema:objectSchema({version:{type:'integer',minimum:1}},['version'])}:{})});
     }
   }

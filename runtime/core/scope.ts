@@ -1,3 +1,5 @@
+import {entityRecordSource} from './entity-storage.ts';
+import type {ModuleEntitySpec} from './module-contract.ts';
 import { canReadModule } from './operations.ts';
 import type { AppDefinition } from './types.ts';
 import { scopeAccessMatches, type RequestAccessContext } from './access-profiles-store.ts';
@@ -67,22 +69,22 @@ export function fileScope(scope:ScopeProvider,principal:Principal,ref:{alias:str
 }
 
 /** Shared audit policy, independent of how callers join their visible resource sets. */
-export function auditVisibility(app:AppDefinition,org:Workspace,access:RequestAccessContext):{recovery:SqlFragment;records:SqlFragment;files:SqlFragment}{
+export function auditVisibility(app:AppDefinition,org:Workspace,access:RequestAccessContext,entitySpecs?:Record<string,ModuleEntitySpec>):{recovery:SqlFragment;records:SqlFragment;files:SqlFragment}{
   const readable=app.modules.filter(m=>canReadModule(org,m.id,access)).map(m=>m.id);
   const recordTest=readable.length?'r.module_id IN ('+readable.map(()=>'?').join(',')+')':'0=1';
   const recovery=['workspace.create','workspace.rename','member.join','member.role','member.remove','invite.create','invite.revoke','access.adopt','access.rebind','access.bind','access.unbind','access.group.create','access.group.update','access.group.delete','access.policy.update','mcp.policy.update','mcp.tool.create','mcp.tool.delete','mcp.client.revoke','mcp.oauth.revoke'];
   return {
-    recovery:{sql:'(a.action IN (SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM lite_records r WHERE r.org_id=a.org_id AND r.id=a.resource_id) AND NOT EXISTS(SELECT 1 FROM lite_files f WHERE f.org_id=a.org_id AND f.id=a.resource_id))',bindings:[JSON.stringify(recovery)]},
+    recovery:{sql:`(a.action IN (SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM ${entityRecordSource(entitySpecs)} r WHERE r.org_id=a.org_id AND r.id=a.resource_id) AND NOT EXISTS(SELECT 1 FROM lite_files f WHERE f.org_id=a.org_id AND f.id=a.resource_id))`,bindings:[JSON.stringify(recovery)]},
     records:{sql:recordTest,bindings:readable},
     files:{sql:canReadModule(org,'files',access)?'1=1':'0=1',bindings:[]},
   };
 }
 
 /** Unknown/orphan business resources stay hidden; only explicit native recovery events need no business row. */
-export function auditScope(scope:ScopeProvider,principal:Principal,app:AppDefinition,org:Workspace,access?:RequestAccessContext,resources?:{records:SqlFragment;files:SqlFragment}):SqlFragment{
+export function auditScope(scope:ScopeProvider,principal:Principal,app:AppDefinition,org:Workspace,access?:RequestAccessContext,resources?:{records:SqlFragment;files:SqlFragment},entitySpecs?:Record<string,ModuleEntitySpec>):SqlFragment{
   if(!access)return {sql:'1=1',bindings:[]};
   const records=resources?.records??recordScope(scope,principal,{alias:'r',idColumn:'id',moduleColumn:'module_id'},'read',access);
   const files=resources?.files??fileScope(scope,principal,{alias:'f',idColumn:'id'},'read',access);
-  const policy=auditVisibility(app,org,access);
-  return {sql:'('+policy.recovery.sql+' OR EXISTS(SELECT 1 FROM lite_records r WHERE r.org_id=a.org_id AND r.id=a.resource_id AND '+policy.records.sql+' AND '+records.sql+') OR EXISTS(SELECT 1 FROM lite_files f WHERE f.org_id=a.org_id AND f.id=a.resource_id AND '+policy.files.sql+' AND '+files.sql+'))',bindings:[...policy.recovery.bindings,...policy.records.bindings,...records.bindings,...policy.files.bindings,...files.bindings]};
+  const policy=auditVisibility(app,org,access,entitySpecs);
+  return {sql:'('+policy.recovery.sql+' OR EXISTS(SELECT 1 FROM '+entityRecordSource(entitySpecs)+' r WHERE r.org_id=a.org_id AND r.id=a.resource_id AND '+policy.records.sql+' AND '+records.sql+') OR EXISTS(SELECT 1 FROM lite_files f WHERE f.org_id=a.org_id AND f.id=a.resource_id AND '+policy.files.sql+' AND '+files.sql+'))',bindings:[...policy.recovery.bindings,...policy.records.bindings,...records.bindings,...policy.files.bindings,...files.bindings]};
 }

@@ -7,9 +7,13 @@ import type { RequestAccessContext } from './access-profiles-store.ts';
 import type { DemoScenario } from '../modules/interactive-demo/src/types.ts';
 import { collectInteractiveDemoDefaults } from '../modules/interactive-demo/src/contributions.ts';
 import { idPattern } from './validation.ts';
+import { assertEntityStorage, type EntityStorage } from './entity-storage.ts';
 
 export type EntityHookContext = {module:Module; workspace:Workspace; identity:Identity; access?:RequestAccessContext};
 export type EntityHooks = {
+  afterCreate?:(input:EntityHookContext & {record:RecordData})=>void|Promise<void>;
+  afterUpdate?:(input:EntityHookContext & {record:RecordData})=>void|Promise<void>;
+  afterArchive?:(input:EntityHookContext & {record:RecordData})=>void|Promise<void>;
   beforeCreate?:BeforeWrite;
   beforeUpdate?:BeforeWrite;
   beforeArchive?:(input:EntityHookContext & {record:RecordData})=>void|Promise<void>;
@@ -21,7 +25,7 @@ export type ModuleMigration = {id:string; file:string; tables:readonly string[]}
 export type ModuleEntitySpec = {
   /** The very same serialisable schema used by forms, HTTP and MCP. */
   schema:Module;
-  storage:{kind:'records'};
+  storage:EntityStorage;
   hooks?:EntityHooks;
 };
 export type BrandModuleAssistantSource =
@@ -53,14 +57,16 @@ export function composeOnboardingFromModules(modules:readonly BrandModuleDef[]):
  return {steps,...(Object.keys(texts).length?{texts}:{}),...(mascot?{mascot}:{})};
 }
 export function createBrandModuleRegistry(app:AppDefinition,modules:readonly BrandModuleDef[]){
- const owners=new Map<string,BrandModuleDef>(),ids=new Set<string>(),tables=new Map<string,string>(),migrations=new Map<string,string>();
+ const owners=new Map<string,BrandModuleDef>(),ids=new Set<string>(),tables=new Map<string,string>(),migrations=new Map<string,string>(),entityTables=new Set<string>();
  for(const mod of modules){
   if(!idPattern.test(mod.id)||ids.has(mod.id))throw new Error(`Module contract id invalid or duplicated: ${mod.id}`);ids.add(mod.id);
   for(const [id,spec] of Object.entries(mod.entitySpecs)){
    if(owners.has(id))throw new Error(`Entity owned by two modules: ${id}`);
    const declared=app.modules.find(m=>m.id===id);
    if(!declared||spec.schema.id!==id||JSON.stringify(declared)!==JSON.stringify(spec.schema))throw new Error(`Entity schema differs from the shared app schema: ${id}`);
-   if(spec.storage.kind!=='records')throw new Error(`Unsupported entity storage adapter: ${id}`);
+   assertEntityStorage(spec);
+   if(spec.storage.kind==='relational'){if(entityTables.has(spec.storage.table))throw new Error('Relational table owned by two entities');entityTables.add(spec.storage.table);}
+   if(spec.storage.kind==='relational'&&!mod.tables?.includes(spec.storage.table))throw new Error(`Relational table must be owned by module: ${id}`);
    for(const hook of Object.values(spec.hooks??{}))if(typeof hook!=='function')throw new Error(`Invalid entity hook: ${id}`);
    owners.set(id,mod);
   }
@@ -94,6 +100,7 @@ export function composeModuleExtensions(extensions:AppExtensions):AppExtensions{
  const registry=extensions.registry;if(!registry)return extensions;
  const global=extensions.beforeWrite;
  return {...extensions,operations:[...registry.collectOperations(),...(extensions.operations??[])],
+  entitySpecs:registry.collectEntitySpecs(),
   entityHooks:{...Object.fromEntries(Object.entries(registry.collectEntitySpecs()).map(([id,spec])=>[id,spec.hooks??{}])),...extensions.entityHooks},
   beforeWrite:async input=>{await global?.(input);await registry.ownerOf(input.module.id)?.beforeWrite?.(input);},
  };

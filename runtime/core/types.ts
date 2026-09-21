@@ -9,6 +9,12 @@ export type Field = {
   type: 'text' | 'textarea' | 'email' | 'number' | 'date' | 'select' | 'boolean';
   required?: boolean; options?: string[]; maxLength?: number; min?: number; max?: number;
   searchable?: boolean;
+  /** Computed fields are read projections and are never persisted or accepted on writes. */
+  storage?: 'stored' | 'computed';
+  /** false: server-owned stored field. Generic forms/API/MCP cannot modify it. */
+  editable?: boolean;
+  /** Text editors exchange JSON text; storage contains the validated JSON value. */
+  encoding?: 'json';
   /** Storage semantics shared by validation, API/MCP schemas and form/list presentation. */
   integer?: boolean;
   scale?: number;
@@ -25,7 +31,9 @@ export type ModuleExtension = {
 };
 export type Module = {
   id: string; name: string; singular: string; description: string; icon?: string;
-  titleField: string; fields: Field[]; readRoles?: Role[]; writeRoles?: Role[];
+  titleField: string; fields: Field[];
+  /** Server-owned columns/snapshots: validated in storage, absent from forms and client input. */
+  serverFields?: Field[]; readRoles?: Role[]; writeRoles?: Role[];
   search?: { enabled?: boolean; fields?: string[] };
 } & ModuleExtension;
 export type AppDefinition = { id: string; name: string; description: string; modules: Module[] };
@@ -121,6 +129,7 @@ export type McpPolicyDeclaration = { defaultEnabledToolNames?:readonly string[];
 export type AppExtensions = {
   registry?:import('./module-contract.ts').BrandModuleRegistry;
   entityHooks?:Record<string,import('./module-contract.ts').EntityHooks>;
+  entitySpecs?:Record<string,import('./module-contract.ts').ModuleEntitySpec>;
   access?:AccessDeclaration;
   beforeWrite?: BeforeWrite;
   operations?: AppOperationDefinition[];
