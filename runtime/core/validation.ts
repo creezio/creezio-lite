@@ -53,7 +53,7 @@ export function moduleKind(mod: Pick<Module, 'kind'>): ModuleKind { return mod.k
 export function moduleWritable(mod: Pick<Module, 'kind'>): boolean { return moduleKind(mod) === 'module'; }
 /** Navigation and dashboard counters follow this flag; collections never navigate. */
 export function moduleNavigable(mod: Pick<Module, 'kind' | 'navigation'>): boolean { return moduleKind(mod) !== 'collection' && mod.navigation !== false; }
-const keyPattern = /^[a-z][a-z0-9_]{0,47}$/;
+const keyPattern = /^[a-z][A-Za-z0-9_]{0,47}$/;
 export const idPattern = /^[a-z][a-z0-9-]{0,47}$/;
 const forbidden = new Set(['__proto__', 'constructor', 'prototype']);
 

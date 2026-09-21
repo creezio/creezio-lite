@@ -8,7 +8,7 @@ const metadata=['id','org_id','version','created_by','created_at','updated_at','
 const quote=(s:string)=>{if(!/^[a-z][a-z0-9_]{0,127}$/.test(s))throw new Error('Invalid D1 identifier');return '"'+s+'"';};
 export function assertEntityStorage(spec:ModuleEntitySpec){
  if(!/^[a-z][a-z0-9-]{0,47}$/.test(spec.schema.id))throw new Error('Invalid entity id');
- for(const f of storedFields(spec.schema))if(!identifier.test(f.key))throw new Error('Invalid entity field');
+ for(const f of storedFields(spec.schema))if(!/^[a-z][A-Za-z0-9_]{0,47}$/.test(f.key)||['constructor','prototype'].includes(f.key))throw new Error('Invalid entity field');
  const storage=spec.storage;
  if(storage.kind==='records')return;
  if(storage.kind!=='relational')throw new Error('Unsupported entity storage adapter');
