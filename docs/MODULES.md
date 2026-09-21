@@ -1,6 +1,6 @@
 # Registre des modules
 
-`runtime/core/registry.ts` est le catalogue consommé par les différentes surfaces. Les modules métier proviennent de `brand.json`, validé par `defineApp`. Les modules système ont leur contrat de stockage et leurs routes dédiées.
+`runtime/core/registry.ts` est le catalogue consommé par les différentes surfaces. Les modules métier proviennent de `app/modules/<id>/schema.json`, validés par `defineApp` et réunis par `app/modules/schemas.ts`. `brand.json` contient leur instantané de compatibilité, contrôlé avant compilation et régénéré par `npm run sync:module-schemas`. Le contrat serveur et ses contributions vivent dans `app/modules/<id>/index.ts` ; voir `docs/MODULE-CONTRACT.md`. Les modules système ont leur contrat de stockage et leurs routes dédiées.
 
 ```json
 {

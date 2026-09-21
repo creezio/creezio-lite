@@ -14,3 +14,6 @@ export { preparePasswordAccount, resolvePasswordIdentity, handlePasswordAuth } f
 export type { PasswordAuthEnvironment, PasswordAuthCallbacks, PreparedPasswordAccount } from './password-auth.ts';
 
 export {moduleDataSchema} from './operations.ts';
+
+export {createBrandModuleRegistry,composeOnboardingFromModules} from './module-contract.ts';
+export type {BrandModuleDef,BrandModuleRegistry,ModuleEntitySpec,ModuleMigration,EntityHooks,BrandModuleAssistantSource,BrandModuleOnboarding} from './module-contract.ts';

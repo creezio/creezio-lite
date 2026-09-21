@@ -208,3 +208,11 @@ export const passwordTokens=sqliteTable('lite_password_tokens',{
 export const passwordThrottles=sqliteTable('lite_password_throttles',{
  bucketHash:text('bucket_hash').primaryKey(),attempts:integer('attempts').notNull(),windowExpiresAt:text('window_expires_at').notNull(),
 },t=>[index('lite_password_throttles_expiry').on(t.windowExpiresAt),check('lite_password_throttle_attempts',sql`${t.attempts} >= 1`)]);
+
+// Module-owned onboarding defaults with workspace overrides and private user progress.
+export const onboardingContent=sqliteTable('sites_onboarding_content',{
+ orgId:text('org_id').primaryKey().notNull().references(()=>organizations.id,{onDelete:'cascade'}),valueJson:text('value_json').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[check('sites_onboarding_content_json',sql`json_valid(${t.valueJson})`)]);
+export const onboardingPreferences=sqliteTable('sites_onboarding_preferences',{
+ orgId:text('org_id').notNull().references(()=>organizations.id,{onDelete:'cascade'}),userId:text('user_id').notNull().references(()=>users.id,{onDelete:'cascade'}),key:text('key').notNull(),valueJson:text('value_json').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[primaryKey({columns:[t.orgId,t.userId,t.key]}),check('sites_onboarding_preferences_json',sql`json_valid(${t.valueJson})`)]);

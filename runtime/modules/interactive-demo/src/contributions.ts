@@ -25,8 +25,8 @@
  * Zéro texte métier ici : les scénarios vivent dans les modules marque.
  */
 
-import type { DemoScenario } from "./types.js";
-import { validateDemoScenario } from "./types.js";
+import type { DemoScenario } from "./types.ts";
+import { validateDemoScenario } from "./types.ts";
 
 /**
  * Contribution démo d'un module métier — forme aplatie du champ

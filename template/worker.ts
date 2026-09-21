@@ -1,7 +1,7 @@
 import handler from 'vinext/server/fetch-handler';
 import { dispatchRequest } from './runtime/modules/sites-adapter/src/dispatch';
 import { appDefinition } from './app/app-definition';
-import { beforeWrite } from './app/business-rules';
+import { appExtensions } from './app/app-extensions';
 import type { LiteEnvironment } from './runtime/core/types';
 
 // Keep streaming responses and WebSocket upgrades at the native Worker boundary.
@@ -12,7 +12,7 @@ export default {
       const userId=request.headers.get('oai-authenticated-user-id'),email=request.headers.get('oai-authenticated-user-email');
       let displayName=email??'';
       if(request.headers.get('oai-authenticated-user-full-name-encoding')==='percent-encoded-utf-8')try{displayName=decodeURIComponent(request.headers.get('oai-authenticated-user-full-name')??'')||displayName;}catch{}
-      return dispatchRequest(request,{env,identity:userId&&email?{userId,email,displayName}:null,app:appDefinition,defer:promise=>ctx.waitUntil(promise)},{beforeWrite});
+      return dispatchRequest(request,{env,identity:userId&&email?{userId,email,displayName}:null,app:appDefinition,defer:promise=>ctx.waitUntil(promise)},appExtensions);
     }
     return handler.fetch(request,env,ctx);
   },

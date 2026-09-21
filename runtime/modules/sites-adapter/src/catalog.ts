@@ -1,5 +1,5 @@
 import type { AppDefinition, AppExtensions, AppOperationDefinition } from '@lite/core';
-import { coreOperations, operation, objectSchema, stringSchema, idSchema, paging, appOperations, assertUniqueOperations, type Operation } from '@lite/core/operations';
+import { coreOperations, operation, objectSchema, stringSchema, idSchema, paging, appOperations, assertUniqueOperations, canReadModule, type Operation } from '@lite/core/operations';
 import { defineExtensions as defineCoreExtensions } from '@lite/core/commands';
 import { roles } from '@lite/core/validation';
 import type { NativeContext } from './context';
@@ -8,12 +8,16 @@ import { navMount } from './nav';
 import { demoMount } from './demo';
 import { tasksMount } from './tasks';
 import { supportMount } from './support';
+import { onboardingMount } from './onboarding';
+import {composeOnboardingFromModules} from '@lite/core/module-contract';
 
 /** Registration is shared by dispatch, HTTP documentation, permissions and tools. */
-export function nativeMounts(c:NativeContext,app:AppDefinition):{id:string;name:string;space:'module'|'platform';mount:ApiMount;alias?:string}[]{
+export function nativeMounts(c:NativeContext,app:AppDefinition,extensions:AppExtensions={}):{id:string;name:string;space:'module'|'platform';mount:ApiMount;alias?:string}[]{
+  const visibleModules=extensions.registry?.modules.filter(mod=>Object.values(mod.entitySpecs).some(spec=>(spec.schema.readRoles??roles).includes(c.workspace.role)&&canReadModule(c.workspace,spec.schema.id,c.access)))??[];
   return [
     {id:'nav',name:'Navigation',space:'module',mount:navMount(c,app)},
-    {id:'interactive-demo',name:'Visite guidée',space:'module',mount:demoMount(c,app.name)},
+    {id:'interactive-demo',name:'Visite guidée',space:'module',mount:demoMount(c,app.name,extensions.registry?.collectDemoScenarios())},
+    {id:'onboarding',name:'Prise en main',space:'module',mount:onboardingMount(c,composeOnboardingFromModules(visibleModules))},
     {id:'tasks',name:'Tâches',space:'module',mount:tasksMount(c),alias:'/api/v1/tasks'},
     {id:'platform-support',name:'Support',space:'platform',mount:supportMount(c)},
   ];
@@ -27,8 +31,8 @@ export function operationCatalog(c:NativeContext,app:AppDefinition,extensions:Ap
     const read=op.method==='GET',isAdmin=Boolean(op.permission)||(entry.id==='nav'&&op.id!=='list')||(entry.id==='interactive-demo'&&op.path.startsWith('/scenarios')&&!read);
     result.push(operation({id:`${moduleId}.${op.id}`,moduleId,moduleName:entry.name,method:op.method,path:base+suffix,...(entry.alias?{aliases:[entry.alias+suffix]}:{}),description:op.description,
       ...(moduleId==='support'&&op.id==='detail'?{toolName:'lite_support_get'}:{}),
-      roles:isAdmin?['owner','admin']:read?roles:['owner','admin','member'],essential:entry.id==='nav'&&op.id==='list',
-      ...(op.method==='DELETE'?{}:read?{querySchema:objectSchema({...paging,...(entry.id==='interactive-demo'?{user:idSchema}:{})})}:{bodySchema:(op.inputSchema as any)??{type:'object',additionalProperties:true}}),
+      roles:isAdmin?['owner','admin']:(entry.id==='onboarding'&&op.roles?op.roles as import('@lite/core').Role[]:read?roles:['owner','admin','member']),essential:entry.id==='nav'&&op.id==='list',
+      ...(op.method==='DELETE'?{}:read?{querySchema:objectSchema({...paging,...(['interactive-demo','onboarding'].includes(entry.id)?{user:idSchema}:{})})}:{bodySchema:(op.inputSchema as any)??{type:'object',additionalProperties:true}}),
     }));
   }
   for(const [id,path,description] of [['health','health','Santé du noyau'],['version','version','Version du runtime'],['architecture','architecture','Architecture et modules montés'],['sqlite.status','sqlite/status','État du stockage Sites']] as const){

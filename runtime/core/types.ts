@@ -119,6 +119,8 @@ export type AssistantProfilePolicy = { instructions:string; toolNames:readonly s
 export type AssistantPolicyDeclaration = { profiles:Readonly<Record<string,AssistantProfilePolicy>> };
 export type McpPolicyDeclaration = { defaultEnabledToolNames?:readonly string[]; profiles?:Readonly<Record<string,readonly string[]>> };
 export type AppExtensions = {
+  registry?:import('./module-contract.ts').BrandModuleRegistry;
+  entityHooks?:Record<string,import('./module-contract.ts').EntityHooks>;
   access?:AccessDeclaration;
   beforeWrite?: BeforeWrite;
   operations?: AppOperationDefinition[];

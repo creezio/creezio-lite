@@ -1,0 +1,42 @@
+{
+  "id": "clients",
+  "name": "Clients",
+  "singular": "Client",
+  "description": "Contacts et entreprises de votre espace.",
+  "icon": "users",
+  "titleField": "name",
+  "fields": [
+    {
+      "key": "name",
+      "label": "Nom du client",
+      "type": "text",
+      "required": true
+    },
+    {
+      "key": "email",
+      "label": "E-mail",
+      "type": "email"
+    },
+    {
+      "key": "company",
+      "label": "Entreprise",
+      "type": "text"
+    },
+    {
+      "key": "status",
+      "label": "Statut",
+      "type": "select",
+      "required": true,
+      "options": [
+        "Prospect",
+        "Actif",
+        "En pause"
+      ]
+    },
+    {
+      "key": "notes",
+      "label": "Notes",
+      "type": "textarea"
+    }
+  ]
+}

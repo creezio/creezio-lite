@@ -8,6 +8,6 @@ test('doctor identifies legacy Sites bridge without overwriting app code',async(
   await createApp({out:app,spec:fileURLToPath(new URL('../examples/services.json',import.meta.url))});
   assert.deepEqual((await doctor(app)).hostIntegration,{paneRouter:'managed',renderLocation:true,slotContexts:true,migrationRequired:false});
   await writeFile(join(app,'app/sites-pane-router.tsx'),'export function SitesPaneRouter(){return null;}');
-  const report=await doctor(app);assert.equal(report.ok,true);assert.deepEqual(report.hostIntegration,{paneRouter:'legacy',renderLocation:true,slotContexts:true,migrationRequired:true});
+  const report=await doctor(app);assert.equal(report.ok,false);assert.match(report.issues.join(),/HOST_INTEGRATION_REQUIRED/);assert.deepEqual(report.hostIntegration,{paneRouter:'legacy',renderLocation:true,slotContexts:true,migrationRequired:true});
  }finally{await rm(parent,{recursive:true,force:true});}
 });

@@ -15,7 +15,7 @@ export function nativeEntries(app: AppDefinition): NavCatalogEntry[] {
     ...defaultOsCatalogEntries().filter(e=>live.has(e.href)),
     extra('os.mails','/mails','Mail','Mail',23),
     extra('os.documents','/documents','Documents','FileText',24),
-    extra('os.support','/support','Support','Circle',65),OS_ADMIN_NAV_ENTRY,
+    extra('os.onboarding','/onboarding','Prise en main','Circle',64),extra('os.support','/support','Support','Circle',65),OS_ADMIN_NAV_ENTRY,
     extra('os.audit','/admin/activity','Journal d’activité','Activity',74,'admin'),
     extra('os.analytics','/admin/analytics','Analytics','Activity',74.5,'admin'),
     extra('os.search','/admin/search','Recherche','Search',75,'admin'),
@@ -53,7 +53,7 @@ export function navMount(c: NativeContext, app: AppDefinition) {
       const id=moduleRegistry(app).find(m=>m.href===e.href)?.id;
       if(!c.access)return !id||canReadModule(c.workspace,id);
       if(id)return canReadModule(c.workspace,id,c.access);
-      const mapped:Record<string,string>={'os.dashboard':'dashboard.get','os.mails':'mail.list','os.documents':'files.list','os.support':'support.list','os.audit':'logs.list','os.analytics':'analytics.overview','os.search':'search.settings','os.api':'api.catalog','os.mcp':'mcp.status','os.access':'access.catalog','os.integrations':'integrations.list','os.connections':'tokens.list',[OS_ADMIN_NAV_ENTRY.id]:'nav.catalog'};
+      const mapped:Record<string,string>={'os.onboarding':'onboarding.content','os.dashboard':'dashboard.get','os.mails':'mail.list','os.documents':'files.list','os.support':'support.list','os.audit':'logs.list','os.analytics':'analytics.overview','os.search':'search.settings','os.api':'api.catalog','os.mcp':'mcp.status','os.access':'access.catalog','os.integrations':'integrations.list','os.connections':'tokens.list',[OS_ADMIN_NAV_ENTRY.id]:'nav.catalog'};
       return !!mapped[e.id]&&c.access.evaluateAccess({kind:'operation',operationId:mapped[e.id]}).allowed;
     }), features:{plugins:false,fleet:false},
     getSession:()=>({sub:c.user.userId,role:c.workspace.role==='owner'?'owner':'collaborator',permissions:permissions(c,app),impersonating:false}),

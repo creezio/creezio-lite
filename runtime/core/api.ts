@@ -203,8 +203,10 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       // Defence in depth: entities and collections never accept generic writes, even on direct handleApi access.
       if(request.method!=='GET'&&!moduleWritable(mod)) fail(405,'command_required','Ce module ne se modifie que par une commande déclarée.');
       requireModuleRole(mod,org.role,request.method!=='GET');
-      const id=recordMatch[2];
-      if(request.method==='GET' && id) return json({record:await getRecord(db,org.id,mod.id,id,scoped)});
+      const id=recordMatch[2],hooks=options.entityHooks?.[mod.id];
+      const hookContext={module:mod,workspace:org,identity:user,...(access?{access}:{})};
+      const project=async(record:import('./types.ts').RecordData)=>hooks?.afterRead?{...record,data:await hooks.afterRead({...hookContext,record:structuredClone(record)})}:record;
+      if(request.method==='GET' && id) return json({record:await project(await getRecord(db,org.id,mod.id,id,scoped))});
       if(request.method==='GET') {
         const limit=boundedInteger(url.searchParams.get('limit'),30,100); if(!limit) fail(400,'invalid_pagination','La limite doit être positive.');
         const offset=boundedInteger(url.searchParams.get('offset'),0,100000);
@@ -227,16 +229,22 @@ export async function handleApi(request: Request, context: ApiContext, options: 
           db.prepare(`SELECT r.id,r.module_id,r.data,r.version,r.created_at,r.updated_at FROM lite_records r WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...terms,...orderBindings,limit,offset),
           db.prepare(`SELECT COUNT(*) AS total FROM lite_records r WHERE ${where}`).bind(...terms),
         ]);
-        return json({items:(items.results as Row[]).map(unpack),total:(count.results[0] as {total:number}|undefined)?.total??0,limit,offset,searchEngine:'d1-fts5',indexing});
+        const records=(items.results as Row[]).map(unpack);
+        const projected=hooks?.afterList?await hooks.afterList({...hookContext,records:structuredClone(records)}):undefined;
+        if(projected&&projected.length!==records.length)throw new Error('afterList must preserve scoped row count and order');
+        const rows=projected?records.map((record,index)=>({...record,data:projected[index]})):await Promise.all(records.map(project));
+        return json({items:rows,total:(count.results[0] as {total:number}|undefined)?.total??0,limit,offset,searchEngine:'d1-fts5',indexing});
       }
       if(request.method==='POST' && !id) {
         const body=await readJson(request),data=validateData(mod,body.data);
         await options.beforeWrite?.({module:mod,data,previous:null,workspace:org,identity:user,...(access?{access}:{})});
+        await hooks?.beforeCreate?.({...hookContext,data,previous:null});
+        if(hooks?.beforeCreate){const checked=validateData(mod,data);Object.keys(data).forEach(key=>delete data[key]);Object.assign(data,checked);}
         const recordId=uuid(),now=timestamp();
         await commitRequestAccessBatch(db,access,[
           db.prepare('INSERT INTO lite_records(id,org_id,module_id,data,search_text,version,created_by,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?,?)').bind(recordId,org.id,mod.id,JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),user.userId,now,now),
           audit(db,org.id,user.userId,`${mod.id}.create`,recordId),
-        ]).catch(rethrowRecordWriteError);return json({record:await getRecord(db,org.id,mod.id,recordId,scoped)},201);
+        ]).catch(rethrowRecordWriteError);return json({record:await project(await getRecord(db,org.id,mod.id,recordId,scoped))},201);
       }
       if(request.method==='PATCH' && id) {
         // A read grant never suffices for a write: the target must be in write scope.
@@ -244,17 +252,21 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         if(previous.version!==expected) fail(409,'version_conflict','Ce document a été modifié. Rechargez-le avant d’enregistrer.');
         const data=validateData(mod,body.data);
         await options.beforeWrite?.({module:mod,data,previous:previous.data,workspace:org,identity:user,...(access?{access}:{})});
+        await hooks?.beforeUpdate?.({...hookContext,data,previous:previous.data});
+        if(hooks?.beforeUpdate){const checked=validateData(mod,data);Object.keys(data).forEach(key=>delete data[key]);Object.assign(data,checked);}
         const writeFilter=recordScope(scoped.scope,scoped.principal,recordRef,'write',scoped.access);
         const result=await commitRequestAccessBatch(db,access,[
           db.prepare(`UPDATE lite_records SET data=?,search_text=?,version=version+1,updated_at=? WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM lite_records r WHERE r.id=lite_records.id AND ${writeFilter.sql})`).bind(JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),timestamp(),id,org.id,mod.id,expected,...writeFilter.bindings),
           audit(db,org.id,user.userId,`${mod.id}.update`,id,{},'WHERE changes()=1'),
         ]).catch(rethrowRecordWriteError);
         if(!result[0].meta.changes) fail(409,'version_conflict','Ce document a été modifié. Rechargez-le.');
-        return json({record:await getRecord(db,org.id,mod.id,id,scoped)});
+        return json({record:await project(await getRecord(db,org.id,mod.id,id,scoped))});
       }
       if(request.method==='DELETE' && id) {
         const body=await readJson(request),expected=version(body.version);
-        await getRecord(db,org.id,mod.id,id,scoped,'write');
+        const record=await getRecord(db,org.id,mod.id,id,scoped,'write');
+        if(record.version!==expected)fail(409,'version_conflict','Ce document a été modifié. Rechargez-le.');
+        await hooks?.beforeArchive?.({...hookContext,record:structuredClone(record)});
         const writeFilter=recordScope(scoped.scope,scoped.principal,recordRef,'write',scoped.access);
         const result=await commitRequestAccessBatch(db,access,[
           db.prepare(`UPDATE lite_records SET deleted_at=?,version=version+1 WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM lite_records r WHERE r.id=lite_records.id AND ${writeFilter.sql})`).bind(timestamp(),id,org.id,mod.id,expected,...writeFilter.bindings),

@@ -13,7 +13,7 @@ import { handleMcp } from '@lite/core/mcp';
 import { dataTools } from '@lite/core/tools';
 import { toolBindings, mcpAdminRoute } from '@lite/core/mcp-admin';
 import { accessRoute, openApiDocument } from '@lite/core/access';
-import { matchOperation, assertOperationAllowed, operationAllowed } from '@lite/core/operations';
+import { canReadModule, matchOperation, assertOperationAllowed, operationAllowed } from '@lite/core/operations';
 import { ApiError, errorBody, fail, publicDetails } from '@lite/core/validation';
 import { checkOrigin, json, readJson, readPublicBytes, normalizedMethod, requestPathname, requestQuery } from '@lite/core/http';
 import { observabilityRoute, persistRequestLog, newRequestTrace, jsonrpcLabel, UNKNOWN_TOOL, REQUEST_ID_HEADER } from '@lite/core/observability';
@@ -154,7 +154,10 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
         if(!tool){trace.tool=UNKNOWN_TOOL;fail(403,'tool_forbidden','Outil désactivé ou inaccessible.');}
         trace.tool=tool.name;return json(await tool.execute(body.arguments??{}));
       }
-      const assistant=await assistantRoute(current,scoped,org,{...(options.assistant?{policy:async()=>{
+      const assistant=await assistantRoute(current,scoped,org,{moduleContext:async()=>{
+        const visible=options.registry?.modules.filter(mod=>Object.keys(mod.entitySpecs).some(id=>operations.some(op=>op.moduleId===id&&op.method==='GET'&&(context.app.modules.find(m=>m.id===id)?.readRoles??['owner','admin','member','viewer']).includes(org.role)&&canReadModule(org,id,scoped.access))))??[];
+        return visible.flatMap(mod=>(mod.assistantSources??[]).filter(source=>source.kind==='context').map(source=>source.kind==='context'?`### ${source.title}\n${source.body}`:'')).join('\n\n');
+      },...(options.assistant?{policy:async()=>{
         const profiles=scoped.access?.snapshot.observedProfileIds??[],definitions=profiles.flatMap(id=>{const item=options.assistant?.profiles[id];return item?[item]:[];});
         return {instructions:definitions.map(item=>item.instructions).join(' '),toolNames:[...new Set(definitions.flatMap(item=>[...item.toolNames]))]};
       }}:{}),tools:async()=>{

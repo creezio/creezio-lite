@@ -1,6 +1,6 @@
 "use client";
 import {useCallback} from 'react';
-import {useLoad} from './client';
+import {useLoad} from './client.ts';
 import type {Workspace} from '../core';
 type Result={workspace:Workspace};
 /** Shared workspace identity adapter; loading/refresh semantics belong to the kit. */
