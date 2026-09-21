@@ -45,18 +45,20 @@ export function entityStorage(module:Module,spec?:ModuleEntitySpec){
  };
  const source=relational?`(SELECT id,org_id,'${module.id}' AS module_id,${dataExpression('e')} AS data,version,created_by,created_at,updated_at,deleted_at FROM ${quote(table)} e)`:'lite_records';
  const values=(data:Record<string,unknown>)=>fields.map(f=>data[f.key]==null?null:f.encoding==='json'?JSON.stringify(data[f.key]):f.type==='boolean'?(data[f.key]?1:0):data[f.key]);
- return {table,source,relational,dataExpression,
-  insert(db:D1Database,input:{id:string;orgId:string;data:Record<string,unknown>;userId:string;now:string}){
-   const {id,orgId,userId,now}=input;const data=validateStoredData(module,input.data);
-   return relational?db.prepare(`INSERT INTO ${quote(table)}(id,org_id,version,created_by,created_at,updated_at,${fields.map(f=>column(f.key)).join(',')}) VALUES(?,?,1,?,?,?,${fields.map(()=>'?').join(',')})`).bind(id,orgId,userId,now,now,...values(data)):
-    db.prepare('INSERT INTO lite_records(id,org_id,module_id,data,search_text,version,created_by,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?,?)').bind(id,orgId,module.id,JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),userId,now,now);
-  },
-  update(db:D1Database,input:{id:string;orgId:string;data?:Record<string,unknown>;version:number;now:string;filter:SqlFragment;archive?:boolean}){
-   const {id,orgId,version,now,filter,archive}=input;const data=archive?undefined:validateStoredData(module,input.data);
-   const set=archive?'deleted_at=?,updated_at=?':relational?`${fields.map(f=>column(f.key)+'=?').join(',')},updated_at=?`:'data=?,search_text=?,updated_at=?';
-   const bindings=archive?[now,now]:relational?[...values(data!),now]:[JSON.stringify(data),Object.values(data!).join(' ').toLowerCase(),now];
-   return db.prepare(`UPDATE ${quote(table)} SET ${set},version=version+1 WHERE id=? AND org_id=? ${relational?'':'AND module_id=?'} AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM ${source} r WHERE r.id=${quote(table)}.id AND r.org_id=${quote(table)}.org_id AND ${filter.sql})`).bind(...bindings,id,orgId,...(relational?[]:[module.id]),version,...filter.bindings);
-  },
+ const insertStatement=(input:{id:string;orgId:string;data:Record<string,unknown>;userId:string;now:string}):SqlFragment=>{
+  const {id,orgId,userId,now}=input;const data=validateStoredData(module,input.data);
+  return relational?{sql:`INSERT INTO ${quote(table)}(id,org_id,version,created_by,created_at,updated_at,${fields.map(f=>column(f.key)).join(',')}) VALUES(?,?,1,?,?,?,${fields.map(()=>'?').join(',')})`,bindings:[id,orgId,userId,now,now,...values(data)]}:
+   {sql:'INSERT INTO lite_records(id,org_id,module_id,data,search_text,version,created_by,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?,?)',bindings:[id,orgId,module.id,JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),userId,now,now]};
+ };
+ const updateStatement=(input:{id:string;orgId:string;data?:Record<string,unknown>;version:number;now:string;filter:SqlFragment;archive?:boolean}):SqlFragment=>{
+  const {id,orgId,version,now,filter,archive}=input;const data=archive?undefined:validateStoredData(module,input.data);
+  const set=archive?'deleted_at=?,updated_at=?':relational?`${fields.map(f=>column(f.key)+'=?').join(',')},updated_at=?`:'data=?,search_text=?,updated_at=?';
+  const bindings=archive?[now,now]:relational?[...values(data!),now]:[JSON.stringify(data),Object.values(data!).join(' ').toLowerCase(),now];
+  return {sql:`UPDATE ${quote(table)} SET ${set},version=version+1 WHERE id=? AND org_id=? ${relational?'':'AND module_id=?'} AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM ${source} r WHERE r.id=${quote(table)}.id AND r.org_id=${quote(table)}.org_id AND ${filter.sql})`,bindings:[...bindings,id,orgId,...(relational?[]:[module.id]),version,...filter.bindings]};
+ };
+ return {table,source,relational,dataExpression,insertStatement,updateStatement,
+  insert(db:D1Database,input:Parameters<typeof insertStatement>[0]){const statement=insertStatement(input);return db.prepare(statement.sql).bind(...statement.bindings);},
+  update(db:D1Database,input:Parameters<typeof updateStatement>[0]){const statement=updateStatement(input);return db.prepare(statement.sql).bind(...statement.bindings);},
  };
 }
 /** Generate additive application SQL. Review/check it into the owning module's migration; never run DDL during a request. */
