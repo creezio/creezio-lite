@@ -1,3 +1,4 @@
+import type {BrandModuleRegistry} from './module-contract.ts';
 import { editableFields } from './entity-write.ts';
 import { requestAccessMatches, accessModuleReadable, type RequestAccessContext } from './access-profiles-store.ts';
 import type { AppDefinition, AppOperationDefinition, Field, Module, Role, Workspace } from './types.ts';
@@ -240,7 +241,7 @@ export function routeKey(method:string,path:string):string{return `${method} ${p
  * Business operations belong to a declared module and never exceed its read roles;
  * system descriptors (jobs…) use an explicit moduleId that is not a business module.
  */
-export function appOperations(app:AppDefinition,definitions:AppOperationDefinition[]=[]):Operation[]{
+export function appOperations(app:AppDefinition,definitions:AppOperationDefinition[]=[],registry?:BrandModuleRegistry):Operation[]{
   const result:Operation[]=[],ids=new Set<string>();
   for(const definition of definitions){
     if(!definition||typeof definition!=='object'||typeof definition.handle!=='function'||!definition.operation||typeof definition.operation!=='object')throw new Error('Une opération applicative déclare une Operation et un handler.');
@@ -251,8 +252,9 @@ export function appOperations(app:AppDefinition,definitions:AppOperationDefiniti
     if(typeof op.description!=='string'||!op.description.trim()||typeof op.moduleName!=='string'||!op.moduleName.trim())throw new Error(`Description et nom de module requis pour ${op.id}.`);
     if(!idPattern.test(op.moduleId))throw new Error(`moduleId invalide pour ${op.id}.`);
     const module=app.modules.find(m=>m.id===op.moduleId);
-    if(op.kind==='business'&&!module)throw new Error(`L’opération ${op.id} référence un module absent de l’application : ${op.moduleId}.`);
-    if(op.kind!=='business'&&module)throw new Error(`Le descripteur système ${op.id} ne peut pas réutiliser le module métier ${op.moduleId}.`);
+    const owner=registry?.modules.find(m=>m.id===op.moduleId),owned=owner?.operations?.some(def=>def.operation.id===op.id);
+    if(op.kind==='business'&&!module&&!owned)throw new Error(`L’opération ${op.id} référence un module absent de l’application : ${op.moduleId}.`);
+    if(op.kind!=='business'&&(module||owner))throw new Error(`Le descripteur système ${op.id} ne peut pas réutiliser le module métier ${op.moduleId}.`);
     if(!Array.isArray(op.roles)||!op.roles.length||!op.roles.every(r=>roles.includes(r))||new Set(op.roles).size!==op.roles.length)throw new Error(`Rôles invalides pour ${op.id}.`);
     if(op.method==='GET'&&op.bodySchema)throw new Error(`L’opération GET ${op.id} n’accepte pas de corps métier.`);
     if(op.essential)throw new Error(`Une opération applicative ne peut pas être déclarée indispensable : ${op.id}.`);

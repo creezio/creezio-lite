@@ -36,7 +36,7 @@ export async function handleNativeApi(request:Request,context:ApiContext,options
       if(!setup.ok)return setup;org=await getWorkspace(db,user,null);
     }
     const requestId=context.requestId??crypto.randomUUID();
-    const operations=context.operations??operationCatalog({db,user,workspace:org},context.app,options.operations);
+    const operations=context.operations??operationCatalog({db,user,workspace:org},context.app,options.operations,options.registry);
     const access=context.access??(options.access===undefined?undefined:ownAccess=await createRequestAccessContext({db,request,requestId,workspace:org,identity:user,credential:context.credential??sessionCredential,declaration:options.access,catalog:operations}));
     if(access)assertRequestAccessContext(access,request,requestId,org.id,user.userId);
     const operation=matchOperation(operations,request.method,url.pathname);if(access&&operation)assertOperationAllowed(operation,org,access);

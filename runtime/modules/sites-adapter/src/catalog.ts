@@ -1,3 +1,4 @@
+import type {BrandModuleRegistry} from '@lite/core/module-contract';
 import type { AppDefinition, AppExtensions, AppOperationDefinition } from '@lite/core';
 import { coreOperations, operation, objectSchema, stringSchema, idSchema, paging, appOperations, assertUniqueOperations, canReadModule, type Operation } from '@lite/core/operations';
 import { defineExtensions as defineCoreExtensions } from '@lite/core/commands';
@@ -23,7 +24,7 @@ export function nativeMounts(c:NativeContext,app:AppDefinition,extensions:AppExt
   ];
 }
 /** One catalogue for HTTP, MCP, assistant tools, administration and OpenAPI; application operations join it before duplicate detection. */
-export function operationCatalog(c:NativeContext,app:AppDefinition,extensions:AppOperationDefinition[]=[]):Operation[]{
+export function operationCatalog(c:NativeContext,app:AppDefinition,extensions:AppOperationDefinition[]=[],registry?:BrandModuleRegistry):Operation[]{
   const result=coreOperations(app);
   for(const entry of nativeMounts(c,app))for(const op of entry.mount.operations??[]){
     const base=`/api/v1/${entry.space==='module'?'modules':'platform'}/${entry.id}`,suffix=op.path==='/'?'':op.path;
@@ -39,7 +40,7 @@ export function operationCatalog(c:NativeContext,app:AppDefinition,extensions:Ap
     result.push(operation({id:`core.${id==='health'?'kernel_health':id}`,moduleId:'core',moduleName:'Système',method:'GET',path:`/api/v1/core/${path}`,description,roles,essential:true,...(id==='health'?{aliases:['/api/v1/core']}:{})}));
   }
   // Application operations come last so a collision always names the kit operation first, as defineExtensions does.
-  result.push(...appOperations(app,extensions));
+  result.push(...appOperations(app,extensions,registry));
   return assertUniqueOperations(result);
 }
 

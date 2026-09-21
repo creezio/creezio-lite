@@ -96,7 +96,7 @@ export function defineExtensions(app:AppDefinition,extensions:AppExtensions={},c
   extensions=composeModuleExtensions(extensions);
   if(extensions.beforeWrite!==undefined&&typeof extensions.beforeWrite!=='function')throw new Error('beforeWrite doit être une fonction.');
   resolveScope(extensions.scope);
-  const declared=appOperations(app,extensions.operations);
+  const declared=appOperations(app,extensions.operations,extensions.registry);
   const privateOperations=assertUniqueOperations([...(catalog??coreOperations(app)),...declared]);
   if(extensions.publicIngress!==undefined){
     if(!Array.isArray(catalog)||catalog.length<1){
