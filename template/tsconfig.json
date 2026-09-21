@@ -283,6 +283,12 @@
       ],
       "@lite/core/*": [
         "./runtime/core/*"
+      ],
+      "@lite/shell-ui/ui/workspace/pane-location": [
+        "./runtime/modules/shell-ui/ui/workspace/pane-location.tsx"
+      ],
+      "@lite/sites-adapter/ui/pane-router": [
+        "./runtime/modules/sites-adapter/ui/pane-router.tsx"
       ]
     },
     "types": [

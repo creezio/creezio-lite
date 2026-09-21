@@ -36,7 +36,8 @@ import {
   normalizeHref,
   pushTabHistory,
   replaceTabHistory,
-  samePathname,
+  sameWorkspacePage,
+  workspacePageKey,
   shouldOpenLockedNavigationInNewTab,
   externalSiteHref,
   titleFromHref,
@@ -213,7 +214,7 @@ function pathnameOf(href: string): string {
 }
 
 /**
- * Onglet existant qui affiche déjà la même page (pathname).
+ * Onglet existant qui affiche déjà la même page (route et fiche).
  * Dashboard → toujours l'épinglé. Sinon préférer l'onglet actif s'il match
  * (filtres / pagination dans le même onglet), sinon le plus ancien.
  */
@@ -229,10 +230,10 @@ function findExistingTabForHref(
       null
     );
   }
-  const path = pathnameOf(href);
+  const path = workspacePageKey(href);
   const active = tabs.find((t) => t.id === opts.activeTabId);
-  if (active && pathnameOf(active.href) === path) return active;
-  return tabs.find((t) => pathnameOf(t.href) === path) || null;
+  if (active && workspacePageKey(active.href) === path) return active;
+  return tabs.find((t) => workspacePageKey(t.href) === path) || null;
 }
 
 function findExternalSiteTab(
@@ -242,7 +243,7 @@ function findExternalSiteTab(
   const href = externalSiteHref(siteId);
   return (
     tabs.find((t) => t.externalSite?.siteId === siteId) ||
-    tabs.find((t) => pathnameOf(t.href) === pathnameOf(href)) ||
+    tabs.find((t) => workspacePageKey(t.href) === pathnameOf(href)) ||
     null
   );
 }
@@ -258,7 +259,7 @@ function closeElectronTab(tab: WorkspaceTab | undefined): void {
 }
 
 /**
- * Ferme les onglets qui dupliquent le même pathname (garde `keepId`).
+ * Ferme les onglets qui dupliquent le même page (garde `keepId`).
  * Invalide le keep-alive des onglets fermés.
  */
 function dropDuplicatePathTabs(
@@ -266,14 +267,14 @@ function dropDuplicatePathTabs(
   href: string,
   keepId: string,
 ): WorkspaceTab[] {
-  const path = pathnameOf(href);
+  const path = workspacePageKey(href);
   const next: WorkspaceTab[] = [];
   for (const t of tabs) {
     if (t.id === keepId) {
       next.push(t);
       continue;
     }
-    if (pathnameOf(t.href) === path || (isDashboardHref(href) && isDashboardHref(t.href))) {
+    if (workspacePageKey(t.href) === path || (isDashboardHref(href) && isDashboardHref(t.href))) {
       invalidateKeepAlive(t.href);
       continue;
     }
@@ -359,7 +360,7 @@ export function TabWorkspaceProvider({ children }: { children: ReactNode }) {
       // sur l'onglet actif sauvegardé — plus de router.replace vers une vieille page.
       let active =
         pinned.tabs.find((t) => normalizeHref(t.href) === currentHref) ||
-        pinned.tabs.find((t) => samePathname(t.href, currentHref));
+        pinned.tabs.find((t) => sameWorkspacePage(t.href, currentHref));
       if (active && normalizeHref(active.href) !== currentHref) {
         const meta = metaFor(currentHref);
         active = applyTabMeta(replaceTabHistory(active, currentHref), meta);
@@ -425,7 +426,7 @@ export function TabWorkspaceProvider({ children }: { children: ReactNode }) {
         cleaned.tabs.find((t) => t.id === cleaned.pinnedId) ||
         existing;
       const meta = metaFor(currentHref);
-      const updated = samePathname(keep.href, currentHref)
+      const updated = sameWorkspacePage(keep.href, currentHref)
         ? applyTabMeta(replaceTabHistory(keep, currentHref), meta)
         : applyTabMeta(keep, meta);
       const nextTabs = cleaned.tabs.map((t) =>
@@ -455,7 +456,7 @@ export function TabWorkspaceProvider({ children }: { children: ReactNode }) {
       // passent par navigate(), qui ouvre un nouvel onglet dans ce cas.
       if (
         isWorkspaceTabLocked(active, pinnedTabIdRef.current) &&
-        !samePathname(active.href, currentHref)
+        !sameWorkspacePage(active.href, currentHref)
       ) {
         routeTo(active.href, true);
         return prev;
@@ -465,7 +466,7 @@ export function TabWorkspaceProvider({ children }: { children: ReactNode }) {
       // recherche…) : même pathname → remplace l'entrée d'historique (vue ou
       // filtre ≠ nouvelle page) ; pathname différent → vraie navigation, on
       // empile pour que « précédent » fonctionne.
-      const update = samePathname(active.href, currentHref)
+      const update = sameWorkspacePage(active.href, currentHref)
         ? replaceTabHistory(active, currentHref)
         : pushTabHistory(active, currentHref);
       return prev.map((t) =>
@@ -529,7 +530,7 @@ export function TabWorkspaceProvider({ children }: { children: ReactNode }) {
           normalizeHref(target.href) === targetHref
             ? applyTabMeta(target, meta)
             : applyTabMeta(
-                samePathname(target.href, targetHref) || opts?.skipHistory
+                sameWorkspacePage(target.href, targetHref) || opts?.skipHistory
                   ? replaceTabHistory(target, targetHref)
                   : pushTabHistory(target, targetHref),
                 meta,
@@ -620,7 +621,7 @@ export function TabWorkspaceProvider({ children }: { children: ReactNode }) {
           // filtres, pagination) → on REMPLACE l'entrée d'historique au lieu
           // d'empiler : « précédent » revient à la page d'avant, pas à
           // l'état de vue/filtre d'avant.
-          const sameParamsOnlyChange = samePathname(t.href, h);
+          const sameParamsOnlyChange = sameWorkspacePage(t.href, h);
           const next =
             opts?.skipHistory || sameParamsOnlyChange
               ? replaceTabHistory(t, h)
@@ -873,16 +874,16 @@ export function TabWorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * Focus l'onglet du pathname s'il existe ; sinon l'ouvre en nouvel onglet.
+   * Focus l'onglet de la page s'il existe ; sinon l'ouvre en nouvel onglet.
    * Ne pose plus de pastille seule — l'utilisateur doit **voir** la cible.
    */
   const openOrNotify = useCallback(
     (href: string): "opened" | "focused" | "active" => {
       const h = normalizeHref(href);
-      const path = h.split("?")[0] || h;
-      // Un seul onglet par pathname — on prend le plus ancien, on ferme les doublons.
+      const pageKey = workspacePageKey(h);
+      // Un seul onglet par page — on prend le plus ancien, on ferme les doublons.
       const matches = tabsRef.current.filter(
-        (t) => (normalizeHref(t.href).split("?")[0] || "/") === path,
+        (t) => workspacePageKey(t.href) === pageKey,
       );
       const existing = matches[0];
       if (matches.length > 1) {

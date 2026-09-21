@@ -89,7 +89,11 @@ export async function doctor(appPath){
  if(!(await readdir(join(app,'drizzle'))).some(f=>f.endsWith('.sql')))issues.push('Migration D1 manquante.');
  // Information seulement : l'absence du standard d'orchestration ne bloque ni doctor ni upgrade des applications existantes.
  let orchestration;try{const o=await inspectOrchestration(app);orchestration={status:o.status,installedVersion:o.installedVersion,targetVersion:o.targetVersion,conflicts:o.conflicts};}catch(e){orchestration={status:'invalid',error:e.message};}
- return {ok:!issues.length,kitVersion:lock.kitVersion,registered:Boolean(host.project_id),issues,orchestration};
+ const bridgePath=join(app,'app/sites-pane-router.tsx');
+ const bridge=await exists(bridgePath)?await readFile(bridgePath,'utf8'):'';
+ const managedBridge=bridge.includes('@lite/sites-adapter/ui/pane-router');
+ const hostIntegration={paneRouter:managedBridge?'managed':bridge?'legacy':'missing',migrationRequired:!managedBridge};
+ return {ok:!issues.length,kitVersion:lock.kitVersion,registered:Boolean(host.project_id),issues,orchestration,hostIntegration};
 }
 export async function upgrade(appPath,apply=false){
  const app=resolve(appPath),report=await doctor(app);if(!report.ok)throw new Error(report.issues.join('\n'));
@@ -98,10 +102,10 @@ export async function upgrade(appPath,apply=false){
  const staging=await mkdtemp(join(dirname(app),'.lite-upgrade-'));
  try{
   await runtimeAt(staging);const desired=await runtimeHashes(staging),changed=JSON.stringify(desired)!==JSON.stringify(previous.runtimeFiles)||previous.kitVersion!==packageInfo.version;
-  if(!apply||!changed)return{currentVersion:previous.kitVersion,targetVersion:packageInfo.version,changed,applied:false};
+  if(!apply||!changed)return{currentVersion:previous.kitVersion,targetVersion:packageInfo.version,changed,applied:false,hostIntegration:report.hostIntegration};
   const backup=join(app,'.lite-backups',`${Date.now()}-${previous.kitVersion}`);await mkdir(backup,{recursive:true});await cp(join(app,'lite.lock.json'),join(backup,'lite.lock.json'));await rename(join(app,'runtime'),join(backup,'runtime'));
   try{await rename(join(staging,'runtime'),join(app,'runtime'));await writeFile(join(app,'lite.lock.json'),JSON.stringify({...previous,kitVersion:packageInfo.version,runtimeFiles:desired},null,2)+'\n');}catch(error){await rm(join(app,'runtime'),{recursive:true,force:true});await rename(join(backup,'runtime'),join(app,'runtime'));await cp(join(backup,'lite.lock.json'),join(app,'lite.lock.json'));throw error;}
-  return {currentVersion:previous.kitVersion,targetVersion:packageInfo.version,changed:true,applied:true,backup,requiresBuildAndPublication:true};
+  return {currentVersion:previous.kitVersion,targetVersion:packageInfo.version,changed:true,applied:true,backup,requiresBuildAndPublication:true,hostIntegration:report.hostIntegration};
  }finally{await rm(staging,{recursive:true,force:true});}
 }
 export async function addModule(appPath,spec){

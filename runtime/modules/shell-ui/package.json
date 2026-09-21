@@ -10,6 +10,7 @@
     "./ui/settings/*": "./ui/settings/*.tsx",
     "./ui/primitives/*": "./ui/primitives/*.tsx",
     "./theme.css": "./ui/theme/theme.css",
-    "./tailwind-preset": "./ui/theme/tailwind-preset.cjs"
+    "./tailwind-preset": "./ui/theme/tailwind-preset.cjs",
+    "./ui/workspace/pane-location": "./ui/workspace/pane-location.tsx"
   }
 }

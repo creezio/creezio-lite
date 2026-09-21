@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePaneSearchParams as useSearchParams } from '@lite/shell-ui/ui/workspace/pane-location';
 import {
   Bot,
   CheckCircle2,
@@ -68,7 +68,8 @@ export function TasksKanbanClient({executors = ["human", "ai", "hermes"]}: {exec
   const [assigneeFilterId, setAssigneeFilterId] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const selectedFromSearch=useSearchParams().get('record');
+  const paneSearch=useSearchParams();
+  const selectedFromSearch=paneSearch.get('record');
   useEffect(()=>{if(selectedFromSearch){setSelectedId(selectedFromSearch);setSheetOpen(true);}},[selectedFromSearch]);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropCol, setDropCol] = useState<ColumnKey | null>(null);
@@ -100,7 +101,7 @@ export function TasksKanbanClient({executors = ["human", "ai", "hermes"]}: {exec
 
   useEffect(() => {
     // Filtre initial via ?q= (ex. lien « Ses tâches » depuis Collaborateurs).
-    const sp = new URLSearchParams(window.location.search);
+    const sp = paneSearch;
     const q = sp.get("q");
     if (q) setFilter(q);
     const assignee = sp.get("assignee");

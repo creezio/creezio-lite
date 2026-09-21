@@ -172,3 +172,5 @@ export * from "./search/global-search-config";
 export * from "./search/search-history";
 export * from "./pagination";
 export * from "./app-error-boundary";
+
+export * from "./workspace/pane-location";

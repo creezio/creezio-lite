@@ -73,6 +73,10 @@ export function defineApp(input: unknown): AppDefinition {
     for (const field of mod.fields) {
       if (!keyPattern.test(field.key) || forbidden.has(field.key) || keys.has(field.key) || typeof field.label !== 'string' || !field.label.trim()) throw new Error('Champ invalide ou dupliqué.');
       keys.add(field.key);
+      if(field.integer!==undefined&&(typeof field.integer!=='boolean'||field.type!=='number'))throw new Error('Un entier exige un champ numérique.');
+      if(field.scale!==undefined&&(field.type!=='number'||!Number.isSafeInteger(field.scale)||field.scale<1||field.scale>1000000))throw new Error('Échelle numérique invalide.');
+      if(field.unit!==undefined&&(field.type!=='number'||typeof field.unit!=='string'||!field.unit.trim()||field.unit.length>20))throw new Error('Unité numérique invalide.');
+      if(field.reference!==undefined&&(field.type!=='text'&&field.type!=='textarea'||!field.reference||!idPattern.test(field.reference.moduleId)||(field.reference.multiple!==undefined&&typeof field.reference.multiple!=='boolean')))throw new Error('Déclaration de référence invalide.');
       if(field.searchable!==undefined&&typeof field.searchable!=='boolean')throw new Error('searchable doit être un booléen.');
       if (!['text','textarea','email','number','date','select','boolean'].includes(field.type)) throw new Error('Type de champ non pris en charge.');
       if (field.type === 'select' && (!Array.isArray(field.options) || !field.options.length || field.options.length > 50 || !field.options.every(v => typeof v === 'string' && v.length > 0 && v.length <= 100) || new Set(field.options).size !== field.options.length)) throw new Error('Options de sélection invalides.');
@@ -88,6 +92,10 @@ export function defineApp(input: unknown): AppDefinition {
     validateModuleKind(mod, keys);
   }
   validateModuleParents(app.modules);
+  for(const mod of app.modules)for(const field of mod.fields)if(field.reference){
+    const target=app.modules.find(m=>m.id===field.reference!.moduleId);
+    if(!target||field.reference.labelField&&!target.fields.some(f=>f.key===field.reference!.labelField))throw new Error('Cible ou libellé de référence inconnu.');
+  }
   return app;
 }
 
@@ -137,7 +145,7 @@ export function validateData(mod: Module, input: unknown): Record<string, unknow
     const empty = value === undefined || value === null || value === '';
     if (empty) { if (f.required) fail(400, 'required_field', `${f.label} est obligatoire.`); result[f.key] = f.type === 'boolean' ? false : null; continue; }
     if (f.type === 'number') {
-      if (typeof value !== 'number' || !Number.isFinite(value) || (f.min !== undefined && value < f.min) || (f.max !== undefined && value > f.max)) fail(400, 'invalid_number', `${f.label} : nombre hors limites.`);
+      if (typeof value !== 'number' || !Number.isFinite(value) || (f.integer&&!Number.isSafeInteger(value)) || (f.min !== undefined && value < f.min) || (f.max !== undefined && value > f.max)) fail(400, 'invalid_number', `${f.label} : nombre hors limites.`);
     } else if (f.type === 'boolean') {
       if (typeof value !== 'boolean') fail(400, 'invalid_boolean', `${f.label} : valeur oui/non attendue.`);
     } else {
