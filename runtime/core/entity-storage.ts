@@ -35,6 +35,12 @@ export function entityStorage(module:Module,spec?:ModuleEntitySpec){
    });
    expression=`json_set(${expression},${pairs.join(',')})`;
   }
+  // SQL NULL for an optional server field means absent, never an implicit false/default.
+  const optionalServer=(module.serverFields??[]).filter(f=>!f.required);
+  for(let index=0;index<optionalServer.length;index+=30){
+   const paths=optionalServer.slice(index,index+30).map(f=>`CASE WHEN ${alias}.${column(f.key)} IS NULL THEN '$.${f.key}' ELSE '$.__lite_absent__' END`);
+   expression=`json_remove(${expression},${paths.join(',')})`;
+  }
   return expression;
  };
  const source=relational?`(SELECT id,org_id,'${module.id}' AS module_id,${dataExpression('e')} AS data,version,created_by,created_at,updated_at,deleted_at FROM ${quote(table)} e)`:'lite_records';

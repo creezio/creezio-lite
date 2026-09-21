@@ -3,7 +3,7 @@ import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url'
 import {defineApp,defineExtensions,createBrandModuleRegistry,relationalEntityMigration,prepareEntityWrite,runAfterCommit,moduleDataSchema,commitWithEffects,validateStoredData,validateStoredPatch,entityStorage} from '../runtime/core/index.ts';
 import {coreOperations} from '../runtime/core/operations.ts';
 import {localDb,client,boot,alice,bob,root,migrationSql} from './helpers.mjs';
-const schema={id:'inventory',name:'Inventory',singular:'Item',description:'Inventory',titleField:'name',fields:[
+const schema={serverFields:[{key:'active',label:'Active',type:'boolean'}],id:'inventory',name:'Inventory',singular:'Item',description:'Inventory',titleField:'name',fields:[
  {key:'name',label:'Name',type:'text',required:true},{key:'quantity',label:'Quantity',type:'number',integer:true,min:0},
  {key:'approved',label:'Approved',type:'boolean',editable:false},{key:'tags',label:'Tags',type:'textarea',encoding:'json'},
  {key:'display',label:'Display',type:'text',storage:'computed'},
@@ -22,7 +22,7 @@ async function exercise(db){
  const a=client(db,alice,undefined,app,options),b=client(db,bob,undefined,app,options),org=await boot(a);await boot(b);
  for(const invalid of [{...data,approved:true},{...data,display:'forged'},{...data,quantity:-1},{...data,unknown:'x'}])assert.equal((await a('modules/inventory/records',{method:'POST',body:{data:invalid}})).status,400);
  const made=await a('modules/inventory/records',{method:'POST',body:{data}});assert.equal(made.status,201,JSON.stringify(made.body));const record=made.body.record;
- assert.equal(record.data.approved,true);assert.deepEqual(record.data.tags,['one']);assert.equal(record.data.display,'Box: 2');assert.deepEqual(events,['create']);
+ assert.equal(Object.hasOwn(record.data,'active'),false);assert.equal(record.data.approved,true);assert.deepEqual(record.data.tags,['one']);assert.equal(record.data.display,'Box: 2');assert.deepEqual(events,['create']);
  assert.equal((await db.prepare('SELECT COUNT(*) n FROM lite_records WHERE org_id=?').bind(org).first()).n,0);
  const physical=await db.prepare('SELECT label,quantity,approved,tags FROM inventory_items WHERE id=?').bind(record.id).first();assert.equal(physical.label,'Box');assert.equal(physical.approved,1);
  assert.equal((await b('modules/inventory/records/'+record.id)).status,404);assert.equal((await b('modules/inventory/records')).body.total,0);
@@ -33,7 +33,7 @@ async function exercise(db){
  assert.equal((await a('admin/search/reindex',{method:'POST',body:{reset:true}})).status,200);assert.equal((await a('search?q=Box')).body.total,1);
  assert.equal((await a('modules/inventory/records/'+record.id,{method:'PATCH',body:{version:1,data:{...data,name:'bad-hook'}}})).status,400);
  assert.deepEqual(events,['create']);assert.equal((await a('modules/inventory/records/'+record.id)).body.record.version,1);
- const updated=await a('modules/inventory/records/'+record.id,{method:'PATCH',body:{version:1,data:{...data,name:'Crate'}}});assert.equal(updated.status,200,JSON.stringify(updated.body));assert.equal(updated.body.record.data.approved,true);
+ const updated=await a('modules/inventory/records/'+record.id,{method:'PATCH',body:{version:1,data:{...data,name:'Crate'}}});assert.equal(updated.status,200,JSON.stringify(updated.body));assert.equal(updated.body.record.data.approved,true);assert.equal(Object.hasOwn(updated.body.record.data,'active'),false);assert.equal((await db.prepare('SELECT active FROM inventory_items WHERE id=?').bind(record.id).first()).active,null);
  assert.equal((await a('search?q=Box')).body.total,0);assert.equal((await a('search?q=Crate')).body.total,1);
  assert.equal((await a('modules/inventory/records/'+record.id,{method:'PATCH',body:{version:1,data}})).status,409);assert.deepEqual(events,['create','update']);
  assert.equal((await b('modules/inventory/records/'+record.id,{method:'DELETE',body:{version:2}})).status,404);

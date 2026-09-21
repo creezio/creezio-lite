@@ -27,7 +27,7 @@ La recherche est active par défaut pour les champs. `searchable:false` sur un c
 
 Les règles métier supplémentaires vont dans `app/business-rules.ts`. Les mêmes règles sont exécutées pour l’interface, l’API et MCP. Des relations, transactions entre fiches ou traitements asynchrones exigent du code dédié ; un formulaire déclaratif ne les invente pas.
 
-Un module utilisant une table ou un service spécifique doit fournir son contrat de stockage, ses permissions, ses opérations et sa source d’indexation. Le branchement automatique sans code supplémentaire concerne les modules déclaratifs sur `lite_records`.
+Un module utilisant une table ou un service spécifique doit fournir son contrat de stockage, ses permissions, ses opérations et sa source d’indexation. Le générateur crée désormais une table relationnelle `mod_<id>` par entité, son `db-schema.ts` et une migration additive déclarée par le module. Le CRUD, les formulaires et la recherche utilisent cette table sans miroir `lite_records`. Lors du portage d’une application, reprendre ses noms de tables et son modèle historiques ; le préfixe généré sert seulement aux nouvelles entités.
 
 ## Catalogue API et groupes
 

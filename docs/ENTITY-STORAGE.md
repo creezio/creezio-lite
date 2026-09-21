@@ -42,3 +42,11 @@ Une erreur de hook est journalisée sans message privé et indiquée dans `effec
 ## Vérification
 
 `tests/entity-storage.test.mjs` exécute le contrat sur SQLite et sur Cloudflare D1/Miniflare : colonnes réelles, aucun miroir `lite_records`, JSON, champs serveur/calculés, isolation, recherche/réindexation, conflits, archivage et effets. Les tests de scope du kit restent applicables aux deux adaptateurs.
+
+## Génération et portage
+
+`lite create` et `lite module` génèrent des tables relationnelles par entité. Chaque module possède `db-schema.ts`, sa déclaration `tables` et une migration SQL. Le journal et un nouveau snapshot Drizzle sont ajoutés ; aucun ancien SQL/snapshot n’est réécrit. Le `drizzle.config.ts` collecte les schémas de modules. Un `db:generate` sans changement de contrat ne doit proposer ni création en double ni suppression de table.
+
+L’adaptateur `records` reste disponible pour lire une application existante pendant son portage. Ce n’est pas le modèle cible pour convertir une application Creezio : reprendre ses tables, relations et contraintes, puis adapter ses transactions à D1. Le générateur n’applique aucune migration sur une base distante.
+
+Les colonnes NULL des métadonnées serveur optionnelles sont projetées comme absentes ; éditer un autre champ ne doit pas fabriquer une valeur false pour un état serveur non renseigné.
