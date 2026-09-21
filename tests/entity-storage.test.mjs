@@ -44,6 +44,13 @@ async function exercise(db){
  const adapter=entityStorage(wide,wideSpec),wideData={...data,...Object.fromEntries(wide.serverFields.map(f=>[f.key,'value']))};
  await adapter.insert(db,{id:'wide',orgId:org,data:wideData,userId:alice.userId,now:new Date().toISOString()}).run();
  const hydrated=await db.prepare(`SELECT data FROM ${adapter.source} WHERE id=?`).bind('wide').first();assert.equal(JSON.parse(hydrated.data).snapshot_79,'value');
+ const patch=adapter.patchStatement({id:'wide',orgId:org,patch:{quantity:4,tags:['patched']},version:1,now:new Date().toISOString(),filter:{sql:'1=1',bindings:[]}});
+ await assert.rejects(()=>db.batch([db.prepare(patch.sql).bind(...patch.bindings),db.prepare('INSERT INTO no_such_patch_target(id) VALUES(1)')]));
+ assert.equal((await db.prepare('SELECT version FROM wide_items WHERE id=?').bind('wide').first()).version,1);
+ await db.prepare(patch.sql).bind(...patch.bindings).run();
+ const patched=JSON.parse((await db.prepare(`SELECT data FROM ${adapter.source} WHERE id=?`).bind('wide').first()).data);assert.equal(patched.quantity,4);assert.deepEqual(patched.tags,['patched']);assert.equal(patched.snapshot_79,'value');
+ assert.equal((await db.prepare(patch.sql).bind(...patch.bindings).run()).meta.changes,0);
+
 }
 test('relational D1 adapter: physical columns, field semantics, scope, search/reindex, CAS and commit hooks',async t=>{const db=await localDb();t.after(()=>db.close());await exercise(db);});
 test('real Cloudflare D1 runs the same relational contract',async()=>{
@@ -107,4 +114,26 @@ test('command patches validate all changed fields without rewriting untouched le
  assert.throws(()=>validateStoredPatch(schema,{old_snapshot:{kept:false}},previous),e=>e.code==='unknown_field');
  assert.throws(()=>validateStoredPatch(schema,{name:null},previous),e=>e.code==='required_field');
  assert.throws(()=>validateStoredPatch(schema,{display:'not stored'},previous),e=>e.code==='unknown_field');
+});
+
+for(const kind of ['records','relational'])test(kind+': SQL business PATCH preserves historical values and uses the same CAS/scope',async t=>{
+ const db=await localDb();t.after(()=>db.close());const config=configuration(kind==='records'?{kind}:{kind,table:'patch_items'});
+ if(kind==='relational')for(const sql of relationalEntityMigration(config.spec))await db.prepare(sql).run();
+ const a=client(db,alice,undefined,app,config.options),orgId=await boot(a),adapter=entityStorage(schema,config.spec);
+ const now='2026-09-21T12:00:00Z',filter={sql:'1=1',bindings:[]};
+ await adapter.insert(db,{id:'patch',orgId,data:{name:'Historic',quantity:2,approved:true,tags:['original']},userId:alice.userId,now}).run();
+ // A historical value outside the current contract must not be normalized by a quantity-only command.
+ if(kind==='relational')await db.prepare("UPDATE patch_items SET name='' WHERE id='patch'").run();
+ else await db.prepare("UPDATE lite_records SET data=json_set(data,'$.name','','$.old_snapshot',json('{\"kept\":true}')) WHERE id='patch'").run();
+ const execute=async(patch,version,scope=filter)=>{const s=adapter.patchStatement({id:'patch',orgId,patch,version,now,filter:scope});return db.prepare(s.sql).bind(...s.bindings).run();};
+ assert.equal((await execute({quantity:3,tags:['new'],active:true},1)).meta.changes,1);
+ let row=await db.prepare(`SELECT data,version FROM ${adapter.source} WHERE id='patch'`).first(),value=JSON.parse(row.data);
+ assert.equal(value.name,'');assert.equal(value.quantity,3);assert.deepEqual(value.tags,['new']);assert.equal(value.active,true);assert.equal(row.version,2);
+ if(kind==='records')assert.deepEqual(value.old_snapshot,{kept:true});
+ assert.equal((await execute({quantity:4},1)).meta.changes,0);
+ assert.equal((await execute({quantity:4},2,{sql:'0=1',bindings:[]})).meta.changes,0);
+ await assert.rejects(()=>execute({quantity:-1},2),e=>e.code==='invalid_number');
+ await assert.rejects(()=>execute({display:'computed'},2),e=>e.code==='unknown_field');
+ await assert.rejects(()=>execute({name:null},2),e=>e.code==='required_field');
+ assert.equal((await execute({},2)).meta.changes,1);
 });

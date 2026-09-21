@@ -1,7 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Module, SqlFragment } from './types.ts';
 import type { ModuleEntitySpec } from './module-contract.ts';
-import { storedFields, validateStoredData } from './entity-write.ts';
+import { storedFields, validateStoredData, validateStoredPatch } from './entity-write.ts';
 export type EntityStorage={kind:'records'}|{kind:'relational';table:string;columns?:Record<string,string>};
 const identifier=/^[a-z][a-z0-9_]{0,63}$/;
 const metadata=['id','org_id','version','created_by','created_at','updated_at','deleted_at'];
@@ -56,7 +56,25 @@ export function entityStorage(module:Module,spec?:ModuleEntitySpec){
   const bindings=archive?[now,now]:relational?[...values(data!),now]:[JSON.stringify(data),Object.values(data!).join(' ').toLowerCase(),now];
   return {sql:`UPDATE ${quote(table)} SET ${set},version=version+1 WHERE id=? AND org_id=? ${relational?'':'AND module_id=?'} AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM ${source} r WHERE r.id=${quote(table)}.id AND r.org_id=${quote(table)}.org_id AND ${filter.sql})`,bindings:[...bindings,id,orgId,...(relational?[]:[module.id]),version,...filter.bindings]};
  };
- return {table,source,relational,dataExpression,insertStatement,updateStatement,
+ /** A business PATCH validates changed fields and preserves untouched historical columns. */
+ const patchStatement=(input:{id:string;orgId:string;patch:Record<string,unknown>;version:number;now:string;filter:SqlFragment}):SqlFragment=>{
+  const {id,orgId,version,now,filter}=input,patch=validateStoredPatch(module,input.patch,{});
+  const changed=fields.filter(f=>Object.hasOwn(patch,f.key));
+  let set:string,bindings:unknown[];
+  if(relational){
+   set=changed.map(f=>column(f.key)+'=?').concat('updated_at=?').join(',');
+   bindings=changed.map(f=>patch[f.key]==null?null:f.encoding==='json'?JSON.stringify(patch[f.key]):f.type==='boolean'?(patch[f.key]?1:0):patch[f.key]);
+   bindings.push(now);
+  }else{
+   let expression='data';
+   for(let index=0;index<changed.length;index+=30)expression=`json_set(${expression},${changed.slice(index,index+30).map(f=>"'$."+f.key+"',json(?)").join(',')})`;
+   const values=changed.map(f=>JSON.stringify(patch[f.key]??null));
+   set=`data=${expression},search_text=(SELECT lower(COALESCE(group_concat(CAST(value AS TEXT),' '),'')) FROM json_each(${expression})),updated_at=?`;
+   bindings=[...values,...values,now];
+  }
+  return {sql:`UPDATE ${quote(table)} SET ${set},version=version+1 WHERE id=? AND org_id=? ${relational?'':'AND module_id=?'} AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM ${source} r WHERE r.id=${quote(table)}.id AND r.org_id=${quote(table)}.org_id AND ${filter.sql})`,bindings:[...bindings,id,orgId,...(relational?[]:[module.id]),version,...filter.bindings]};
+ };
+ return {table,source,relational,dataExpression,insertStatement,updateStatement,patchStatement,
   insert(db:D1Database,input:Parameters<typeof insertStatement>[0]){const statement=insertStatement(input);return db.prepare(statement.sql).bind(...statement.bindings);},
   update(db:D1Database,input:Parameters<typeof updateStatement>[0]){const statement=updateStatement(input);return db.prepare(statement.sql).bind(...statement.bindings);},
  };

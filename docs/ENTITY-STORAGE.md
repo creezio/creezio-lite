@@ -50,3 +50,5 @@ Une erreur de hook est journalisée sans message privé et indiquée dans `effec
 L’adaptateur `records` reste disponible pour lire une application existante pendant son portage. Ce n’est pas le modèle cible pour convertir une application Creezio : reprendre ses tables, relations et contraintes, puis adapter ses transactions à D1. Le générateur n’applique aucune migration sur une base distante.
 
 Les colonnes NULL des métadonnées serveur optionnelles sont projetées comme absentes ; éditer un autre champ ne doit pas fabriquer une valeur false pour un état serveur non renseigné.
+
+`patchStatement` reprend la sémantique PATCH métier de Creezio : seuls les champs modifiés sont validés et écrits, les colonnes historiques non concernées restent intactes. Il contrôle la version, l’espace et le scope comme les autres écritures ; un patch vide peut prendre une nouvelle version pour une transaction de stock. Il ne remplace pas les règles métier ni les gardes du batch.
