@@ -43,6 +43,12 @@ export function usePaneActive(): boolean {
   return useContext(PaneActiveContext);
 }
 
+/** Nested views share the pane activity contract, including dialogs rendered in portals. */
+export function PaneActivityBoundary({active,children}:{active:boolean;children:ReactNode}) {
+  const parentActive=usePaneActive();
+  return <PaneActiveContext.Provider value={parentActive&&active}>{children}</PaneActiveContext.Provider>;
+}
+
 /**
  * Gel du router App Router par pane (pattern « FrozenRouter »).
  *
