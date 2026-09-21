@@ -206,7 +206,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       if(request.method!=='GET'&&!moduleWritable(mod)) fail(405,'command_required','Ce module ne se modifie que par une commande déclarée.');
       requireModuleRole(mod,org.role,request.method!=='GET');
       const id=recordMatch[2],hooks=options.entityHooks?.[mod.id],storage=entityStorage(mod,options.entitySpecs?.[mod.id]);
-      const hookContext={module:mod,workspace:org,identity:user,...(access?{access}:{})};
+      const hookContext={db,module:mod,workspace:org,identity:user,...(access?{access}:{})};
       const project=async(record:import('./types.ts').RecordData)=>hooks?.afterRead?{...record,data:await hooks.afterRead({...hookContext,record:structuredClone(record)})}:record;
       if(request.method==='GET' && id) return json({record:await project(await getRecord(db,org.id,mod.id,id,scoped))});
       if(request.method==='GET') {

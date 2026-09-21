@@ -52,3 +52,7 @@ L’adaptateur `records` reste disponible pour lire une application existante pe
 Les colonnes NULL des métadonnées serveur optionnelles sont projetées comme absentes ; éditer un autre champ ne doit pas fabriquer une valeur false pour un état serveur non renseigné.
 
 `patchStatement` reprend la sémantique PATCH métier de Creezio : seuls les champs modifiés sont validés et écrits, les colonnes historiques non concernées restent intactes. Il contrôle la version, l’espace et le scope comme les autres écritures ; un patch vide peut prendre une nouvelle version pour une transaction de stock. Il ne remplace pas les règles métier ni les gardes du batch.
+
+### Contexte des hooks de lecture et des effets
+
+`afterRead`, `afterList`, `beforeArchive` et les effets `afterCreate`/`afterUpdate`/`afterArchive` reçoivent `db`, la base D1 de la requête, avec l’espace et l’identité autorisés. Les modules peuvent ainsi reprendre leurs compteurs et projections relationnelles historiques. Toute requête ajoutée par un hook doit filtrer l’espace et respecter les droits métier ; la présence de `db` ne confère aucun droit. Les champs retournés par une projection ne sont pas réécrits en stockage. Les effets restent exécutés après commit.

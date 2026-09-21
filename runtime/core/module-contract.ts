@@ -2,14 +2,14 @@
  * Runtime handlers stay server-side; the serialisable schemas remain in AppDefinition.
  * No external engine and no implicit conversion of existing D1 records.
  */
-import type { AppDefinition, AppExtensions, AppOperationDefinition, BeforeWrite, Module, RecordData, Workspace, Identity } from './types.ts';
+import type { AppDefinition, AppExtensions, AppOperationDefinition, BeforeWrite, Module, RecordData, Workspace, Identity, LiteEnvironment } from './types.ts';
 import type { RequestAccessContext } from './access-profiles-store.ts';
 import type { DemoScenario } from '../modules/interactive-demo/src/types.ts';
 import { collectInteractiveDemoDefaults } from '../modules/interactive-demo/src/contributions.ts';
 import { idPattern } from './validation.ts';
 import { assertEntityStorage, type EntityStorage } from './entity-storage.ts';
 
-export type EntityHookContext = {module:Module; workspace:Workspace; identity:Identity; access?:RequestAccessContext};
+export type EntityHookContext = {db:LiteEnvironment['DB']; module:Module; workspace:Workspace; identity:Identity; access?:RequestAccessContext};
 export type EntityHooks = {
   afterCreate?:(input:EntityHookContext & {record:RecordData})=>void|Promise<void>;
   afterUpdate?:(input:EntityHookContext & {record:RecordData})=>void|Promise<void>;
