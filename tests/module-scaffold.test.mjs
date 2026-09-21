@@ -1,6 +1,8 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import {DatabaseSync} from 'node:sqlite';
+import {scaffoldModuleStorage} from '../bin/module-storage.mjs';
+import {mkdir} from 'node:fs/promises';
 import {readdir} from 'node:fs/promises';
 import {createApp,addModule,doctor} from '../bin/lite.mjs';
 test('fresh apps and added modules receive executable contracts and local documentation',async()=>{
@@ -31,5 +33,24 @@ test('fresh apps and added modules receive executable contracts and local docume
   const missingMigration=spawnSync(process.execPath,['scripts/check-module-contracts.mjs'],{cwd:app,encoding:'utf8'});assert.notEqual(missingMigration.status,0);assert.match(missingMigration.stderr,/Storage migration required.*memo/);
   assert.equal(JSON.parse(await readFile(join(app,'brand.json'),'utf8')).modules.find(m=>m.id==='notes').fields.at(-1).key,'memo');
   const registry=join(app,'app/modules/index.ts');await writeFile(registry,'// Hand maintained registry\n');const brand=await readFile(join(app,'brand.json'),'utf8');await writeFile(path,JSON.stringify({...spec,id:'other'}));await assert.rejects(addModule(app,path),/customised/);assert.equal(await readFile(join(app,'brand.json'),'utf8'),brand);
+ }finally{await rm(parent,{recursive:true,force:true});}
+});
+
+test('historical SQL table names never collide with generated TypeScript imports',async()=>{
+ const parent=await mkdtemp(join(tmpdir(),'lite-table-names-')),app=join(parent,'app');
+ try{
+  await createApp({out:app,spec:fileURLToPath(new URL('../examples/services.json',import.meta.url))});
+  for(const table of ['organizations','text','integer','real','index','check','sql']){
+   const schema={id:'entity-'+table,name:table,singular:table,titleField:'name',fields:[{key:'name',label:'Name',type:'text',required:true},{key:'amount',label:'Amount',type:'number'},{key:'quantity',label:'Quantity',type:'number',integer:true}]};
+   await mkdir(join(app,'app/modules',schema.id),{recursive:true});
+   await scaffoldModuleStorage(app,schema,{table});
+   const source=await readFile(join(app,'app/modules',schema.id,'db-schema.ts'),'utf8');
+   const syntax=spawnSync(process.execPath,['--input-type=module','--check'],{input:source,encoding:'utf8'});
+   assert.equal(syntax.status,0,table+': '+syntax.stderr);
+  }
+  const db=new DatabaseSync(':memory:');try{
+   for(const file of (await readdir(join(app,'drizzle'))).filter(f=>f.endsWith('.sql')).sort())db.exec(await readFile(join(app,'drizzle',file),'utf8'));
+   for(const table of ['organizations','text','integer','real','index','check','sql'])assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table).name,table);
+  }finally{db.close();}
  }finally{await rm(parent,{recursive:true,force:true});}
 });
