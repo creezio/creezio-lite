@@ -26,6 +26,14 @@ test('fresh apps and added modules receive executable contracts and local docume
    assert.match(await readFile(join(app,'app/modules/notes/index.ts'),'utf8'),/kind:'relational'/);
    assert.ok(JSON.parse(await readFile(join(app,'drizzle/meta/_journal.json'),'utf8')).entries.some(e=>e.tag.endsWith('_mod_notes')));
   }finally{db.close();}
+  // A migrated historical column may be nullable only when its contract explicitly declares it.
+  const noteIndex=join(app,'app/modules/notes/index.ts'),originalIndex=await readFile(noteIndex,'utf8');
+  const snapshotFiles=(await readdir(join(app,'drizzle/meta'))).filter(f=>f.endsWith('_snapshot.json')).sort(),snapshotPath=join(app,'drizzle/meta',snapshotFiles.at(-1)),originalSnapshot=await readFile(snapshotPath,'utf8'),nullableSnapshot=JSON.parse(originalSnapshot);
+  nullableSnapshot.tables.mod_notes.columns.name.notNull=false;await writeFile(snapshotPath,JSON.stringify(nullableSnapshot));
+  const undeclared=spawnSync(process.execPath,['scripts/check-module-contracts.mjs'],{cwd:app,encoding:'utf8'});assert.notEqual(undeclared.status,0);assert.match(undeclared.stderr,/Storage migration required.*name/);
+  const nullableIndex=originalIndex.replace("kind:'relational'","kind:'relational',legacyNullable:['name']");assert.notEqual(nullableIndex,originalIndex);await writeFile(noteIndex,nullableIndex);check();
+  await writeFile(snapshotPath,originalSnapshot);const tooStrict=spawnSync(process.execPath,['scripts/check-module-contracts.mjs'],{cwd:app,encoding:'utf8'});assert.notEqual(tooStrict.status,0);assert.match(tooStrict.stderr,/Storage migration required.*name/);
+  await writeFile(noteIndex,originalIndex);check();
   const ownedPath=join(app,'app/modules/notes/schema.json');
   const owned=JSON.parse(await readFile(ownedPath,'utf8'));owned.fields.push({key:'memo',type:'text',label:'Memo'});await writeFile(ownedPath,JSON.stringify(owned));
   const stale=spawnSync(process.execPath,['scripts/check-module-contracts.mjs'],{cwd:app,encoding:'utf8'});assert.notEqual(stale.status,0);assert.match(stale.stderr,/Schema snapshot out of date|Storage migration required/);

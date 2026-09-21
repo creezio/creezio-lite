@@ -2,7 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import type { Module, SqlFragment } from './types.ts';
 import type { ModuleEntitySpec } from './module-contract.ts';
 import { storedFields, validateStoredData, validateStoredPatch } from './entity-write.ts';
-export type EntityStorage={kind:'records'}|{kind:'relational';table:string;columns?:Record<string,string>};
+export type EntityStorage={kind:'records'}|{kind:'relational';table:string;columns?:Record<string,string>;legacyNullable?:string[]};
 const identifier=/^[a-z][a-z0-9_]{0,63}$/;
 const metadata=['id','org_id','version','created_by','created_at','updated_at','deleted_at'];
 const quote=(s:string)=>{if(!/^[a-z][a-z0-9_]{0,127}$/.test(s))throw new Error('Invalid D1 identifier');return '"'+s+'"';};
@@ -16,6 +16,7 @@ export function assertEntityStorage(spec:ModuleEntitySpec){
  if(storage.table.startsWith('lite_'))throw new Error('Relational entities cannot own kit tables');
  quote(storage.table);
  const fields=storedFields(spec.schema),keys=new Set(fields.map(f=>f.key)),columns=new Set(metadata);
+ if(storage.legacyNullable!==undefined&&(!Array.isArray(storage.legacyNullable)||new Set(storage.legacyNullable).size!==storage.legacyNullable.length||storage.legacyNullable.some(key=>!fields.some(f=>f.key===key&&f.required))))throw new Error('Legacy nullable fields must uniquely name required stored fields');
  if(fields.length+metadata.length>100)throw new Error('D1 relational entity exceeds 100 columns (93 stored fields plus 7 metadata columns); model additional data as related entities.');
  for(const key of Object.keys(storage.columns??{}))if(!keys.has(key))throw new Error('Column mapping must name a stored field');
  for(const f of fields){const name=storage.columns?.[f.key]??f.key;quote(name);if(columns.has(name))throw new Error('Duplicate or reserved entity column');columns.add(name);}
@@ -91,8 +92,9 @@ export function entityStorage(module:Module,spec?:ModuleEntitySpec){
 /** Generate additive application SQL. Review/check it into the owning module's migration; never run DDL during a request. */
 export function relationalEntityMigration(spec:ModuleEntitySpec):string[]{
  assertEntityStorage(spec);if(spec.storage.kind!=='relational')throw new Error('Relational storage required');
+ const legacyNullable=spec.storage.legacyNullable;
  const storage=entityStorage(spec.schema,spec),table=quote(storage.table),mod=spec.schema.id;
- const columns=storedFields(spec.schema).map(f=>`${quote(spec.storage.kind==='relational'?(spec.storage.columns?.[f.key]??f.key):f.key)} ${f.type==='number'?(f.integer?'INTEGER':'REAL'):f.type==='boolean'?'INTEGER':'TEXT'}${f.required?' NOT NULL':''}`);
+ const columns=storedFields(spec.schema).map(f=>`${quote(spec.storage.kind==='relational'?(spec.storage.columns?.[f.key]??f.key):f.key)} ${f.type==='number'?(f.integer?'INTEGER':'REAL'):f.type==='boolean'?'INTEGER':'TEXT'}${f.required&&!legacyNullable?.includes(f.key)?' NOT NULL':''}`);
  const projection=storage.dataExpression('NEW');
  const insert=`INSERT INTO lite_search_documents(org_id,module_id,record_id,data,updated_at) SELECT NEW.org_id,'${mod}',NEW.id,${projection},NEW.updated_at WHERE NEW.deleted_at IS NULL ON CONFLICT(org_id,module_id,record_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at;`;
  const remove=`DELETE FROM lite_search_documents WHERE org_id=OLD.org_id AND module_id='${mod}' AND record_id=OLD.id;`;

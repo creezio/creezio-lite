@@ -12,7 +12,8 @@ for(const spec of Object.values(moduleRegistry.collectEntitySpecs()))if(spec.sto
  for(const field of storedFields(spec.schema)){
   const name=spec.storage.columns?.[field.key]??field.key,column=table.columns[name];
   const type=field.type==='number'?(field.integer?'integer':'real'):field.type==='boolean'?'integer':'text';
-  if(!column||column.type!==type||field.required&&!column.notNull)throw new Error('Storage migration required: '+spec.storage.table+'.'+name);
+  const required=Boolean(field.required)&&!spec.storage.legacyNullable?.includes(field.key);
+  if(!column||column.type!==type||field.required&&column.notNull!==required)throw new Error('Storage migration required: '+spec.storage.table+'.'+name);
  }
 }
 const migrations=moduleRegistry.collectModuleMigrations();
