@@ -219,8 +219,12 @@ export async function handleApi(request: Request, context: ApiContext, options: 
         if(filterField){if(!mod.fields.some(f=>f.key===filterField) || filterValue===null || filterValue.length>300) fail(400,'invalid_filter','Filtre invalide.'); where+=' AND CAST(json_extract(r.data,?) AS TEXT)=?';terms.push('$.'+filterField,filterValue);}
         // The scope predicate is part of the statement: it precedes pagination and the total alike.
         const filter=recordScope(scoped.scope,scoped.principal,recordRef,'read',scoped.access);where+=` AND ${filter.sql}`;terms.push(...filter.bindings);
+        const sort=url.searchParams.get('sort'),direction=url.searchParams.get('direction')??'asc';
+        if((sort&&!mod.fields.some(f=>f.key===sort))||!['asc','desc'].includes(direction))fail(400,'invalid_sort','Tri invalide.');
+        const order=sort?`json_extract(r.data,?) COLLATE NOCASE ${direction==='desc'?'DESC':'ASC'},r.id ASC`:'r.updated_at DESC,r.id DESC';
+        const orderBindings=sort?['$.'+sort]:[];
         const [items,count]=await db.batch([
-          db.prepare(`SELECT r.id,r.module_id,r.data,r.version,r.created_at,r.updated_at FROM lite_records r WHERE ${where} ORDER BY r.updated_at DESC,r.id DESC LIMIT ? OFFSET ?`).bind(...terms,limit,offset),
+          db.prepare(`SELECT r.id,r.module_id,r.data,r.version,r.created_at,r.updated_at FROM lite_records r WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...terms,...orderBindings,limit,offset),
           db.prepare(`SELECT COUNT(*) AS total FROM lite_records r WHERE ${where}`).bind(...terms),
         ]);
         return json({items:(items.results as Row[]).map(unpack),total:(count.results[0] as {total:number}|undefined)?.total??0,limit,offset,searchEngine:'d1-fts5',indexing});

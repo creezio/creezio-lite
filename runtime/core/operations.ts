@@ -134,7 +134,7 @@ export function coreOperations(app:AppDefinition):Operation[]{
     const actions=([['list','GET',''],['get','GET','/:id'],['create','POST',''],['update','PATCH','/:id'],['archive','DELETE','/:id']] as const).filter(([,method])=>method==='GET'||moduleWritable(module));
     for(const [action,method,suffix] of actions){
       add(`module.${module.id}.${action}`,method,`modules/${module.id}/records${suffix}`,module.id,module.name,`${module.name} : ${action}`,{kind:'business',roles:method==='GET'?(module.readRoles??roles):(module.writeRoles??writers),toolName:`lite_${module.id.replaceAll('-','_')}_${action}`,
-        ...(action==='list'?{querySchema:objectSchema({...paging,field:stringSchema,value:stringSchema})}:{}),
+        ...(action==='list'?{querySchema:objectSchema({...paging,field:stringSchema,value:stringSchema,sort:{enum:module.fields.map(f=>f.key)},direction:{enum:['asc','desc']}})}:{}),
         ...(action==='create'?{bodySchema:objectSchema({data},['data'])}:{}),
         ...(action==='update'?{bodySchema:objectSchema({data,version:{type:'integer',minimum:1}},['data','version'])}:{}),
         ...(action==='archive'?{bodySchema:objectSchema({version:{type:'integer',minimum:1}},['version'])}:{})});

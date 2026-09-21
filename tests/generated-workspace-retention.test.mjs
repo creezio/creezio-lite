@@ -1,0 +1,53 @@
+import './register-ui-loader.mjs';
+import test from 'node:test';import assert from 'node:assert/strict';
+import {registerHooks} from 'node:module';
+const data=source=>'data:text/javascript,'+encodeURIComponent(source);
+const ui=`import {createElement as h} from 'react';
+export const Button=({children,...p})=>h('button',p,children),Input=p=>h('input',p),Textarea=p=>h('textarea',p),Label=({children,...p})=>h('label',p,children),Checkbox=p=>h('input',p),Skeleton=()=>null;
+export const Dialog=({open,children})=>open?h('section',{'data-dialog':true},children):null;
+export const DialogContent=({children})=>h('div',null,children),DialogHeader=DialogContent,DialogTitle=DialogContent,DialogDescription=DialogContent,Select=DialogContent,SelectTrigger=DialogContent,SelectValue=DialogContent,SelectContent=DialogContent,SelectItem=DialogContent;`;
+const shell=`import {createElement as h} from 'react';export const EntityHeader=({actions})=>h('header',null,actions);export const AppShell=({children})=>h('main',null,children),Badge=({children})=>h('span',null,children);export const DataTable=({data,columns,searchValue,onSearchValueChange})=>h('div',null,h('input',{'data-filter':true,value:searchValue,onChange:e=>onSearchValueChange(e.target.value)}),...data.map(r=>h('div',{key:r.id},...columns.map(c=>h('div',{key:c.id},c.cell?.({row:{original:r}}))))));`;
+globalThis.paritySession={user:'alice',user_id:'a',role:'owner',permissions:[],actor:null};
+registerHooks({resolve(spec,context,next){
+ if(spec==='@lite/auth/ui')return next(data('export const useSession=()=>({me:globalThis.paritySession});'),context);
+ if(spec==='@lite/shell-ui/ui')return next(data(shell),context);
+ if(spec==='@lite/shell-ui/ui/kit'||spec==='@/components/ui/checkbox')return next(data(ui),context);
+ if(spec==='@/runtime/ui/system-views')return next(data('export const FilesView=()=>null,TeamView=()=>null,AuditView=()=>null,SettingsView=()=>null;'),context);
+ if(spec==='./app-definition'&&context.parentURL?.endsWith('/workspace-content.tsx'))return next(data('export const appDefinition={modules:[{id:"clients",name:"Clients",singular:"Client",titleField:"name",fields:[{key:"name",label:"Nom",type:"text",required:true}]}]};'),context);
+ if(spec.startsWith('@/runtime/'))return next(new URL('../'+spec.slice(2)+(/\.[a-z]+$/.test(spec)?'':spec.endsWith('module-view')?'.tsx':'.ts'),import.meta.url).href,context);
+ if(spec==='next/navigation')return next(data('const router={push(){},replace(){}};export const useRouter=()=>router,usePathname=()=>"/clients",useSearchParams=()=>new URLSearchParams();'),context);
+ return next(spec,context);
+}});
+const {createElement:h}=await import('react');const {create,act}=await import('react-test-renderer');
+const {WorkspaceContent}=await import('../template/app/workspace-content.tsx');
+const {KeepAliveOutlet}=await import('../runtime/modules/shell-ui/ui/workspace/keep-alive.tsx');
+const {emitDataChanged}=await import('../runtime/modules/shell-ui/src/lib/data-changed.ts');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+const win=new EventTarget();win.location=new URL('https://test.example/clients');globalThis.window=win;
+const pending=[];let workspace={id:'ws-a',role:'owner',operationPolicies:[]};
+globalThis.fetch=async url=>{const p=new URL(url).pathname;if(p==='/api/v1/modules')return new Promise(resolve=>pending.push(()=>resolve(Response.json({workspace}))));return Response.json({items:[{id:'a',version:1,data:{name:'Alice'}}],total:1});};
+const treeAt=(active='/clients')=>h(KeepAliveOutlet,{routeKey:'/clients',activeHref:active},h(WorkspaceContent,{page:'clients'}));
+const text=node=>node.children.map(x=>typeof x==='string'?x:typeof x==='number'?String(x):'').join('');
+test('actual generated workspace retains filter and dialog draft across refresh and pane activation; clears on identity change',async()=>{
+ let tree;await act(()=>{tree=create(treeAt());});await act(async()=>pending.shift()());
+ const pane=()=>tree.root.findByProps({'data-workspace-pane':'/clients'});
+ const filter=()=>pane().findByProps({'data-filter':true});
+ const click=async label=>act(()=>pane().findAllByType('button').find(b=>text(b).includes(label)).props.onClick());
+ try{
+  await act(()=>filter().props.onChange({target:{value:'Filtre conservé'}}));
+  await click('Nouveau');
+  const input=()=>pane().findAllByType('input').find(n=>n.props.required);
+  await act(()=>input().props.onChange({target:{value:'Brouillon conservé'}}));
+  await act(()=>emitDataChanged({resource:'clients',source:'api'}));
+  assert.equal(filter().props.value,'Filtre conservé');assert.equal(input().props.value,'Brouillon conservé');
+  await act(async()=>pending.shift()());assert.equal(input().props.value,'Brouillon conservé');
+  await act(()=>tree.update(treeAt('/other')));assert.equal(pane().findAllByProps({'data-dialog':true}).length,0);
+  await act(()=>tree.update(treeAt()));assert.equal(input().props.value,'Brouillon conservé');
+  await click('Annuler');await act(()=>pane().findByProps({'aria-label':'Archiver Alice'}).props.onClick());
+  await act(()=>tree.update(treeAt('/other')));assert.equal(pane().findAllByProps({'data-dialog':true}).length,0);
+  await act(()=>tree.update(treeAt()));assert.equal(pane().findAllByProps({'data-dialog':true}).length,1);
+  globalThis.paritySession={...globalThis.paritySession,user_id:'b',user:'bob'};
+  await act(()=>tree.update(treeAt()));assert.equal(pane().findAllByProps({'data-filter':true}).length,0);
+  workspace={id:'ws-b',role:'viewer'};await act(async()=>pending.shift()());assert.equal(filter().props.value,'');assert.equal(pane().findAllByProps({'data-dialog':true}).length,0);
+ }finally{await act(()=>tree.unmount());}
+});

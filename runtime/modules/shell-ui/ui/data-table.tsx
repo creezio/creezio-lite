@@ -23,6 +23,7 @@ type DataTableProps<TData, TValue> = {
   searchValue?: string;
   onSearchValueChange?: (value: string) => void;
   filterSlot?: ReactNode;
+  remoteSorting?: {value:SortingState;onChange:(value:SortingState)=>void};
   remotePage?: {index: number; size: number; total: number; onChange: (index: number) => void};
 };
 
@@ -31,7 +32,7 @@ export function DataTable<TData, TValue>({
   data,
   searchPlaceholder = "Rechercher…",
   initialPageSize = 25,
-  searchValue, onSearchValueChange, filterSlot, remotePage,
+  searchValue, onSearchValueChange, filterSlot, remotePage, remoteSorting,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
@@ -39,11 +40,13 @@ export function DataTable<TData, TValue>({
   const table = useReactTable({
     data,
     columns,
-    state: { sorting, globalFilter, ...(remotePage ? {pagination:{pageIndex:remotePage.index,pageSize:remotePage.size}} : {}) },
+    state: { sorting:remoteSorting?.value??sorting, globalFilter, ...(remotePage ? {pagination:{pageIndex:remotePage.index,pageSize:remotePage.size}} : {}) },
     manualFiltering: Boolean(onSearchValueChange),
     manualPagination: Boolean(remotePage),
     ...(remotePage ? {pageCount:Math.ceil(remotePage.total/remotePage.size)} : {}),
-    onSortingChange: setSorting,
+    manualSorting: Boolean(remoteSorting),
+    enableMultiSort: !remoteSorting,
+    onSortingChange: change=>{if(remoteSorting)remoteSorting.onChange(typeof change==='function'?change(remoteSorting.value):change);else setSorting(change);},
     onGlobalFilterChange: setGlobalFilter,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
