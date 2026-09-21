@@ -54,3 +54,23 @@ test('historical SQL table names never collide with generated TypeScript imports
   }finally{db.close();}
  }finally{await rm(parent,{recursive:true,force:true});}
 });
+
+test('oversized new modules fail before changing configuration, existing modules or migration history',async()=>{
+ const parent=await mkdtemp(join(tmpdir(),'lite-module-limits-')),app=join(parent,'app');
+ try{
+  await createApp({out:app,spec:fileURLToPath(new URL('../examples/services.json',import.meta.url))});
+  const config=join(app,'drizzle.config.ts');await writeFile(config,"export default {schema: './db/schema.ts'};\n");
+  const snapshot=async()=>{
+   const result={};
+   async function walk(dir,prefix=''){for(const entry of await readdir(dir,{withFileTypes:true})){const name=prefix+entry.name;if(entry.isDirectory())await walk(join(dir,entry.name),name+'/');else result[name]=(await readFile(join(dir,entry.name))).toString('base64');}}
+   await walk(app);return result;
+  };
+  const before=await snapshot();
+  const normal={id:'new-normal',name:'Normal',singular:'Normal',description:'New',titleField:'name',fields:[{key:'name',label:'Name',type:'text',required:true}]};
+  const wide={...normal,id:'new-wide',serverFields:Array.from({length:93},(_,i)=>({key:'value_'+i,label:'Value '+i,type:'text'}))};
+  const path=join(parent,'module.json');await writeFile(path,JSON.stringify(wide));
+  await assert.rejects(addModule(app,path),/100 columns/);assert.deepEqual(await snapshot(),before);
+  const {scaffoldModules}=await import('../bin/module-scaffold.mjs');
+  await assert.rejects(scaffoldModules(app,[normal,wide]),/100 columns/);assert.deepEqual(await snapshot(),before);
+ }finally{await rm(parent,{recursive:true,force:true});}
+});

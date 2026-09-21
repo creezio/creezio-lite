@@ -16,6 +16,7 @@ export function assertEntityStorage(spec:ModuleEntitySpec){
  if(storage.table.startsWith('lite_'))throw new Error('Relational entities cannot own kit tables');
  quote(storage.table);
  const fields=storedFields(spec.schema),keys=new Set(fields.map(f=>f.key)),columns=new Set(metadata);
+ if(fields.length+metadata.length>100)throw new Error('D1 relational entity exceeds 100 columns (93 stored fields plus 7 metadata columns); model additional data as related entities.');
  for(const key of Object.keys(storage.columns??{}))if(!keys.has(key))throw new Error('Column mapping must name a stored field');
  for(const f of fields){const name=storage.columns?.[f.key]??f.key;quote(name);if(columns.has(name))throw new Error('Duplicate or reserved entity column');columns.add(name);}
 }
@@ -28,8 +29,8 @@ export function entityStorage(module:Module,spec?:ModuleEntitySpec){
  const dataExpression=(alias:string)=>{
   let expression="'{}'";
   // Keep each JSON call under SQLite/D1's argument limit, even with server snapshots.
-  for(let index=0;index<fields.length;index+=30){
-   const pairs=fields.slice(index,index+30).flatMap(f=>{
+  for(let index=0;index<fields.length;index+=15){
+   const pairs=fields.slice(index,index+15).flatMap(f=>{
     const value=alias+'.'+column(f.key);
     return ["'$."+f.key+"'",f.encoding==='json'?`json(${value})`:f.type==='boolean'?`json(CASE WHEN ${value} IS NULL THEN 'null' WHEN ${value}=0 THEN 'false' ELSE 'true' END)`:value];
    });
@@ -45,6 +46,12 @@ export function entityStorage(module:Module,spec?:ModuleEntitySpec){
  };
  const source=relational?`(SELECT id,org_id,'${module.id}' AS module_id,${dataExpression('e')} AS data,version,created_by,created_at,updated_at,deleted_at FROM ${quote(table)} e)`:'lite_records';
  const values=(data:Record<string,unknown>)=>fields.map(f=>data[f.key]==null?null:f.encoding==='json'?JSON.stringify(data[f.key]):f.type==='boolean'?(data[f.key]?1:0):data[f.key]);
+ // A wide write binds its values once; every destination remains a physical column.
+ const assignmentValues=(entries:unknown[],extraBindings:number)=>{
+  if(entries.length+extraBindings<=100)return {prefix:'',bindings:entries,at:(index:number)=>'?'};
+  if(extraBindings+1>100)throw new Error('D1 write scope exceeds the 100 bound parameter limit');
+  return {prefix:'WITH __lite_write_values(payload) AS (VALUES (?)) ',bindings:[JSON.stringify(entries)],at:(index:number)=>`(SELECT json_extract(payload,'$[${index}]') FROM __lite_write_values)`};
+ };
  const insertStatement=(input:{id:string;orgId:string;data:Record<string,unknown>;userId:string;now:string}):SqlFragment=>{
   const {id,orgId,userId,now}=input;const data=validateStoredData(module,input.data);
   return relational?{sql:`INSERT INTO ${quote(table)}(id,org_id,version,created_by,created_at,updated_at,${fields.map(f=>column(f.key)).join(',')}) VALUES(?,?,1,?,?,?,${fields.map(()=>'?').join(',')})`,bindings:[id,orgId,userId,now,now,...values(data)]}:
@@ -52,27 +59,29 @@ export function entityStorage(module:Module,spec?:ModuleEntitySpec){
  };
  const updateStatement=(input:{id:string;orgId:string;data?:Record<string,unknown>;version:number;now:string;filter:SqlFragment;archive?:boolean}):SqlFragment=>{
   const {id,orgId,version,now,filter,archive}=input;const data=archive?undefined:validateStoredData(module,input.data);
-  const set=archive?'deleted_at=?,updated_at=?':relational?`${fields.map(f=>column(f.key)+'=?').join(',')},updated_at=?`:'data=?,search_text=?,updated_at=?';
-  const bindings=archive?[now,now]:relational?[...values(data!),now]:[JSON.stringify(data),Object.values(data!).join(' ').toLowerCase(),now];
-  return {sql:`UPDATE ${quote(table)} SET ${set},version=version+1 WHERE id=? AND org_id=? ${relational?'':'AND module_id=?'} AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM ${source} r WHERE r.id=${quote(table)}.id AND r.org_id=${quote(table)}.org_id AND ${filter.sql})`,bindings:[...bindings,id,orgId,...(relational?[]:[module.id]),version,...filter.bindings]};
+  const valuesToSet=archive?[now,now]:relational?[...values(data!),now]:[JSON.stringify(data),Object.values(data!).join(' ').toLowerCase(),now];
+  const params=assignmentValues(valuesToSet,3+(relational?0:1)+filter.bindings.length);
+  const set=archive?`deleted_at=${params.at(0)},updated_at=${params.at(1)}`:relational?`${fields.map((f,i)=>column(f.key)+'='+params.at(i)).join(',')},updated_at=${params.at(fields.length)}`:`data=${params.at(0)},search_text=${params.at(1)},updated_at=${params.at(2)}`;
+  return {sql:`${params.prefix}UPDATE ${quote(table)} SET ${set},version=version+1 WHERE id=? AND org_id=? ${relational?'':'AND module_id=?'} AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM ${source} r WHERE r.id=${quote(table)}.id AND r.org_id=${quote(table)}.org_id AND ${filter.sql})`,bindings:[...params.bindings,id,orgId,...(relational?[]:[module.id]),version,...filter.bindings]};
  };
  /** A business PATCH validates changed fields and preserves untouched historical columns. */
  const patchStatement=(input:{id:string;orgId:string;patch:Record<string,unknown>;version:number;now:string;filter:SqlFragment}):SqlFragment=>{
   const {id,orgId,version,now,filter}=input,patch=validateStoredPatch(module,input.patch,{});
   const changed=fields.filter(f=>Object.hasOwn(patch,f.key));
-  let set:string,bindings:unknown[];
+  const patchValues=relational?changed.map(f=>patch[f.key]==null?null:f.encoding==='json'?JSON.stringify(patch[f.key]):f.type==='boolean'?(patch[f.key]?1:0):patch[f.key]):changed.map(f=>JSON.stringify(patch[f.key]??null));
+  const params=assignmentValues([...(relational?patchValues:[...patchValues,...patchValues]),now],3+(relational?0:1)+filter.bindings.length);
+  let set:string;
   if(relational){
-   set=changed.map(f=>column(f.key)+'=?').concat('updated_at=?').join(',');
-   bindings=changed.map(f=>patch[f.key]==null?null:f.encoding==='json'?JSON.stringify(patch[f.key]):f.type==='boolean'?(patch[f.key]?1:0):patch[f.key]);
-   bindings.push(now);
+   set=changed.map((f,i)=>column(f.key)+'='+params.at(i)).concat('updated_at='+params.at(changed.length)).join(',');
   }else{
-   let expression='data';
-   for(let index=0;index<changed.length;index+=30)expression=`json_set(${expression},${changed.slice(index,index+30).map(f=>"'$."+f.key+"',json(?)").join(',')})`;
-   const values=changed.map(f=>JSON.stringify(patch[f.key]??null));
-   set=`data=${expression},search_text=(SELECT lower(COALESCE(group_concat(CAST(value AS TEXT),' '),'')) FROM json_each(${expression})),updated_at=?`;
-   bindings=[...values,...values,now];
+   const expression=(offset:number)=>{
+    let sql='data';
+    for(let index=0;index<changed.length;index+=15)sql=`json_set(${sql},${changed.slice(index,index+15).map((f,i)=>"'$."+f.key+"',json("+params.at(offset+index+i)+")").join(',')})`;
+    return sql;
+   };
+   set=`data=${expression(0)},search_text=(SELECT lower(COALESCE(group_concat(CAST(value AS TEXT),' '),'')) FROM json_each(${expression(changed.length)})),updated_at=${params.at(changed.length*2)}`;
   }
-  return {sql:`UPDATE ${quote(table)} SET ${set},version=version+1 WHERE id=? AND org_id=? ${relational?'':'AND module_id=?'} AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM ${source} r WHERE r.id=${quote(table)}.id AND r.org_id=${quote(table)}.org_id AND ${filter.sql})`,bindings:[...bindings,id,orgId,...(relational?[]:[module.id]),version,...filter.bindings]};
+  return {sql:`${params.prefix}UPDATE ${quote(table)} SET ${set},version=version+1 WHERE id=? AND org_id=? ${relational?'':'AND module_id=?'} AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM ${source} r WHERE r.id=${quote(table)}.id AND r.org_id=${quote(table)}.org_id AND ${filter.sql})`,bindings:[...params.bindings,id,orgId,...(relational?[]:[module.id]),version,...filter.bindings]};
  };
  return {table,source,relational,dataExpression,insertStatement,updateStatement,patchStatement,
   insert(db:D1Database,input:Parameters<typeof insertStatement>[0]){const statement=insertStatement(input);return db.prepare(statement.sql).bind(...statement.bindings);},

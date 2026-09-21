@@ -58,3 +58,9 @@ Les colonnes NULL des métadonnées serveur optionnelles sont projetées comme a
 `afterRead`, `afterList`, `beforeArchive` et les effets `afterCreate`/`afterUpdate`/`afterArchive` reçoivent `db`, la base D1 de la requête, avec l’espace et l’identité autorisés. Les modules peuvent ainsi reprendre leurs compteurs et projections relationnelles historiques. Toute requête ajoutée par un hook doit filtrer l’espace et respecter les droits métier ; la présence de `db` ne confère aucun droit. Les champs retournés par une projection ne sont pas réécrits en stockage. Les effets restent exécutés après commit.
 
 Les écritures serveur valident sans normaliser les textes : une chaîne vide de type text/textarea reste vide, les espaces et retours de ligne sont conservés, et un booléen optionnel null ne devient pas false. Les champs obligatoires vides et les valeurs trop longues restent refusés. La normalisation des formulaires demeure dans `validateEntityInput`, avant les règles métier.
+
+### Limites physiques D1
+
+D1 limite une table à 100 colonnes, soit 93 champs stockés avec les 7 métadonnées communes ; les champs calculés ne comptent pas. Le contrat relationnel et le générateur refusent un schéma trop large avant toute modification des fichiers. Au-delà, modéliser des entités liées explicitement, comme dans une architecture relationnelle classique. Aucun basculement automatique vers `lite_records`.
+
+Les mises à jour larges restent atomiques et paramétrées : quand les valeurs et le scope dépasseraient 100 paramètres, les valeurs transitent dans un paramètre JSON temporaire puis sont affectées à leurs colonnes SQL respectives. Ce transport ne crée ni colonne JSON globale ni stockage miroir. Les paramètres du scope restent séparés ; un scope qui dépasse lui-même la capacité est refusé. Les appels JSON générés restent sous 32 arguments. Les migrations déjà publiées sont immuables. Voir les [limites D1](https://developers.cloudflare.com/d1/platform/limits/).

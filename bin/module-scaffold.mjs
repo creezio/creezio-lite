@@ -9,10 +9,15 @@ export async function scaffoldModules(app,modules,{all=false}={}){
  const updatedConfig=config.replace(/schema:\s*(["'])\.\/db\/schema\.ts\1/,"schema: ['./db/schema.ts', './app/modules/*/db-schema.ts']");
  if(!updatedConfig.includes('./app/modules/*/db-schema.ts'))throw new Error('Custom Drizzle configuration: include module db-schema.ts files before adding a module.');
  if(!all){try{const source=await readFile(index,'utf8');if(!source.startsWith(marker))throw new Error('Module registry is customised: merge the new module explicitly before retrying.');}catch(e){if(e.code!=='ENOENT')throw e;}}
- if(updatedConfig!==config)await writeFile(configPath,updatedConfig);
+ const pending=[];
+ // Preflight every new entity before changing config, registry, files or migrations.
  for(const mod of modules){
   const directory=join(app,'app/modules',mod.id);let exists=false;try{await stat(directory);exists=true;}catch(e){if(e.code!=='ENOENT')throw e;}if(exists)continue;
   assertEntityStorage({schema:mod,storage:{kind:'relational',table:'mod_'+mod.id.replaceAll('-','_')}});
+  pending.push({mod,directory});
+ }
+ if(updatedConfig!==config)await writeFile(configPath,updatedConfig);
+ for(const {mod,directory} of pending){
   await mkdir(directory,{recursive:true});
   await writeFile(join(directory,'schema.json'),JSON.stringify(mod,null,2)+'\n');
   const storage=await scaffoldModuleStorage(app,mod);
