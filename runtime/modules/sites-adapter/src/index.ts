@@ -36,7 +36,7 @@ export async function handleNativeApi(request:Request,context:ApiContext,options
       if(!setup.ok)return setup;org=await getWorkspace(db,user,null);
     }
     const requestId=context.requestId??crypto.randomUUID();
-    const operations=context.operations??operationCatalog({db,user,workspace:org},context.app,options.operations);
+    const operations=context.operations??operationCatalog({db,user,workspace:org},context.app,options.operations,options.registry);
     const access=context.access??(options.access===undefined?undefined:ownAccess=await createRequestAccessContext({db,request,requestId,workspace:org,identity:user,credential:context.credential??sessionCredential,declaration:options.access,catalog:operations}));
     if(access)assertRequestAccessContext(access,request,requestId,org.id,user.userId);
     const operation=matchOperation(operations,request.method,url.pathname);if(access&&operation)assertOperationAllowed(operation,org,access);
@@ -48,12 +48,12 @@ export async function handleNativeApi(request:Request,context:ApiContext,options
     if(path==='users'&&request.method==='GET'){const rows=await db.prepare('SELECT u.id,u.name AS username,m.role FROM lite_members m JOIN lite_users u ON u.id=m.user_id WHERE m.org_id=?').bind(org.id).all();return json({ok:true,users:rows.results.map(r=>({...r,role:r.role==='owner'?'owner':'collaborator',kind:'human',enabled:true})),can_impersonate:false});}
     if(path.startsWith('auth/'))fail(422,'sites_identity','Cette opération utilise la connexion ChatGPT du Site.');
     const kernel=createApiKernel({brandId:context.app.id,appVersion:'0.6.1',authorizeModuleAccess:({permission})=>({allow:permissions(c,context.app).includes(permission),reason:'permission_denied'})});
-    for(const entry of nativeMounts(c,context.app)){if(entry.space==='platform')kernel.registerPlatformApi(entry.id,entry.mount);else kernel.registerModuleApi(entry.id,entry.mount);}
+    for(const entry of nativeMounts(c,context.app,options)){if(entry.space==='platform')kernel.registerPlatformApi(entry.id,entry.mount);else kernel.registerModuleApi(entry.id,entry.mount);}
     const route=path.startsWith('tasks')?`modules/${path}`:path;
     const body=['POST','PUT','PATCH'].includes(request.method)&&request.body?await readJson(request):undefined;
     const response=await kernel.handle({method:request.method,path:`/api/v1/${route}`,query:Object.fromEntries(url.searchParams),body,headers:Object.fromEntries(request.headers)});
     const result=json(response.body,response.status);
-    if(response.status<300 && ["POST","PUT","PATCH","DELETE"].includes(request.method))result.headers.set("x-lite-data-changed",path.startsWith("modules/nav")?"nav":path.startsWith("tasks")?"tasks":"support");
+    if(response.status<300 && ["POST","PUT","PATCH","DELETE"].includes(request.method))result.headers.set("x-lite-data-changed",operation?.moduleId??"support");
     return result;
   }catch(e){if(e instanceof ApiError)return json({ok:false,error:e.message,code:e.code},e.status);console.error('Native Lite request failed',e instanceof Error?e.name:'Error');return json({ok:false,error:'Erreur du service Lite.',code:'internal_error'},500);}finally{disposeRequestAccessContext(ownAccess);}
 }

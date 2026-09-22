@@ -4,11 +4,11 @@ import { after } from 'next/server';
 import type { LiteEnvironment } from '@/runtime/core/index';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { appDefinition } from '@/app/app-definition';
-import { beforeWrite } from '@/app/business-rules';
+import { appExtensions } from '@/app/app-extensions';
 export const dynamic = 'force-dynamic';
 async function route(request: Request) {
   const context={env:env as unknown as LiteEnvironment,defer:after,identity:await getChatGPTUser(),app:appDefinition};
-  return dispatchRequest(request,context,{beforeWrite});
+  return dispatchRequest(request,context,appExtensions);
 }
 export const GET=route;
 export const POST=route;

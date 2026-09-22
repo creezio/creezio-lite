@@ -1,3 +1,6 @@
+import {queryableField} from './entity-fields.ts';
+import { entityStorage, entityRecordSource } from './entity-storage.ts';
+import { prepareEntityWrite, entityAfterCommit } from './entity-write.ts';
 import { accessRoute } from './access.ts';
 import { createRequestAccessContext, assertRequestAccessContext, disposeRequestAccessContext, commitAccessMutation, commitRequestAccessBatch, type RequestAccessContext } from './access-profiles-store.ts';
 import type { D1Database } from "@cloudflare/workers-types";
@@ -11,7 +14,7 @@ import { coreOperations, matchOperation, assertOperationAllowed, canReadModule }
 import { auditScope, fileScope, principalOf, recordScope, resolveScope, sessionCredential } from './scope.ts';
 
 type Row = { id: string; module_id: string; data: string; version: number; created_at: string; updated_at: string };
-type Scoped = { scope: ScopeProvider; principal: Principal; access?:RequestAccessContext };
+type Scoped = { scope: ScopeProvider; principal: Principal; access?:RequestAccessContext; entitySpecs?:AppExtensions['entitySpecs'] };
 const unpack = (row: Row) => ({ ...row, data: JSON.parse(row.data) as Record<string, unknown> });
 const timestamp = () => new Date().toISOString();
 const uuid = () => crypto.randomUUID();
@@ -47,7 +50,7 @@ const recordRef={alias:'r',idColumn:'id',moduleColumn:'module_id'},fileRef={alia
 /** Scope is applied inside the statement, before any row is returned. Out of scope reads as not found. */
 async function getRecord(db: D1Database, org: string, mod: string, id: string, scoped: Scoped, action: ScopeAction = 'read') {
   const filter=recordScope(scoped.scope,scoped.principal,recordRef,action,scoped.access);
-  const row = await db.prepare(`SELECT r.id,r.module_id,r.data,r.version,r.created_at,r.updated_at FROM lite_records r WHERE r.id=? AND r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL AND ${filter.sql}`).bind(id,org,mod,...filter.bindings).first<Row>();
+  const row = await db.prepare(`SELECT r.id,r.module_id,r.data,r.version,r.created_at,r.updated_at FROM ${entityRecordSource(scoped.entitySpecs,mod)} r WHERE r.id=? AND r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL AND ${filter.sql}`).bind(id,org,mod,...filter.bindings).first<Row>();
   if (!row) fail(404,'record_not_found','Document introuvable.');
   return unpack(row);
 }
@@ -118,7 +121,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     const access=context.access??(options.access===undefined?undefined:ownAccess=await createRequestAccessContext({db,request,requestId,workspace:org,identity:user,credential,declaration:options.access,catalog:context.operations??coreOperations(context.app)}));
     if(access)assertRequestAccessContext(access,request,requestId,org.id,user.userId);
     if(declared)assertOperationAllowed(declared,org,access);
-    const scoped:Scoped={scope:resolveScope(options.scope,options.access!==undefined?access??null:access),principal:principalOf(user,org,credential),access};
+    const scoped:Scoped={scope:resolveScope(options.scope,options.access!==undefined?access??null:access),principal:principalOf(user,org,credential),access,entitySpecs:options.entitySpecs};
     if(path.startsWith('access/'))return (await accessRoute(request,{...context,requestId,access},org,context.operations??coreOperations(context.app),options))!;
     const searchResponse=await searchRoute(request,db,context.app,org,user,scoped);if(searchResponse){searchResponse.headers.set('Server-Timing',`app;dur=${(performance.now()-started).toFixed(1)}`);return searchResponse;}
     const tokenResponse=await accessTokenRoute(request,context,org);if(tokenResponse)return tokenResponse;
@@ -132,13 +135,13 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       // Counters exist for navigable modules only and apply the read scope before COUNT.
       const visible=context.app.modules.filter(m=>moduleNavigable(m)&&(m.readRoles??roles).includes(org.role)&&canReadModule(org,m.id,access));
       const filter=recordScope(scoped.scope,scoped.principal,recordRef,'read',scoped.access);
-      const counts=await Promise.all(visible.map(async m=>({id:m.id,name:m.name,count:(await db.prepare(`SELECT COUNT(*) AS n FROM lite_records r WHERE r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL AND ${filter.sql}`).bind(org.id,m.id,...filter.bindings).first<{n:number}>())?.n??0})));
+      const counts=await Promise.all(visible.map(async m=>({id:m.id,name:m.name,count:(await db.prepare(`SELECT COUNT(*) AS n FROM ${entityRecordSource(scoped.entitySpecs,m.id)} r WHERE r.org_id=? AND r.module_id=? AND r.deleted_at IS NULL AND ${filter.sql}`).bind(org.id,m.id,...filter.bindings).first<{n:number}>())?.n??0})));
       return json({modules:counts,workspace:org});
     }
     const systemRecord=path.match(/^(members|audit)\/([^/]+)$/);
     if(systemRecord&&request.method==='GET'){
       requireRole(org.role,['owner','admin']);
-      const visibility=auditScope(scoped.scope,scoped.principal,context.app,org,access);
+      const visibility=auditScope(scoped.scope,scoped.principal,context.app,org,access,undefined,scoped.entitySpecs);
       const record=systemRecord[1]==='members'
         ?await db.prepare('SELECT m.user_id,m.role,u.email,u.name FROM lite_members m JOIN lite_users u ON m.user_id=u.id WHERE m.org_id=? AND m.user_id=?').bind(org.id,systemRecord[2]).first()
         :await db.prepare('SELECT a.id,a.action,a.resource_id,a.created_at,u.name AS user_name FROM lite_audit a LEFT JOIN lite_users u ON u.id=a.user_id WHERE a.org_id=? AND a.id=? AND '+visibility.sql).bind(org.id,systemRecord[2],...visibility.bindings).first();
@@ -147,7 +150,7 @@ export async function handleApi(request: Request, context: ApiContext, options: 
     if (path === 'audit' && request.method === 'GET') {
       requireRole(org.role,['owner','admin']);
       const offset=boundedInteger(url.searchParams.get('offset'),0,100000);
-      const visibility=auditScope(scoped.scope,scoped.principal,context.app,org,access);
+      const visibility=auditScope(scoped.scope,scoped.principal,context.app,org,access,undefined,scoped.entitySpecs);
       const data=await db.prepare('SELECT a.id,a.action,a.resource_id,a.created_at,u.name AS user_name FROM lite_audit a LEFT JOIN lite_users u ON u.id=a.user_id WHERE a.org_id=? AND '+visibility.sql+' ORDER BY a.created_at DESC,a.id DESC LIMIT 50 OFFSET ?').bind(org.id,...visibility.bindings,offset).all();
       return json({items:data.results,offset});
     }
@@ -203,8 +206,10 @@ export async function handleApi(request: Request, context: ApiContext, options: 
       // Defence in depth: entities and collections never accept generic writes, even on direct handleApi access.
       if(request.method!=='GET'&&!moduleWritable(mod)) fail(405,'command_required','Ce module ne se modifie que par une commande déclarée.');
       requireModuleRole(mod,org.role,request.method!=='GET');
-      const id=recordMatch[2];
-      if(request.method==='GET' && id) return json({record:await getRecord(db,org.id,mod.id,id,scoped)});
+      const id=recordMatch[2],hooks=options.entityHooks?.[mod.id],storage=entityStorage(mod,options.entitySpecs?.[mod.id]);
+      const hookContext={db,module:mod,workspace:org,identity:user,...(access?{access}:{})};
+      const project=async(record:import('./types.ts').RecordData)=>hooks?.afterRead?{...record,data:await hooks.afterRead({...hookContext,record:structuredClone(record)})}:record;
+      if(request.method==='GET' && id) return json({record:await project(await getRecord(db,org.id,mod.id,id,scoped))});
       if(request.method==='GET') {
         const limit=boundedInteger(url.searchParams.get('limit'),30,100); if(!limit) fail(400,'invalid_pagination','La limite doit être positive.');
         const offset=boundedInteger(url.searchParams.get('offset'),0,100000);
@@ -216,47 +221,62 @@ export async function handleApi(request: Request, context: ApiContext, options: 
           terms.push(...selection.bindings);
         }
         const filterField=url.searchParams.get('field'),filterValue=url.searchParams.get('value');
-        if(filterField){if(!mod.fields.some(f=>f.key===filterField) || filterValue===null || filterValue.length>300) fail(400,'invalid_filter','Filtre invalide.'); where+=' AND CAST(json_extract(r.data,?) AS TEXT)=?';terms.push('$.'+filterField,filterValue);}
+        if(filterField){if(!mod.fields.some(f=>f.key===filterField&&queryableField(f)) || filterValue===null || filterValue.length>300) fail(400,'invalid_filter','Filtre invalide.'); where+=' AND CAST(json_extract(r.data,?) AS TEXT)=?';terms.push('$.'+filterField,filterValue);}
         // The scope predicate is part of the statement: it precedes pagination and the total alike.
         const filter=recordScope(scoped.scope,scoped.principal,recordRef,'read',scoped.access);where+=` AND ${filter.sql}`;terms.push(...filter.bindings);
+        const sort=url.searchParams.get('sort'),direction=url.searchParams.get('direction')??'asc';
+        if((sort&&!mod.fields.some(f=>f.key===sort&&queryableField(f)))||!['asc','desc'].includes(direction))fail(400,'invalid_sort','Tri invalide.');
+        const order=sort?`json_extract(r.data,?) COLLATE NOCASE ${direction==='desc'?'DESC':'ASC'},r.id ASC`:'r.updated_at DESC,r.id DESC';
+        const orderBindings=sort?['$.'+sort]:[];
         const [items,count]=await db.batch([
-          db.prepare(`SELECT r.id,r.module_id,r.data,r.version,r.created_at,r.updated_at FROM lite_records r WHERE ${where} ORDER BY r.updated_at DESC,r.id DESC LIMIT ? OFFSET ?`).bind(...terms,limit,offset),
-          db.prepare(`SELECT COUNT(*) AS total FROM lite_records r WHERE ${where}`).bind(...terms),
+          db.prepare(`SELECT r.id,r.module_id,r.data,r.version,r.created_at,r.updated_at FROM ${storage.source} r WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...terms,...orderBindings,limit,offset),
+          db.prepare(`SELECT COUNT(*) AS total FROM ${storage.source} r WHERE ${where}`).bind(...terms),
         ]);
-        return json({items:(items.results as Row[]).map(unpack),total:(count.results[0] as {total:number}|undefined)?.total??0,limit,offset,searchEngine:'d1-fts5',indexing});
+        const records=(items.results as Row[]).map(unpack);
+        const projected=hooks?.afterList?await hooks.afterList({...hookContext,records:structuredClone(records)}):undefined;
+        if(projected&&projected.length!==records.length)throw new Error('afterList must preserve scoped row count and order');
+        const rows=projected?records.map((record,index)=>({...record,data:projected[index]})):await Promise.all(records.map(project));
+        return json({items:rows,total:(count.results[0] as {total:number}|undefined)?.total??0,limit,offset,searchEngine:'d1-fts5',indexing});
       }
       if(request.method==='POST' && !id) {
-        const body=await readJson(request),data=validateData(mod,body.data);
-        await options.beforeWrite?.({module:mod,data,previous:null,workspace:org,identity:user,...(access?{access}:{})});
+        const body=await readJson(request),data=await prepareEntityWrite({...hookContext,data:body.data as Record<string,unknown>,previous:null},{beforeWrite:options.beforeWrite,hooks});
         const recordId=uuid(),now=timestamp();
         await commitRequestAccessBatch(db,access,[
-          db.prepare('INSERT INTO lite_records(id,org_id,module_id,data,search_text,version,created_by,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?,?)').bind(recordId,org.id,mod.id,JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),user.userId,now,now),
+          storage.insert(db,{id:recordId,orgId:org.id,data,userId:user.userId,now}),
           audit(db,org.id,user.userId,`${mod.id}.create`,recordId),
-        ]).catch(rethrowRecordWriteError);return json({record:await getRecord(db,org.id,mod.id,recordId,scoped)},201);
+        ]).catch(rethrowRecordWriteError);
+        const record={id:recordId,module_id:mod.id,data,version:1,created_at:now,updated_at:now};
+        const effects=await entityAfterCommit(hooks,'create',hookContext,record);
+        return json({record:await project(await getRecord(db,org.id,mod.id,recordId,scoped)),...(effects.length?{effects}:{})},201);
       }
       if(request.method==='PATCH' && id) {
         // A read grant never suffices for a write: the target must be in write scope.
         const body=await readJson(request),expected=version(body.version),previous=await getRecord(db,org.id,mod.id,id,scoped,'write');
         if(previous.version!==expected) fail(409,'version_conflict','Ce document a été modifié. Rechargez-le avant d’enregistrer.');
-        const data=validateData(mod,body.data);
-        await options.beforeWrite?.({module:mod,data,previous:previous.data,workspace:org,identity:user,...(access?{access}:{})});
+        const data=await prepareEntityWrite({...hookContext,data:body.data as Record<string,unknown>,previous:previous.data},{beforeWrite:options.beforeWrite,hooks}),now=timestamp();
         const writeFilter=recordScope(scoped.scope,scoped.principal,recordRef,'write',scoped.access);
         const result=await commitRequestAccessBatch(db,access,[
-          db.prepare(`UPDATE lite_records SET data=?,search_text=?,version=version+1,updated_at=? WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM lite_records r WHERE r.id=lite_records.id AND ${writeFilter.sql})`).bind(JSON.stringify(data),Object.values(data).join(' ').toLowerCase(),timestamp(),id,org.id,mod.id,expected,...writeFilter.bindings),
+          storage.update(db,{id,orgId:org.id,data,version:expected,now,filter:writeFilter}),
           audit(db,org.id,user.userId,`${mod.id}.update`,id,{},'WHERE changes()=1'),
         ]).catch(rethrowRecordWriteError);
         if(!result[0].meta.changes) fail(409,'version_conflict','Ce document a été modifié. Rechargez-le.');
-        return json({record:await getRecord(db,org.id,mod.id,id,scoped)});
+        const record={...previous,data,version:expected+1,updated_at:now};
+        const effects=await entityAfterCommit(hooks,'update',hookContext,record);
+        return json({record:await project(await getRecord(db,org.id,mod.id,id,scoped)),...(effects.length?{effects}:{})});
       }
       if(request.method==='DELETE' && id) {
         const body=await readJson(request),expected=version(body.version);
-        await getRecord(db,org.id,mod.id,id,scoped,'write');
+        const record=await getRecord(db,org.id,mod.id,id,scoped,'write');
+        if(record.version!==expected)fail(409,'version_conflict','Ce document a été modifié. Rechargez-le.');
+        await hooks?.beforeArchive?.({...hookContext,record:structuredClone(record)});
+        const now=timestamp();
         const writeFilter=recordScope(scoped.scope,scoped.principal,recordRef,'write',scoped.access);
         const result=await commitRequestAccessBatch(db,access,[
-          db.prepare(`UPDATE lite_records SET deleted_at=?,version=version+1 WHERE id=? AND org_id=? AND module_id=? AND version=? AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM lite_records r WHERE r.id=lite_records.id AND ${writeFilter.sql})`).bind(timestamp(),id,org.id,mod.id,expected,...writeFilter.bindings),
+          storage.update(db,{id,orgId:org.id,version:expected,now,filter:writeFilter,archive:true}),
           audit(db,org.id,user.userId,`${mod.id}.archive`,id,{},'WHERE changes()=1'),
         ]);if(!result[0].meta.changes) fail(409,'version_conflict','Ce document a été modifié. Rechargez-le.');
-        return json({ok:true});
+        const effects=await entityAfterCommit(hooks,'archive',hookContext,{...record,version:expected+1,updated_at:now});
+        return json({ok:true,...(effects.length?{effects}:{})});
       }
       fail(405,'method_not_allowed','Méthode non autorisée.');
     }

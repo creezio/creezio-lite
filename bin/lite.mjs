@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {resolve,join,relative,dirname,basename,sep} from 'node:path';
 import {defineApp} from '../runtime/core/validation.ts';
+import {scaffoldModules} from './module-scaffold.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const packageInfo=JSON.parse(await readFile(join(root,'package.json'),'utf8'));
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -65,10 +66,11 @@ export async function createApp({out,spec}){
  await mkdir(dirname(destination),{recursive:true});const staging=await mkdtemp(join(dirname(destination),'.lite-new-'));
  try{
   const omit=new Set(['.git','node_modules','dist','.next','.wrangler','.sites-runtime','runtime','coverage','.lite-backups']);
-  await cp(join(root,'template'),staging,{recursive:true,filter:async path=>{const name=basename(path);if(omit.has(name)||name.endsWith('.tsbuildinfo')||(name.startsWith('.env')&&name!=='.env.example')||/\.(pem|key|sqlite|db)$/.test(name))return false;if((await lstat(path)).isSymbolicLink())throw new Error('Le template doit être autonome, sans symlink.');return true;}});
+  await cp(join(root,'template'),staging,{recursive:true,filter:async path=>{const name=basename(path);if(path===join(root,'template','app','modules')||omit.has(name)||name.endsWith('.tsbuildinfo')||(name.startsWith('.env')&&name!=='.env.example')||/\.(pem|key|sqlite|db)$/.test(name))return false;if((await lstat(path)).isSymbolicLink())throw new Error('Le template doit être autonome, sans symlink.');return true;}});
   await runtimeAt(staging);await installOrchestration(staging);await writeFile(join(staging,'brand.json'),JSON.stringify(app,null,2)+'\n');
   await writeFile(join(staging,'.openai/hosting.json'),JSON.stringify({d1:'DB',r2:'BUCKET'},null,2)+'\n');
   const pkg=JSON.parse(await readFile(join(staging,'package.json'),'utf8'));pkg.name=app.id;pkg.version='0.1.0';pkg.private=true;await writeFile(join(staging,'package.json'),JSON.stringify(pkg,null,2)+'\n');
+  await scaffoldModules(staging,app.modules,{all:true});
   await writeLock(staging);if(await exists(destination))await rmdir(destination);await rename(staging,destination);
  }catch(error){await rm(staging,{recursive:true,force:true});throw error;}
  return {app:app.name,path:destination,kitVersion:packageInfo.version,registered:false,instructions:'Lire AGENTS.md puis utiliser Sites pour construire et publier cette application.'};
@@ -97,6 +99,8 @@ export async function doctor(appPath){
  const build=await exists(buildPath)?await readFile(buildPath,'utf8'):'';
  const renderLocation=chrome.includes('<SitesWorkspaceLocation>'),slotContexts=build.includes('stabilizeVinextSlotContexts');
  const hostIntegration={paneRouter:managedBridge?'managed':bridge?'legacy':'missing',renderLocation,slotContexts,migrationRequired:!managedBridge||!renderLocation||!slotContexts};
+ if(hostIntegration.migrationRequired)issues.push('HOST_INTEGRATION_REQUIRED: adopter le pont Sites géré, SitesWorkspaceLocation et la stabilisation des contextes avant validation.');
+ for(const file of ['app/modules/index.ts','app/app-extensions.ts'])if(!await exists(join(app,file)))issues.push(`MODULE_CONTRACT_REQUIRED: ${file}`);
  return {ok:!issues.length,kitVersion:lock.kitVersion,registered:Boolean(host.project_id),issues,orchestration,hostIntegration};
 }
 export async function upgrade(appPath,apply=false){
@@ -114,7 +118,8 @@ export async function upgrade(appPath,apply=false){
 }
 export async function addModule(appPath,spec){
  const app=resolve(appPath),file=join(app,'brand.json'),current=JSON.parse(await readFile(file,'utf8')),module=JSON.parse(await readFile(resolve(spec),'utf8'));
- const next=defineApp({...current,modules:[...current.modules,module]});await writeFile(file,JSON.stringify(next,null,2)+'\n');
+ const owned=await Promise.all(current.modules.map(async item=>{const schema=join(app,'app/modules',item.id,'schema.json');return await exists(schema)?JSON.parse(await readFile(schema,'utf8')):item;}));
+ const next=defineApp({...current,modules:[...owned,module]});await scaffoldModules(app,next.modules);await writeFile(file,JSON.stringify(next,null,2)+'\n');
  return {module:module.id,registered:['navigation','search','api','mcp'],requiresBuildAndPublication:true};
 }
 async function main(){const [command,...args]=process.argv.slice(2),options={};for(let i=0;i<args.length;i++){if(args[i]==='--apply')options.apply=true;else if(['--out','--spec','--app'].includes(args[i])&&args[i+1])options[args[i++].slice(2)]=args[i];else throw new Error(`Argument inconnu : ${args[i]}`);}

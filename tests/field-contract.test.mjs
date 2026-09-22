@@ -30,3 +30,10 @@ test('module command schema is closed, preserves nullable optional fields and re
  assert.ok(schema.properties.price.anyOf.some(s=>s.type==='null'));
  assert.deepEqual(moduleDataSchema(defineApp(app).modules[0],{partial:true}).required,[]);
 });
+
+test('JSON fields display editable JSON instead of object string coercion',()=>{
+ const field={key:'images',label:'Images',type:'textarea',encoding:'json'};
+ const value=[{url:'https://example.test/image.png'}];
+ assert.deepEqual(JSON.parse(fieldInputValue(field,value)),value);
+ assert.deepEqual(JSON.parse(formatFieldValue(field,value)),value);
+});

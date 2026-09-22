@@ -13,7 +13,7 @@ import { handleMcp } from '@lite/core/mcp';
 import { dataTools } from '@lite/core/tools';
 import { toolBindings, mcpAdminRoute } from '@lite/core/mcp-admin';
 import { accessRoute, openApiDocument } from '@lite/core/access';
-import { matchOperation, assertOperationAllowed, operationAllowed } from '@lite/core/operations';
+import { canReadModule, matchOperation, assertOperationAllowed, operationAllowed } from '@lite/core/operations';
 import { ApiError, errorBody, fail, publicDetails } from '@lite/core/validation';
 import { checkOrigin, json, readJson, readPublicBytes, normalizedMethod, requestPathname, requestQuery } from '@lite/core/http';
 import { observabilityRoute, persistRequestLog, newRequestTrace, jsonrpcLabel, UNKNOWN_TOOL, REQUEST_ID_HEADER } from '@lite/core/observability';
@@ -120,7 +120,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       if(!credential)checkOrigin(current);
       if(credential&&url.searchParams.has('workspace')&&url.searchParams.get('workspace')!==credential.access.workspaceId)fail(403,'token_workspace','Cette clé appartient à un autre espace.');
       const org=fixedOrg??await orgFor(current);
-      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app,options.operations);
+      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app,options.operations,options.registry);
       const op=matchOperation(operations,current.method,url.pathname);
       logOrg=org;logContext={...trusted,operations};
       if(!op)fail(404,'not_found','Route introuvable.');
@@ -131,7 +131,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       const scoped:ApiContext={...trusted,workspace:org,operations,...(access?{access,refreshAccess:async(refreshRequest:Request,live:Workspace)=>{
         // Browser sockets are session-only. Rebuild from server declaration and current membership.
         if(credentialContext.kind!=='session'||!options.access)fail(403,'operation_forbidden','Access refresh unavailable.');
-        return createRequestAccessContext({db:context.env.DB,request:refreshRequest,requestId:crypto.randomUUID(),workspace:live,identity:trusted.identity!,credential:credentialContext,declaration:options.access,catalog:operationCatalog({db:context.env.DB,user:trusted.identity!,workspace:live},context.app,options.operations)});
+        return createRequestAccessContext({db:context.env.DB,request:refreshRequest,requestId:crypto.randomUUID(),workspace:live,identity:trusted.identity!,credential:credentialContext,declaration:options.access,catalog:operationCatalog({db:context.env.DB,user:trusted.identity!,workspace:live},context.app,options.operations,options.registry)});
       }}:{})};
       try{
       assertOperationAllowed(op,org,access);
@@ -154,12 +154,15 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
         if(!tool){trace.tool=UNKNOWN_TOOL;fail(403,'tool_forbidden','Outil désactivé ou inaccessible.');}
         trace.tool=tool.name;return json(await tool.execute(body.arguments??{}));
       }
-      const assistant=await assistantRoute(current,scoped,org,{...(options.assistant?{policy:async()=>{
+      const assistant=await assistantRoute(current,scoped,org,{moduleContext:async()=>{
+        const visible=options.registry?.modules.filter(mod=>Object.keys(mod.entitySpecs).some(id=>operations.some(op=>op.moduleId===id&&op.method==='GET'&&(context.app.modules.find(m=>m.id===id)?.readRoles??['owner','admin','member','viewer']).includes(org.role)&&canReadModule(org,id,scoped.access))))??[];
+        return visible.flatMap(mod=>(mod.assistantSources??[]).filter(source=>source.kind==='context').map(source=>source.kind==='context'?`### ${source.title}\n${source.body}`:'')).join('\n\n');
+      },...(options.assistant?{policy:async()=>{
         const profiles=scoped.access?.snapshot.observedProfileIds??[],definitions=profiles.flatMap(id=>{const item=options.assistant?.profiles[id];return item?[item]:[];});
         return {instructions:definitions.map(item=>item.instructions).join(' '),toolNames:[...new Set(definitions.flatMap(item=>[...item.toolNames]))]};
       }}:{}),tools:async()=>{
         // Re-read membership, group policies and MCP switches before each tool call.
-        const liveOrg=await orgFor(current),liveOps=operationCatalog({db:context.env.DB,user:trusted.identity!,workspace:liveOrg},context.app,options.operations);
+        const liveOrg=await orgFor(current),liveOps=operationCatalog({db:context.env.DB,user:trusted.identity!,workspace:liveOrg},context.app,options.operations,options.registry);
         const liveAccess=options.access===undefined?undefined:await createRequestAccessContext({db:context.env.DB,request:current,requestId:trace.correlationId,workspace:liveOrg,identity:trusted.identity!,credential:credentialContext,declaration:options.access,catalog:liveOps});
         try{
         const assistantOp=liveOps.find(o=>o.id==='assistant.chat')!;assertOperationAllowed(assistantOp,liveOrg,liveAccess);
@@ -181,7 +184,7 @@ export async function dispatchRequest(request:Request,context:ApiContext,options
       const requestedWorkspace=new URL(request.url).searchParams.get('workspace');
       if(credential&&requestedWorkspace&&requestedWorkspace!==credential.access.workspaceId)fail(403,'token_workspace','Cette connexion appartient à un autre espace.');
       const org=await orgFor(request);
-      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app,options.operations),scoped={...trusted,workspace:org,operations};
+      const operations=operationCatalog({db:context.env.DB,user:trusted.identity,workspace:org},context.app,options.operations,options.registry),scoped={...trusted,workspace:org,operations};
       const access=options.access===undefined?undefined:await createRequestAccessContext({db:context.env.DB,request,requestId:trace.correlationId,workspace:org,identity:trusted.identity,credential:credentialContext,declaration:options.access,catalog:operations});
       try{
       logOrg=org;logContext={...trusted,operations};

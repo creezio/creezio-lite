@@ -1,3 +1,4 @@
+import { composeModuleExtensions } from './module-contract.ts';
 import { validateAccessDeclaration } from './access-profiles-engine.ts';
 import { assertRequestAccessContext, type RequestAccessContext } from './access-profiles-store.ts';
 import type { AppDefinition, AppExtensions, AppOperationContext, AppOperationDefinition, AppOperationResult, CredentialContext, Identity, LiteEnvironment, Principal, Role, ScopeProvider, Workspace } from './types.ts';
@@ -92,9 +93,10 @@ export function read(input:ReadInput):AppOperationDefinition{
  * pas l’absence de collision avec les routes privées.
  */
 export function defineExtensions(app:AppDefinition,extensions:AppExtensions={},catalog?:Operation[]):AppExtensions{
+  extensions=composeModuleExtensions(extensions);
   if(extensions.beforeWrite!==undefined&&typeof extensions.beforeWrite!=='function')throw new Error('beforeWrite doit être une fonction.');
   resolveScope(extensions.scope);
-  const declared=appOperations(app,extensions.operations);
+  const declared=appOperations(app,extensions.operations,extensions.registry);
   const privateOperations=assertUniqueOperations([...(catalog??coreOperations(app)),...declared]);
   if(extensions.publicIngress!==undefined){
     if(!Array.isArray(catalog)||catalog.length<1){

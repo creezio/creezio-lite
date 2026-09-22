@@ -1,0 +1,26 @@
+import './register-native-loader.mjs';
+import test from 'node:test';import assert from 'node:assert/strict';
+import {localDb,client,boot,alice,bob,app} from './helpers.mjs';
+import {createBrandModuleRegistry} from '../runtime/core/index.ts';
+const {defineExtensions}=await import('../runtime/modules/sites-adapter/src/catalog.ts');
+const {dispatchRequest}=await import('../runtime/modules/sites-adapter/src/dispatch.ts');
+const registry=createBrandModuleRegistry(app,app.modules.map(schema=>({id:schema.id,entitySpecs:{[schema.id]:{schema,storage:{kind:'records'}}},onboarding:{steps:[{id:schema.id,label:schema.name,texts:{intro:'Original'}}]},demo:{scenarios:[{id:schema.id+'-walk',title:schema.name,steps:[{id:'intro',kind:'say',title:schema.name}]}]}})));
+const extensions=defineExtensions(app,{registry});
+test('module demos and onboarding defaults reach native HTTP; content and progress persist in isolated D1 scopes',async t=>{
+ const db=await localDb();t.after(()=>db.close());const org=await boot(client(db,alice)),other=await boot(client(db,bob));
+ const call=async(identity,workspace,path,method='GET',body)=>{const url='https://test.example/api/v1/modules/'+path+'?workspace='+workspace;const response=await dispatchRequest(new Request(url,{method,headers:{origin:'https://test.example','content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),{app,env:{DB:db},identity},extensions);return {status:response.status,body:await response.json()};};
+ const a=(path,method,body)=>call(alice,org,path,method,body),b=(path,method,body)=>call(bob,other,path,method,body);
+ const demo=await a('interactive-demo/scenarios');assert.equal(demo.status,200);assert.ok(demo.body.scenarios.some(s=>s.id===app.modules[0].id+'-walk'));
+ const initial=await a('onboarding/content');assert.equal(initial.status,200,JSON.stringify(initial.body));assert.equal(initial.body.content.steps.length,app.modules.length);
+ const id=app.modules[0].id;assert.equal((await a('onboarding/content','PUT',{steps:[{id,label:'Changed'}],texts:{welcome:'Hello'}})).status,200);
+ assert.equal((await a('onboarding/content')).body.content.steps[0].label,'Changed');assert.equal((await b('onboarding/content')).body.content.steps[0].label,app.modules[0].name);
+ assert.equal((await a('onboarding/preferences','PUT',{answers:{step:1,draft:'Unsaved interview'}})).status,200);
+ assert.equal((await a('onboarding/preferences')).body.answers.draft,'Unsaved interview');assert.deepEqual((await b('onboarding/preferences')).body.answers,{});
+ assert.equal((await a('onboarding/preferences','PUT',{user:bob.userId,answers:{step:0}})).status,403);
+ assert.equal((await a('onboarding/content','PUT',{texts:{bad:{nested:'object'}}})).status,400);
+ await db.prepare('INSERT INTO lite_members(org_id,user_id,role) VALUES(?,?,?)').bind(org,bob.userId,'viewer').run();
+ assert.equal((await call(bob,org,'onboarding/content','PUT',{texts:{welcome:'forged'}})).status,403);
+ assert.equal((await call(bob,org,'onboarding/preferences','PUT',{answers:{step:2}})).status,200);
+ assert.equal((await call(bob,org,'onboarding/preferences')).body.answers.step,2);assert.equal((await a('onboarding/preferences')).body.answers.step,1);
+ assert.equal((await a('onboarding/content','DELETE')).body.hasOverride,false);
+});

@@ -110,7 +110,7 @@ test('real D1 preserves additive migration, CAS winner and zero-effect stale inv
  const {localDatabase,migrate}=await import('../template/scripts/migrate-local.mjs');
  const {fileURLToPath}=await import('node:url');const local=await localDatabase();
  try{
-  const directory=fileURLToPath(new URL('../template/drizzle',import.meta.url));assert.equal(await migrate(local.db,directory),15);assert.equal(await migrate(local.db,directory),0);
+  const directory=fileURLToPath(new URL('../template/drizzle',import.meta.url));assert.equal(await migrate(local.db,directory),16);assert.equal(await migrate(local.db,directory),0);
   const db=local.db,org=await boot(client(db,alice));await boot(client(db,bob));await db.prepare('INSERT INTO lite_members(org_id,user_id,role) VALUES(?,?,?)').bind(org,'bob','admin').run();
   await db.prepare('INSERT INTO lite_access_groups(org_id,id,name,members_json,version,created_at) VALUES(?,?,?,?,1,?)').bind(org,'readers','readers','[]',new Date().toISOString()).run();
   const first=await lease(db,org),second=await lease(db,org);const results=await Promise.allSettled([updateAccessReceipt(first.access,{kind:'adopt',receipt:receipt()},0),updateAccessReceipt(second.access,{kind:'adopt',receipt:receipt()},0)]);

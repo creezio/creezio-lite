@@ -1,3 +1,6 @@
+import {queryableField} from './entity-fields.ts';
+import type {BrandModuleRegistry} from './module-contract.ts';
+import { editableFields } from './entity-write.ts';
 import { requestAccessMatches, accessModuleReadable, type RequestAccessContext } from './access-profiles-store.ts';
 import type { AppDefinition, AppOperationDefinition, Field, Module, Role, Workspace } from './types.ts';
 import { roles, fail, idPattern, moduleWritable } from './validation.ts';
@@ -18,16 +21,16 @@ export const stringSchema={type:'string',maxLength:300};
 export const idSchema={type:'string',minLength:1,maxLength:160};
 export const paging={limit:{type:'integer',minimum:1,maximum:100},offset:{type:'integer',minimum:0,maximum:100000},q:{type:'string',maxLength:120}};
 const admin:Role[]=['owner','admin'],writers:Role[]=['owner','admin','member'];
-export function fieldSchema(f:Field):JsonSchema{if(f.type==='date'&&!f.required)return {description:f.label,anyOf:[fieldSchema({...f,required:true}),{type:'string',enum:['']},{type:'null'}]};return {type:f.type==='number'?(f.integer?'integer':'number'):f.type==='boolean'?'boolean':'string',description:f.label,...(f.type==='select'?{enum:f.options}:{}),...(f.type==='email'?{format:'email'}:{}),...(f.type==='date'?{format:'date'}:{}),...(f.maxLength?{maxLength:f.maxLength}:{}),...(f.min!==undefined?{minimum:f.min}:{}),...(f.max!==undefined?{maximum:f.max}:{})};}
+export function fieldSchema(f:Field):JsonSchema{if(f.encoding==='json')return {description:f.label,anyOf:[{type:'string',maxLength:f.maxLength??5000},{type:'array',items:{}},{type:'object',additionalProperties:true}]};if(f.type==='date'&&!f.required)return {description:f.label,anyOf:[fieldSchema({...f,required:true}),{type:'string',enum:['']},{type:'null'}]};return {type:f.type==='number'?(f.integer?'integer':'number'):f.type==='boolean'?'boolean':'string',description:f.label,...(f.type==='select'?{enum:f.options}:{}),...(f.type==='email'?{format:'email'}:{}),...(f.type==='date'?{format:'date'}:{}),...(f.maxLength?{maxLength:f.maxLength}:{}),...(f.min!==undefined?{minimum:f.min}:{}),...(f.max!==undefined?{maximum:f.max}:{})};}
 /** Derive a closed command data schema from the same fields as validateData.
  * Optional blank values remain compatible with native forms; domain validation
  * still handles normalization and business rules. Partial is for update/restore inputs.
  */
 export function moduleDataSchema(module:Module,{partial=false}:{partial?:boolean}={}):JsonSchema {
- const properties=Object.fromEntries(module.fields.map(field=>[field.key,field.required?fieldSchema(field):{
+ const properties=Object.fromEntries(editableFields(module).map(field=>[field.key,field.required?fieldSchema(field):{
   description:field.label,anyOf:[fieldSchema({...field,required:true}),{type:'null'},{type:'string',enum:['']}]
  }]));
- return objectSchema(properties,partial?[]:module.fields.filter(f=>f.required).map(f=>f.key));
+ return objectSchema(properties,partial?[]:editableFields(module).filter(f=>f.required).map(f=>f.key));
 }
 export function operation(value:Omit<Operation,'kind'|'inputSchema'|'toolName'|'tokenAllowed'|'mcp'> & Partial<Pick<Operation,'kind'|'inputSchema'|'toolName'|'tokenAllowed'|'mcp'>>):Operation {
   const params=Object.fromEntries([...value.path.matchAll(/:([A-Za-z0-9_]+)/g)].map(m=>[m[1],idSchema]));
@@ -129,14 +132,14 @@ export function coreOperations(app:AppDefinition):Operation[]{
     ['trace','GET','conversations/:id/trace','Actions et diagnostics de sa conversation'],['chat','POST','chat','Dialoguer avec OpenAI ou Hermes'],['transcribe','POST','transcribe','Transcrire un message vocal'],
   ] as const)add(`assistant.${id}`,method,`assistant/${path}`,'assistant','Assistant',description,{...personalAssistant,...(id==='transcribe'?{requestType:'file' as const}:method==='POST'||method==='PATCH'?{bodySchema:{type:'object',additionalProperties:true}}:{})});
   for(const module of app.modules){
-    const data=objectSchema(Object.fromEntries(module.fields.map(f=>[f.key,fieldSchema(f)])),module.fields.filter(f=>f.required).map(f=>f.key));
+    const data=objectSchema(Object.fromEntries(editableFields(module).map(f=>[f.key,fieldSchema(f)])),editableFields(module).filter(f=>f.required).map(f=>f.key));
     // Entities and collections expose reads only; every mutation is a declared command.
     const actions=([['list','GET',''],['get','GET','/:id'],['create','POST',''],['update','PATCH','/:id'],['archive','DELETE','/:id']] as const).filter(([,method])=>method==='GET'||moduleWritable(module));
     for(const [action,method,suffix] of actions){
       add(`module.${module.id}.${action}`,method,`modules/${module.id}/records${suffix}`,module.id,module.name,`${module.name} : ${action}`,{kind:'business',roles:method==='GET'?(module.readRoles??roles):(module.writeRoles??writers),toolName:`lite_${module.id.replaceAll('-','_')}_${action}`,
-        ...(action==='list'?{querySchema:objectSchema({...paging,field:stringSchema,value:stringSchema})}:{}),
+        ...(action==='list'?{querySchema:objectSchema({...paging,field:stringSchema,value:stringSchema,sort:{enum:module.fields.filter(f=>queryableField(f)).map(f=>f.key)},direction:{enum:['asc','desc']}})}:{}),
         ...(action==='create'?{bodySchema:objectSchema({data},['data'])}:{}),
-        ...(action==='update'?{bodySchema:objectSchema({data,version:{type:'integer',minimum:1}},['data','version'])}:{}),
+        ...(action==='update'?{bodySchema:objectSchema({data:{...data,required:[]},version:{type:'integer',minimum:1}},['data','version'])}:{}),
         ...(action==='archive'?{bodySchema:objectSchema({version:{type:'integer',minimum:1}},['version'])}:{})});
     }
   }
@@ -239,7 +242,7 @@ export function routeKey(method:string,path:string):string{return `${method} ${p
  * Business operations belong to a declared module and never exceed its read roles;
  * system descriptors (jobs…) use an explicit moduleId that is not a business module.
  */
-export function appOperations(app:AppDefinition,definitions:AppOperationDefinition[]=[]):Operation[]{
+export function appOperations(app:AppDefinition,definitions:AppOperationDefinition[]=[],registry?:BrandModuleRegistry):Operation[]{
   const result:Operation[]=[],ids=new Set<string>();
   for(const definition of definitions){
     if(!definition||typeof definition!=='object'||typeof definition.handle!=='function'||!definition.operation||typeof definition.operation!=='object')throw new Error('Une opération applicative déclare une Operation et un handler.');
@@ -250,8 +253,9 @@ export function appOperations(app:AppDefinition,definitions:AppOperationDefiniti
     if(typeof op.description!=='string'||!op.description.trim()||typeof op.moduleName!=='string'||!op.moduleName.trim())throw new Error(`Description et nom de module requis pour ${op.id}.`);
     if(!idPattern.test(op.moduleId))throw new Error(`moduleId invalide pour ${op.id}.`);
     const module=app.modules.find(m=>m.id===op.moduleId);
-    if(op.kind==='business'&&!module)throw new Error(`L’opération ${op.id} référence un module absent de l’application : ${op.moduleId}.`);
-    if(op.kind!=='business'&&module)throw new Error(`Le descripteur système ${op.id} ne peut pas réutiliser le module métier ${op.moduleId}.`);
+    const owner=registry?.modules.find(m=>m.id===op.moduleId),owned=owner?.operations?.some(def=>def.operation.id===op.id);
+    if(op.kind==='business'&&!module&&!owned)throw new Error(`L’opération ${op.id} référence un module absent de l’application : ${op.moduleId}.`);
+    if(op.kind!=='business'&&(module||owner))throw new Error(`Le descripteur système ${op.id} ne peut pas réutiliser le module métier ${op.moduleId}.`);
     if(!Array.isArray(op.roles)||!op.roles.length||!op.roles.every(r=>roles.includes(r))||new Set(op.roles).size!==op.roles.length)throw new Error(`Rôles invalides pour ${op.id}.`);
     if(op.method==='GET'&&op.bodySchema)throw new Error(`L’opération GET ${op.id} n’accepte pas de corps métier.`);
     if(op.essential)throw new Error(`Une opération applicative ne peut pas être déclarée indispensable : ${op.id}.`);

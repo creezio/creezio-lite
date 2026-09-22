@@ -1,6 +1,6 @@
 # Registre des modules
 
-`runtime/core/registry.ts` est le catalogue consommé par les différentes surfaces. Les modules métier proviennent de `brand.json`, validé par `defineApp`. Les modules système ont leur contrat de stockage et leurs routes dédiées.
+`runtime/core/registry.ts` est le catalogue consommé par les différentes surfaces. Les modules métier proviennent de `app/modules/<id>/schema.json`, validés par `defineApp` et réunis par `app/modules/schemas.ts`. `brand.json` contient leur instantané de compatibilité, contrôlé avant compilation et régénéré par `npm run sync:module-schemas`. Le contrat serveur et ses contributions vivent dans `app/modules/<id>/index.ts` ; voir `docs/MODULE-CONTRACT.md`. Les modules système ont leur contrat de stockage et leurs routes dédiées.
 
 ```json
 {
@@ -27,7 +27,7 @@ La recherche est active par défaut pour les champs. `searchable:false` sur un c
 
 Les règles métier supplémentaires vont dans `app/business-rules.ts`. Les mêmes règles sont exécutées pour l’interface, l’API et MCP. Des relations, transactions entre fiches ou traitements asynchrones exigent du code dédié ; un formulaire déclaratif ne les invente pas.
 
-Un module utilisant une table ou un service spécifique doit fournir son contrat de stockage, ses permissions, ses opérations et sa source d’indexation. Le branchement automatique sans code supplémentaire concerne les modules déclaratifs sur `lite_records`.
+Un module utilisant une table ou un service spécifique doit fournir son contrat de stockage, ses permissions, ses opérations et sa source d’indexation. Le générateur crée désormais une table relationnelle `mod_<id>` par entité, son `db-schema.ts` et une migration additive déclarée par le module. Le CRUD, les formulaires et la recherche utilisent cette table sans miroir `lite_records`. Lors du portage d’une application, reprendre ses noms de tables et son modèle historiques ; le préfixe généré sert seulement aux nouvelles entités.
 
 ## Catalogue API et groupes
 
@@ -36,3 +36,5 @@ Le registre des opérations fournit automatiquement les routes documentées, Ope
 `/admin/api` présente toutes les routes servies ; `/admin/mcp` expose les outils, leur état, leurs paramètres et la création d’alias nommés ; `/admin/access` configure les groupes et restrictions. Chaque rôle conserve ses limites : les groupes les restreignent et un refus est prioritaire. Le propriétaire et les fonctions indispensables sont protégés. Les API, MCP HTTP, WebMCP et les résultats de recherche utilisent les droits actuels, y compris pour les clés déjà émises.
 
 Un outil désactivé disparaît des listes et est refusé à l’exécution. Les API binaires et les opérations de session ou d’administration des identités restent explicitement hors MCP. Les utilisateurs peuvent lire le motif dans le catalogue ; aucun endpoint absent n’est présenté comme fonctionnel.
+
+Un module métier déclaré peut posséder plusieurs entités ou aucune entité CRUD. Dans ce dernier cas (par exemple stock et réglages), ses opérations métier sont déclarées dans son BrandModuleDef et vérifiées via le registre commun. Ne pas créer une fausse fiche pour débloquer une route. HTTP, MCP et le catalogue des droits partagent cette déclaration ; un module absent ou une opération extérieure à son contrat reste refusé.

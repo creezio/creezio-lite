@@ -1,3 +1,4 @@
+import {queryableField} from './entity-fields.ts';
 import type { AppDefinition, Module, ModuleKind, Role } from './types.ts';
 
 /** A public detail is a scalar or a short list of scalars; nothing nested, no exception, no SQL cause. */
@@ -53,7 +54,7 @@ export function moduleKind(mod: Pick<Module, 'kind'>): ModuleKind { return mod.k
 export function moduleWritable(mod: Pick<Module, 'kind'>): boolean { return moduleKind(mod) === 'module'; }
 /** Navigation and dashboard counters follow this flag; collections never navigate. */
 export function moduleNavigable(mod: Pick<Module, 'kind' | 'navigation'>): boolean { return moduleKind(mod) !== 'collection' && mod.navigation !== false; }
-const keyPattern = /^[a-z][a-z0-9_]{0,47}$/;
+const keyPattern = /^[a-z][A-Za-z0-9_]{0,47}$/;
 export const idPattern = /^[a-z][a-z0-9-]{0,47}$/;
 const forbidden = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -70,9 +71,16 @@ export function defineApp(input: unknown): AppDefinition {
     if (![mod.name, mod.singular, mod.description].every(v => typeof v === 'string') || !mod.name.trim() || !mod.singular.trim()) throw new Error('Libellés de module manquants.');
     if (!Array.isArray(mod.fields) || mod.fields.length < 1 || mod.fields.length > 30) throw new Error('Déclarer entre 1 et 30 champs par module.');
     const keys = new Set<string>();
-    for (const field of mod.fields) {
+    if(mod.serverFields!==undefined&&(!Array.isArray(mod.serverFields)||mod.serverFields.length>128))throw new Error('Champs serveur invalides.');
+    if(mod.serverFields?.some(f=>f.editable===true||(f.storage==='computed'&&f.queryable!==true)))throw new Error('Les champs serveur sont non éditables ; un champ calculé exige une projection SQL explicite.');
+    for (const field of [...mod.fields,...(mod.serverFields??[])]) {
       if (!keyPattern.test(field.key) || forbidden.has(field.key) || keys.has(field.key) || typeof field.label !== 'string' || !field.label.trim()) throw new Error('Champ invalide ou dupliqué.');
       keys.add(field.key);
+      if(field.storage!==undefined&&!['stored','computed'].includes(field.storage))throw new Error('Stockage de champ invalide.');
+      if(field.editable!==undefined&&typeof field.editable!=='boolean')throw new Error('editable doit être un booléen.');
+      if(field.queryable!==undefined&&(typeof field.queryable!=='boolean'||field.storage!=='computed'))throw new Error('queryable requires a computed field');
+      if(field.storage==='computed'&&(field.editable===true||(field.searchable===true&&!field.queryable)))throw new Error('Un champ calculé reste non éditable ; son indexation exige une projection SQL explicite.');
+      if(field.encoding!==undefined&&(field.encoding!=='json'||!['text','textarea'].includes(field.type)))throw new Error('Encodage de champ invalide.');
       if(field.integer!==undefined&&(typeof field.integer!=='boolean'||field.type!=='number'))throw new Error('Un entier exige un champ numérique.');
       if(field.scale!==undefined&&(field.type!=='number'||!Number.isSafeInteger(field.scale)||field.scale<1||field.scale>1000000))throw new Error('Échelle numérique invalide.');
       if(field.unit!==undefined&&(field.type!=='number'||typeof field.unit!=='string'||!field.unit.trim()||field.unit.length>20))throw new Error('Unité numérique invalide.');
@@ -80,19 +88,19 @@ export function defineApp(input: unknown): AppDefinition {
       if(field.searchable!==undefined&&typeof field.searchable!=='boolean')throw new Error('searchable doit être un booléen.');
       if (!['text','textarea','email','number','date','select','boolean'].includes(field.type)) throw new Error('Type de champ non pris en charge.');
       if (field.type === 'select' && (!Array.isArray(field.options) || !field.options.length || field.options.length > 50 || !field.options.every(v => typeof v === 'string' && v.length > 0 && v.length <= 100) || new Set(field.options).size !== field.options.length)) throw new Error('Options de sélection invalides.');
-      if (field.maxLength !== undefined && (!Number.isInteger(field.maxLength) || field.maxLength < 1 || field.maxLength > 10000)) throw new Error('Longueur de champ invalide.');
+      if (field.maxLength !== undefined && (!Number.isInteger(field.maxLength) || field.maxLength < 1 || field.maxLength > (field.encoding==='json'?1000000:10000))) throw new Error('Longueur de champ invalide.');
       if ([field.min, field.max].some(n => n !== undefined && !Number.isFinite(n)) || (field.min !== undefined && field.max !== undefined && field.min > field.max)) throw new Error('Bornes numériques invalides.');
     }
-    if (!mod.fields.some(f => f.key === mod.titleField && ['text','email'].includes(f.type) && f.required)) throw new Error('titleField doit désigner un champ texte obligatoire.');
+    if (!mod.fields.some(f => f.key === mod.titleField && f.storage!=='computed' && ['text','email'].includes(f.type) && f.required)) throw new Error('titleField doit désigner un champ texte obligatoire.');
     if(mod.search){
       if(typeof mod.search!=='object'||(mod.search.enabled!==undefined&&typeof mod.search.enabled!=='boolean'))throw new Error('Configuration de recherche invalide.');
-      if(mod.search.fields&&(!Array.isArray(mod.search.fields)||new Set(mod.search.fields).size!==mod.search.fields.length||mod.search.fields.some(k=>!keys.has(k))))throw new Error('Champs de recherche invalides.');
+      if(mod.search.fields&&(!Array.isArray(mod.search.fields)||new Set(mod.search.fields).size!==mod.search.fields.length||mod.search.fields.some(k=>!mod.fields.some(f=>f.key===k&&queryableField(f)))))throw new Error('Champs de recherche invalides.');
     }
     for (const grant of [mod.readRoles, mod.writeRoles]) if (grant && (!Array.isArray(grant) || !grant.every(r => roles.includes(r)))) throw new Error('Rôles de module invalides.');
     validateModuleKind(mod, keys);
   }
   validateModuleParents(app.modules);
-  for(const mod of app.modules)for(const field of mod.fields)if(field.reference){
+  for(const mod of app.modules)for(const field of [...mod.fields,...(mod.serverFields??[])])if(field.reference){
     const target=app.modules.find(m=>m.id===field.reference!.moduleId);
     if(!target||field.reference.labelField&&!target.fields.some(f=>f.key===field.reference!.labelField))throw new Error('Cible ou libellé de référence inconnu.');
   }
@@ -133,7 +141,7 @@ function validateModuleParents(modules: Module[]) {
   }
 }
 
-export function validateData(mod: Module, input: unknown): Record<string, unknown> {
+export function validateData(mod: Module, input: unknown, options: {stored?: boolean} = {}): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail(400, 'invalid_data', 'Les données doivent être un objet.');
   const source = input as Record<string, unknown>;
   const allowed = new Set(mod.fields.map(f => f.key));
@@ -141,10 +149,22 @@ export function validateData(mod: Module, input: unknown): Record<string, unknow
   const result: Record<string, unknown> = {};
   for (const f of mod.fields) {
     let value = source[f.key];
-    if (typeof value === 'string') value = value.trim();
+    if (typeof value === 'string' && !options.stored) value = value.trim();
+    if (options.stored && f.required && typeof value === 'string' && !value.trim()) fail(400, 'required_field', `${f.label} est obligatoire.`);
     const empty = value === undefined || value === null || value === '';
-    if (empty) { if (f.required) fail(400, 'required_field', `${f.label} est obligatoire.`); result[f.key] = f.type === 'boolean' ? false : null; continue; }
-    if (f.type === 'number') {
+    if (empty) {
+      if (f.required) fail(400, 'required_field', `${f.label} est obligatoire.`);
+      // Server commands already selected their values: validation must not turn
+      // an empty text into NULL, or an unknown optional boolean into false.
+      result[f.key] = options.stored
+        ? (value === '' && !f.encoding && ['text','textarea'].includes(f.type) ? '' : null)
+        : (f.type === 'boolean' ? false : null);
+      continue;
+    }
+    if (f.encoding === 'json') {
+      try { if(typeof value==='string')value=JSON.parse(value); const encoded=JSON.stringify(value); if(encoded===undefined||encoded.length>(f.maxLength??5000))throw new Error(); value=JSON.parse(encoded); }
+      catch { fail(400,'invalid_json',`${f.label} : JSON invalide ou trop long.`); }
+    } else if (f.type === 'number') {
       if (typeof value !== 'number' || !Number.isFinite(value) || (f.integer&&!Number.isSafeInteger(value)) || (f.min !== undefined && value < f.min) || (f.max !== undefined && value > f.max)) fail(400, 'invalid_number', `${f.label} : nombre hors limites.`);
     } else if (f.type === 'boolean') {
       if (typeof value !== 'boolean') fail(400, 'invalid_boolean', `${f.label} : valeur oui/non attendue.`);

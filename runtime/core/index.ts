@@ -14,3 +14,11 @@ export { preparePasswordAccount, resolvePasswordIdentity, handlePasswordAuth } f
 export type { PasswordAuthEnvironment, PasswordAuthCallbacks, PreparedPasswordAccount } from './password-auth.ts';
 
 export {moduleDataSchema} from './operations.ts';
+export {queryableField} from './entity-fields.ts';
+export {editableFields,storedFields,validateEntityInput,validateStoredData,validateStoredPatch,prepareEntityWrite,runAfterCommit,commitWithEffects} from './entity-write.ts';
+export type {CommitEffect} from './entity-write.ts';
+export {entityStorage,relationalEntityMigration} from './entity-storage.ts';
+export type {EntityStorage} from './entity-storage.ts';
+
+export {createBrandModuleRegistry,composeOnboardingFromModules} from './module-contract.ts';
+export type {BrandModuleDef,BrandModuleRegistry,ModuleEntitySpec,ModuleMigration,EntityHooks,BrandModuleAssistantSource,BrandModuleOnboarding} from './module-contract.ts';

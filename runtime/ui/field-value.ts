@@ -2,6 +2,7 @@ import type { Field } from '../core/types';
 /** Same stored units for API, forms and lists; presentation never guesses from a field name. */
 export function fieldInputValue(field: Field, value: unknown): string {
   if(value===null||value===undefined||value==='')return '';
+  if(field.encoding==='json'&&typeof value!=='string')return JSON.stringify(value,null,2);
   return field.type==='number'?String(Number(value)/(field.scale??1)):String(value);
 }
 export function parseFieldInput(field: Field, value: string): unknown {
@@ -12,6 +13,7 @@ export function parseFieldInput(field: Field, value: string): unknown {
 }
 export function formatFieldValue(field: Field,value: unknown): string {
   if(value===null||value===undefined||value==='')return '—';
+  if(field.encoding==='json'&&typeof value!=='string')return JSON.stringify(value);
   if(field.type==='boolean')return value?'Oui':'Non';
   if(field.type==='number'){
     const number=Number(value)/(field.scale??1);
