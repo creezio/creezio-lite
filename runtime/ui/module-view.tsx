@@ -44,7 +44,7 @@ export function moduleRecordColumns(module:Module):ColumnDef<RecordData>[] {
   const title=module.fields.find(field=>field.key===module.titleField);
   const visible=module.fields.filter(field=>field.type!=='textarea').slice(0,5);
   if(title&&!visible.some(field=>field.key===title.key))visible.unshift(title);
-  return visible.map(field=>({id:field.key,enableSorting:field.storage!=='computed',accessorFn:row=>formatFieldValue(field,row.data[field.key]),header:field.label,cell:({row})=>{
+  return visible.map(field=>({id:field.key,enableSorting:field.storage!=='computed'||field.queryable===true,accessorFn:row=>formatFieldValue(field,row.data[field.key]),header:field.label,cell:({row})=>{
     const value=formatFieldValue(field,row.original.data[field.key]);
     const content=field.type==='select'?<Badge variant="secondary">{value}</Badge>:<span>{value}</span>;
     return field.key===module.titleField?<a href={'/'+module.id+'?record='+encodeURIComponent(row.original.id)} className="font-medium underline-offset-4 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{content}</a>:content;

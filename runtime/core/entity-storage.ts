@@ -10,6 +10,9 @@ export function assertEntityStorage(spec:ModuleEntitySpec){
  if(!/^[a-z][a-z0-9-]{0,47}$/.test(spec.schema.id))throw new Error('Invalid entity id');
  for(const f of storedFields(spec.schema))if(!/^[a-z][A-Za-z0-9_]{0,47}$/.test(f.key)||['constructor','prototype'].includes(f.key))throw new Error('Invalid entity field');
  const storage=spec.storage;
+ const projected=[...spec.schema.fields,...(spec.schema.serverFields??[])].filter(f=>f.storage==='computed'&&f.queryable===true);
+ if(spec.readProjection!==undefined&&(storage.kind!=='relational'||typeof spec.readProjection!=='function'))throw new Error('SQL read projection requires relational storage and a function');
+ if(projected.length&&!spec.readProjection)throw new Error('Queryable computed fields require a SQL read projection');
  if(storage.kind==='records')return;
  if(storage.kind!=='relational')throw new Error('Unsupported entity storage adapter');
  if(!identifier.test(storage.table))throw new Error('Invalid entity table');
@@ -38,14 +41,20 @@ export function entityStorage(module:Module,spec?:ModuleEntitySpec){
    expression=`json_set(${expression},${pairs.join(',')})`;
   }
   // SQL NULL for an optional server field means absent, never an implicit false/default.
-  const optionalServer=(module.serverFields??[]).filter(f=>!f.required);
+  const optionalServer=(module.serverFields??[]).filter(f=>!f.required&&f.storage!=='computed');
   for(let index=0;index<optionalServer.length;index+=30){
    const paths=optionalServer.slice(index,index+30).map(f=>`CASE WHEN ${alias}.${column(f.key)} IS NULL THEN '$.${f.key}' ELSE '$.__lite_absent__' END`);
    expression=`json_remove(${expression},${paths.join(',')})`;
   }
   return expression;
  };
- const source=relational?`(SELECT id,org_id,'${module.id}' AS module_id,${dataExpression('e')} AS data,version,created_by,created_at,updated_at,deleted_at FROM ${quote(table)} e)`:'lite_records';
+ const baseSource=relational?`(SELECT id,org_id,'${module.id}' AS module_id,${dataExpression('e')} AS data,version,created_by,created_at,updated_at,deleted_at FROM ${quote(table)} e)`:'lite_records';
+ const source=spec?.readProjection?spec.readProjection(baseSource):baseSource;
+ if(spec?.readProjection){
+  // SQL punctuation inside a quoted URL or JSON path is data, not a bind or statement.
+  const syntax=typeof source==='string'?source.replace(/'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\[[^\]]*\]|--[^\n]*|\/\*[\s\S]*?\*\//g,' '):'';
+  if(!/^\(\s*SELECT\b/i.test(syntax)||!syntax.trimEnd().endsWith(')')||/[;?]|[:@$][A-Za-z_]/.test(syntax))throw new Error('SQL read projection must be one parameter-free SELECT source');
+ }
  const values=(data:Record<string,unknown>)=>fields.map(f=>data[f.key]===undefined?null:f.encoding==='json'?JSON.stringify(data[f.key]):data[f.key]===null?null:f.type==='boolean'?(data[f.key]?1:0):data[f.key]);
  // A wide write binds its values once; every destination remains a physical column.
  const assignmentValues=(entries:unknown[],extraBindings:number)=>{
@@ -96,7 +105,7 @@ export function relationalEntityMigration(spec:ModuleEntitySpec):string[]{
  const storage=entityStorage(spec.schema,spec),table=quote(storage.table),mod=spec.schema.id;
  const columns=storedFields(spec.schema).map(f=>`${quote(spec.storage.kind==='relational'?(spec.storage.columns?.[f.key]??f.key):f.key)} ${f.type==='number'?(f.integer?'INTEGER':'REAL'):f.type==='boolean'?'INTEGER':'TEXT'}${f.required&&!legacyNullable?.includes(f.key)?' NOT NULL':''}`);
  const projection=storage.dataExpression('NEW');
- const insert=`INSERT INTO lite_search_documents(org_id,module_id,record_id,data,updated_at) SELECT NEW.org_id,'${mod}',NEW.id,${projection},NEW.updated_at WHERE NEW.deleted_at IS NULL ON CONFLICT(org_id,module_id,record_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at;`;
+ const insert=spec.readProjection?`INSERT INTO lite_search_documents(org_id,module_id,record_id,data,updated_at) SELECT org_id,'${mod}',id,data,updated_at FROM ${storage.source} WHERE id=NEW.id AND org_id=NEW.org_id AND deleted_at IS NULL ON CONFLICT(org_id,module_id,record_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at;`:`INSERT INTO lite_search_documents(org_id,module_id,record_id,data,updated_at) SELECT NEW.org_id,'${mod}',NEW.id,${projection},NEW.updated_at WHERE NEW.deleted_at IS NULL ON CONFLICT(org_id,module_id,record_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at;`;
  const remove=`DELETE FROM lite_search_documents WHERE org_id=OLD.org_id AND module_id='${mod}' AND record_id=OLD.id;`;
  return [
  `CREATE TABLE ${table}(id TEXT PRIMARY KEY NOT NULL,org_id TEXT NOT NULL REFERENCES lite_orgs(id),version INTEGER NOT NULL DEFAULT 1 CHECK(version>=1),created_by TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,deleted_at TEXT,${columns.join(',')})`,

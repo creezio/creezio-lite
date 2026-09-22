@@ -1,3 +1,4 @@
+import {queryableField} from './entity-fields.ts';
 import type { AppDefinition, Field, Module, ModuleKind, Role } from './types.ts';
 import { moduleKind, moduleNavigable, moduleWritable, roles } from './validation.ts';
 
@@ -42,7 +43,7 @@ export function moduleRegistry(app: AppDefinition): RegisteredModule[] {
   return [...systems.map(m=>({...m})), ...app.modules.map((m): RegisteredModule => ({
     id:m.id, name:m.name, description:m.description, kind:'business', href:`/${m.id}`,
     titleField:m.titleField, fields:m.fields, readRoles:m.readRoles??roles, writeRoles:m.writeRoles??writers,
-    search:{enabled:moduleSearchEnabled(m),fields:m.search?.fields??m.fields.filter(f=>f.searchable!==false&&f.storage!=='computed').map(f=>f.key)},
+    search:{enabled:moduleSearchEnabled(m),fields:m.search?.fields??m.fields.filter(f=>f.searchable!==false&&queryableField(f)).map(f=>f.key)},
     api:`modules/${m.id}/records`, mcp:true,
     moduleKind:moduleKind(m), writable:moduleWritable(m), navigation:moduleNavigable(m),
     ...(m.parent?{parent:m.parent}:{}), ...(m.parentField?{parentField:m.parentField}:{}),

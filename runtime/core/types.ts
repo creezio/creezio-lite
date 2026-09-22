@@ -11,6 +11,8 @@ export type Field = {
   searchable?: boolean;
   /** Computed fields are read projections and are never persisted or accepted on writes. */
   storage?: 'stored' | 'computed';
+  /** Explicit SQL read projection: supports filtering, sorting and optional indexing, never writes. */
+  queryable?: boolean;
   /** false: server-owned stored field. Generic forms/API/MCP cannot modify it. */
   editable?: boolean;
   /** Text editors exchange JSON text; storage contains the validated JSON value. */

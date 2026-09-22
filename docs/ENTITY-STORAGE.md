@@ -4,9 +4,9 @@ Le modèle reprend `EntitySpec` et les hooks du kit Creezio, avec des écritures
 
 ## Champs
 
-- `fields` : champs présentables. `storage: "stored"` est la valeur par défaut ; `storage: "computed"` désigne une projection de lecture, exclue du stockage, des écritures, du tri SQL et de la recherche.
+- `fields` : champs présentables. `storage: "stored"` est la valeur par défaut ; `storage: "computed"` désigne une projection de lecture, exclue du stockage et des écritures. Sans projection SQL explicite, elle est aussi exclue du tri et de la recherche.
 - `editable: false` : champ stocké alimenté par le serveur. Les formulaires et schémas d’entrée l’excluent. Un ancien client peut renvoyer sa valeur inchangée lors d’un PATCH ; toute modification est refusée.
-- `serverFields` : métadonnées et snapshots persistés, validés, absents des formulaires et des entrées. Leur absence reste une absence lorsqu’ils sont optionnels.
+- `serverFields` : métadonnées et snapshots gérés par le serveur, absents des formulaires et des entrées. Ils sont persistés et validés par défaut ; une projection SQL explicite peut les rendre calculés. Leur absence reste une absence lorsqu’ils sont optionnels.
 - `encoding: "json"` : une valeur JSON structurée ; un éditeur peut envoyer du texte JSON. La validation contrôle la syntaxe et la taille ; la règle métier valide sa structure spécifique (images, paliers, snapshots…).
 
 `prepareEntityWrite(context, {beforeWrite, hooks})` valide l’entrée fermée, conserve les champs serveur, exécute les règles puis valide **systématiquement** la valeur finale. PATCH fusionne les champs éditables fournis avec l’existant. `source: "server"` permet aux commandes de fournir des champs serveur, sans désactiver la validation finale.
@@ -76,3 +76,14 @@ Un champ structuré `encoding: json` conserve la distinction entre absence (SQL 
 Lorsque le métier conserve des archives créées avant qu’un champ devienne obligatoire, déclarer explicitement `storage.legacyNullable: ["field"]`. Seules ces colonnes D1 sont nullable ; `schema.required`, formulaires, API/MCP et validations des nouvelles écritures restent inchangés. Le générateur produit le même contrat SQL/Drizzle/snapshot. Aucun champ inconnu ni valeur de remplacement n’est inventé, aucune ligne historique n’est supprimée. Un patch sans rapport peut préserver le champ historique manquant ; un nouveau document ou un remplacement complet doit satisfaire le schéma courant.
 
 Pour une application existante, adopter le runtime par l’outil de mise à jour puis intégrer explicitement `template/scripts/check-module-contracts.mjs` si sa copie est inchangée. Ce contrôle vérifie que les colonnes déclarées historiques acceptent effectivement NULL et que les autres champs requis gardent NOT NULL. L’upgrade runtime seul ne copie pas les scripts applicatifs.
+
+
+### Projections SQL des relations
+
+Les hooks historiques `afterRead`/`afterList` restent adaptés aux enrichissements après lecture. Lorsqu'un contrat existant expose des données d'une relation et doit conserver ses filtres/tris avant pagination, le module peut déclarer `readProjection(baseSource)`. Cette fonction de déclaration retourne un unique SELECT parenthésé, sans paramètres de requête ni écritures, dans l'enveloppe standard. Elle conserve id/org_id/module_id/version et les métadonnées du parent ; les jointures respectent org_id et la cardinalité du parent. Elle ne crée ni table miroir ni stockage supplémentaire.
+
+Les champs fournis par ce SELECT déclarent `storage: "computed", queryable: true`. Ils participent aux filtres/tris HTTP/MCP et de l'interface ; la recherche peut les indexer. Ils restent exclus des formulaires éditables et de toute écriture. Un tel champ sans source SQL relationnelle explicite est refusé. Les champs calculés ordinaires par hook ne deviennent pas interrogeables implicitement.
+
+L'adaptateur écrit uniquement ses propres colonnes. Les commandes préparent les écritures des relations dans leur transaction métier existante. Les triggers générés sur la table principale indexent la projection ; le module qui possède une relation doit aussi rafraîchir cet index quand sa table change, dans la même transaction. Cela exige une migration applicative additive et des preuves sur insert/update/delete, rollback, archives et reindexation. Une modification de données liées ne doit jamais être confiée à un effet après commit.
+
+`tests/entity-read-projection.test.mjs` vérifie ces propriétés sur SQLite et D1 : absence de colonnes miroir, champs serveur, isolation des jointures, pagination/comptes, tri, recherche/reindexation, refus d'écriture, rollback coordonné et archivage. Une projection ne confère aucun droit supplémentaire.

@@ -1,5 +1,10 @@
 # Versions de Lite
 
+## En préparation — projections relationnelles
+
+- Permet une projection SELECT déclarée par une entité pour conserver les filtres, tris HTTP/MCP/interface et la recherche des champs issus de relations. Les écritures restent limitées aux colonnes du propriétaire ; aucun miroir métier ni nouveau moteur de stockage.
+- Exige une source SQL explicite pour les champs calculés interrogeables, conserve les hooks de lecture historiques et vérifie isolation, indexation et rollback sur SQLite/D1.
+
 ## 0.16.0 — 2026-09-20
 
 - Ajoute une primitive générique d’authentification autonome par identifiant ou email et mot de passe, sans liaison implicite d’identité par email.

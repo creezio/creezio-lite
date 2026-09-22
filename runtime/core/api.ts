@@ -1,3 +1,4 @@
+import {queryableField} from './entity-fields.ts';
 import { entityStorage, entityRecordSource } from './entity-storage.ts';
 import { prepareEntityWrite, entityAfterCommit } from './entity-write.ts';
 import { accessRoute } from './access.ts';
@@ -220,11 +221,11 @@ export async function handleApi(request: Request, context: ApiContext, options: 
           terms.push(...selection.bindings);
         }
         const filterField=url.searchParams.get('field'),filterValue=url.searchParams.get('value');
-        if(filterField){if(!mod.fields.some(f=>f.key===filterField&&f.storage!=='computed') || filterValue===null || filterValue.length>300) fail(400,'invalid_filter','Filtre invalide.'); where+=' AND CAST(json_extract(r.data,?) AS TEXT)=?';terms.push('$.'+filterField,filterValue);}
+        if(filterField){if(!mod.fields.some(f=>f.key===filterField&&queryableField(f)) || filterValue===null || filterValue.length>300) fail(400,'invalid_filter','Filtre invalide.'); where+=' AND CAST(json_extract(r.data,?) AS TEXT)=?';terms.push('$.'+filterField,filterValue);}
         // The scope predicate is part of the statement: it precedes pagination and the total alike.
         const filter=recordScope(scoped.scope,scoped.principal,recordRef,'read',scoped.access);where+=` AND ${filter.sql}`;terms.push(...filter.bindings);
         const sort=url.searchParams.get('sort'),direction=url.searchParams.get('direction')??'asc';
-        if((sort&&!mod.fields.some(f=>f.key===sort&&f.storage!=='computed'))||!['asc','desc'].includes(direction))fail(400,'invalid_sort','Tri invalide.');
+        if((sort&&!mod.fields.some(f=>f.key===sort&&queryableField(f)))||!['asc','desc'].includes(direction))fail(400,'invalid_sort','Tri invalide.');
         const order=sort?`json_extract(r.data,?) COLLATE NOCASE ${direction==='desc'?'DESC':'ASC'},r.id ASC`:'r.updated_at DESC,r.id DESC';
         const orderBindings=sort?['$.'+sort]:[];
         const [items,count]=await db.batch([

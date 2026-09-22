@@ -26,6 +26,8 @@ export type ModuleEntitySpec = {
   /** The very same serialisable schema used by forms, HTTP and MCP. */
   schema:Module;
   storage:EntityStorage;
+  /** Trusted module SELECT over its base source. Preserve the envelope and tenant joins; no writes. */
+  readProjection?:(baseSource:string)=>string;
   hooks?:EntityHooks;
 };
 export type BrandModuleAssistantSource =

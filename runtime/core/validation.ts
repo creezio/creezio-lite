@@ -1,3 +1,4 @@
+import {queryableField} from './entity-fields.ts';
 import type { AppDefinition, Module, ModuleKind, Role } from './types.ts';
 
 /** A public detail is a scalar or a short list of scalars; nothing nested, no exception, no SQL cause. */
@@ -71,13 +72,14 @@ export function defineApp(input: unknown): AppDefinition {
     if (!Array.isArray(mod.fields) || mod.fields.length < 1 || mod.fields.length > 30) throw new Error('Déclarer entre 1 et 30 champs par module.');
     const keys = new Set<string>();
     if(mod.serverFields!==undefined&&(!Array.isArray(mod.serverFields)||mod.serverFields.length>128))throw new Error('Champs serveur invalides.');
-    if(mod.serverFields?.some(f=>f.editable===true||f.storage==='computed'))throw new Error('Les champs serveur doivent être stockés et non éditables.');
+    if(mod.serverFields?.some(f=>f.editable===true||(f.storage==='computed'&&f.queryable!==true)))throw new Error('Les champs serveur sont non éditables ; un champ calculé exige une projection SQL explicite.');
     for (const field of [...mod.fields,...(mod.serverFields??[])]) {
       if (!keyPattern.test(field.key) || forbidden.has(field.key) || keys.has(field.key) || typeof field.label !== 'string' || !field.label.trim()) throw new Error('Champ invalide ou dupliqué.');
       keys.add(field.key);
       if(field.storage!==undefined&&!['stored','computed'].includes(field.storage))throw new Error('Stockage de champ invalide.');
       if(field.editable!==undefined&&typeof field.editable!=='boolean')throw new Error('editable doit être un booléen.');
-      if(field.storage==='computed'&&(field.editable===true||field.searchable===true))throw new Error('Un champ calculé ne peut être éditable ou indexé.');
+      if(field.queryable!==undefined&&(typeof field.queryable!=='boolean'||field.storage!=='computed'))throw new Error('queryable requires a computed field');
+      if(field.storage==='computed'&&(field.editable===true||(field.searchable===true&&!field.queryable)))throw new Error('Un champ calculé reste non éditable ; son indexation exige une projection SQL explicite.');
       if(field.encoding!==undefined&&(field.encoding!=='json'||!['text','textarea'].includes(field.type)))throw new Error('Encodage de champ invalide.');
       if(field.integer!==undefined&&(typeof field.integer!=='boolean'||field.type!=='number'))throw new Error('Un entier exige un champ numérique.');
       if(field.scale!==undefined&&(field.type!=='number'||!Number.isSafeInteger(field.scale)||field.scale<1||field.scale>1000000))throw new Error('Échelle numérique invalide.');
@@ -92,7 +94,7 @@ export function defineApp(input: unknown): AppDefinition {
     if (!mod.fields.some(f => f.key === mod.titleField && f.storage!=='computed' && ['text','email'].includes(f.type) && f.required)) throw new Error('titleField doit désigner un champ texte obligatoire.');
     if(mod.search){
       if(typeof mod.search!=='object'||(mod.search.enabled!==undefined&&typeof mod.search.enabled!=='boolean'))throw new Error('Configuration de recherche invalide.');
-      if(mod.search.fields&&(!Array.isArray(mod.search.fields)||new Set(mod.search.fields).size!==mod.search.fields.length||mod.search.fields.some(k=>!mod.fields.some(f=>f.key===k&&f.storage!=='computed'))))throw new Error('Champs de recherche invalides.');
+      if(mod.search.fields&&(!Array.isArray(mod.search.fields)||new Set(mod.search.fields).size!==mod.search.fields.length||mod.search.fields.some(k=>!mod.fields.some(f=>f.key===k&&queryableField(f)))))throw new Error('Champs de recherche invalides.');
     }
     for (const grant of [mod.readRoles, mod.writeRoles]) if (grant && (!Array.isArray(grant) || !grant.every(r => roles.includes(r)))) throw new Error('Rôles de module invalides.');
     validateModuleKind(mod, keys);
